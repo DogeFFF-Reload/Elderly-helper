@@ -1,0 +1,6 @@
+# 统一 LF：Windows 笔记本和 X5（Linux）之间来回同步时不出现整文件换行符 diff
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.wav binary
+*.onnx binary

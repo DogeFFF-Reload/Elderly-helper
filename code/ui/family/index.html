@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CareMate 家属端</title>
+<style>
+  :root {
+    --bg: #e9eef5; --card: #ffffff; --soft: #f4f7fb; --line: #e3e9f1;
+    --text: #0f1b2d; --muted: #66758c; --dim: #94a3b8;
+    --primary: #2f6fed; --ok: #0f9f6e; --warn: #c27c0e; --danger: #d93636;
+    font-family: "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+    font-size: 16px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-variant-numeric: tabular-nums; }
+  .phone { max-width: 430px; margin: 0 auto; min-height: 100vh; padding: 0 16px 40px; }
+  @media (min-width: 700px) {
+    body { background: linear-gradient(160deg, #dfe7f3, #eef1f6); padding: 28px 0; }
+    .phone { min-height: calc(100vh - 56px); background: var(--bg); border-radius: 36px; box-shadow: 0 30px 80px rgba(15, 27, 45, .18), 0 0 0 10px #101828; padding-top: 6px; overflow: hidden; }
+  }
+
+  header { display: flex; align-items: center; gap: 12px; padding: 18px 2px 14px; }
+  .avatar { width: 46px; height: 46px; border-radius: 50%; background: linear-gradient(135deg, #ffd9a8, #f7a76c); display: grid; place-items: center;
+            font-weight: 700; color: #7a3d0b; font-size: 20px; flex: none; }
+  header h1 { margin: 0; font-size: 19px; }
+  header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+  .live { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; margin-right: 5px; vertical-align: 1px; }
+  .live.off { background: var(--danger); }
+
+  .seg { display: flex; background: #dde5f0; border-radius: 12px; padding: 3px; margin-left: auto; flex: none; }
+  .seg button { border: 0; background: transparent; font: inherit; font-size: 14px; padding: 6px 12px; border-radius: 9px; color: var(--muted); cursor: pointer; }
+  .seg button.on { background: #fff; color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+
+  .card { background: var(--card); border-radius: 18px; padding: 16px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(15, 27, 45, .05); }
+  .card h2 { margin: 0 0 12px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+  .card h2 .sub { margin-left: auto; font-size: 13px; color: var(--muted); font-weight: 400; }
+
+  /* 紧急卡 */
+  .alert { background: linear-gradient(160deg, #e5484d, #c22b2b); color: #fff; animation: shake .6s ease-in-out 2; }
+  .alert h2 { font-size: 20px; margin-bottom: 6px; }
+  .alert p { margin: 4px 0; opacity: .92; font-size: 14px; line-height: 1.5; }
+  .alert .steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 14px; }
+  .alert .steps span { background: rgba(255,255,255,.18); border-radius: 999px; padding: 3px 10px; font-size: 12px; }
+  .alert button { width: 100%; border: 0; border-radius: 14px; padding: 15px; font: inherit; font-size: 18px; font-weight: 700;
+                  background: #fff; color: #c22b2b; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.18); }
+  .alert button:active { transform: scale(.98); }
+  .done { background: linear-gradient(160deg, #12b981, #0b8a5f); color: #fff; }
+  .done p { margin: 4px 0 0; opacity: .92; font-size: 14px; }
+  .info { background: #eaf1ff; color: #1e3a8a; }
+
+  /* 健康 */
+  .bp-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .bp-row:first-of-type { border-top: 0; }
+  .bp-row time { color: var(--muted); font-size: 13px; width: 44px; }
+  .bp-row b { font-size: 22px; }
+  .bp-row .unit { color: var(--dim); font-size: 12px; }
+  .chip { font-size: 12px; padding: 2px 9px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
+  .chip.high { background: #fff4e0; color: var(--warn); }
+  .chip.normal { background: #e6f7f0; color: var(--ok); }
+  .bp-row .chip { margin-left: auto; }
+  .stats { display: flex; gap: 10px; margin: 6px 0 12px; }
+  .stat { flex: 1; background: var(--soft); border-radius: 12px; padding: 10px 12px; }
+  .stat small { color: var(--muted); font-size: 12px; display: block; }
+  .stat b { font-size: 20px; }
+  .summary { font-size: 14px; line-height: 1.65; margin: 8px 0 0; }
+  .note { color: var(--dim); font-size: 12px; margin-top: 8px; }
+  .empty { color: var(--dim); font-size: 14px; padding: 6px 0; }
+
+  /* 消息 */
+  .msgs { list-style: none; margin: 0 0 12px; padding: 0; max-height: 320px; overflow: auto; }
+  .msgs li { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; line-height: 1.5; }
+  .msgs li:first-child { border-top: 0; }
+  .msgs time { color: var(--dim); font-size: 12px; width: 40px; flex: none; padding-top: 2px; }
+  .msgs .k { flex: none; font-size: 11px; padding: 2px 7px; border-radius: 6px; height: fit-content; margin-top: 1px; font-weight: 600; }
+  .k.fall, .k.\31 20 { background: #fde8e8; color: var(--danger); }
+  .k.health { background: #fff4e0; color: var(--warn); }
+  .k.cancel, .k.safe { background: #e6f7f0; color: var(--ok); }
+  .k.message, .k.call { background: #eaf1ff; color: var(--primary); }
+  .k.mine { background: #f1f5f9; color: var(--muted); }
+  .msgs li.mine .t { color: var(--muted); }
+  .compose { display: flex; gap: 8px; }
+  .compose input { flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--soft); border-radius: 12px; padding: 11px 12px; font: inherit; }
+  .compose input:focus { outline: 2px solid rgba(47, 111, 237, .35); border-color: var(--primary); }
+  .btn { border: 0; border-radius: 12px; padding: 11px 16px; font: inherit; font-weight: 600; cursor: pointer; background: var(--primary); color: #fff; }
+  .btn:disabled { opacity: .5; }
+  .btn.outline { background: transparent; color: var(--danger); border: 1.5px solid #f3b4b4; }
+  .btn.wide { width: 100%; }
+  .quick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .quick button { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 5px 11px; font: inherit; font-size: 13px; color: var(--muted); cursor: pointer; }
+
+  /* 回声 */
+  .echo p { font-size: 14px; color: var(--muted); line-height: 1.6; margin: 0 0 12px; }
+  .echo .rules { list-style: none; padding: 0; margin: 0 0 14px; font-size: 13px; color: var(--muted); }
+  .echo .rules li { padding: 3px 0; }
+  .echo .rules li::before { content: "✓ "; color: var(--ok); font-weight: 700; }
+  .profile { background: var(--soft); border-radius: 12px; padding: 12px; margin-bottom: 12px; font-size: 14px; }
+  .profile div { display: flex; gap: 10px; padding: 4px 0; }
+  .profile dt { color: var(--muted); width: 64px; flex: none; }
+  .profile dd { margin: 0; }
+  .on-badge { background: #e6f7f0; color: var(--ok); font-size: 12px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+
+  @keyframes shake { 0%, 100% { transform: none; } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+</style>
+</head>
+<body>
+<div class="phone">
+  <header>
+    <div class="avatar" id="avatar">妈</div>
+    <div>
+      <h1 id="title">妈妈的 CareMate</h1>
+      <p><span class="live" id="live"></span><span id="liveText">实时连接</span></p>
+    </div>
+    <div class="seg" id="seg"></div>
+  </header>
+
+  <div id="alert"></div>
+  <section class="card" id="health"></section>
+
+  <section class="card">
+    <h2>💬 消息<span class="sub" id="msgSub"></span></h2>
+    <ul class="msgs" id="msgs"></ul>
+    <form class="compose" id="compose">
+      <input id="msgInput" maxlength="80" placeholder="给妈妈留言，会念给她听" autocomplete="off">
+      <button class="btn" type="submit">发送</button>
+    </form>
+    <div class="quick" id="quick">
+      <button type="button">妈，记得按时吃药哈</button>
+      <button type="button">晚上早点睡哈</button>
+      <button type="button">周末回来看您</button>
+    </div>
+  </section>
+
+  <section class="card echo" id="echo"></section>
+</div>
+
+<script src="/ui/shared/bus.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const KIND = { fall: "跌倒", cancel: "已解除", "120": "120", health: "健康", message: "留言", safe: "报平安", call: "请回电", mine: "我" };
+let S = null;
+let me = new URLSearchParams(location.search).get("as");
+if (!me) { try { me = localStorage.getItem("cm-family-as"); } catch (e) {} }
+me = me || "daughter";
+
+function setMe(id) {
+  me = id;
+  alertKey = "";
+  try { localStorage.setItem("cm-family-as", id); } catch (e) {}
+  if (S) render(S);
+}
+
+async function act(path, body, btn) {
+  if (btn) btn.disabled = true;
+  try { await Bus.post(path, body); } finally { if (btn) btn.disabled = false; }
+}
+
+function renderSeg(s) {
+  $("seg").innerHTML = s.contacts.map((c) => `<button data-id="${c.id}" class="${c.id === me ? "on" : ""}">${UI.esc(c.name)}</button>`).join("");
+  $("seg").querySelectorAll("button").forEach((b) => (b.onclick = () => setMe(b.dataset.id)));
+}
+
+// 紧急卡只在“状态”变化时重建；倒计时只改文字，保证按钮元素稳定、不吞点击
+let alertKey = "";
+function renderAlert(s) {
+  const g = s.guard, title = s.elder_title, myName = UI.contactName(s, me);
+  const notified = g.notified.includes(me);
+  const key = JSON.stringify([me, g.state, notified, g.room, g.acked_by]);
+  if (key === alertKey) return;
+  alertKey = key;
+  if (g.state === "SOS" && notified) {
+    const fallNote = [...s.notifications].reverse().find((n) => n.contact === me && n.kind === "fall");
+    $("alert").innerHTML = `<section class="card alert">
+      <h2>🚨 ${UI.esc(title)}在${UI.esc(g.room || "家里")}可能摔倒了</h2>
+      <p>${fallNote ? UI.time(fallNote.ts, false) + " · " : ""}询问${g.wait ? " " + g.wait + " 秒" : ""}没有得到“没事”的回应</p>
+      <div class="steps"><span>✓ 机械臂已按下 SOS</span><span>✓ 手#2 正在轻握安抚</span><span>⏳ 等你确认</span></div>
+      <button id="ackBtn">我收到了，马上到</button>
+      <p style="margin-top:10px;font-size:12px">点了之后，${UI.esc(title)}那边会显示“${UI.esc(myName)}马上到”。<span id="ackLeft"></span></p>
+    </section>`;
+    $("ackBtn").onclick = (e) => act("/api/family/ack", { contact: me }, e.target);
+  } else if (g.state === "HELP_COMING" && g.acked_by === me) {
+    $("alert").innerHTML = `<section class="card done"><h2>✓ 你已确认，正在赶去</h2>
+      <p>${UI.esc(title)}那边：手#1 举牌“家人已收到”，手#2 轻握并举牌“别怕，${UI.esc(myName)}马上到”。路上可以先打个电话。</p></section>`;
+  } else if (g.state === "HELP_COMING" && notified) {
+    $("alert").innerHTML = `<section class="card info"><h2>${UI.esc(UI.contactName(s, g.acked_by))}已确认前往</h2>
+      <p style="margin:0;font-size:14px">${UI.esc(title)}在${UI.esc(g.room || "家里")}可能摔倒了，已有家人在路上。</p></section>`;
+  } else {
+    $("alert").innerHTML = "";
+  }
+}
+
+function renderHealth(s) {
+  const t = s.health.today;
+  const rows = t.bp.length
+    ? [...t.bp].reverse().map((r) => `<div class="bp-row"><time>${r.time}</time><b>${r.sys}/${r.dia}</b><span class="unit">mmHg${r.pulse ? " · 心率 " + r.pulse : ""}</span>
+        <span class="chip ${r.flag === "偏高" ? "high" : "normal"}">${r.flag}</span></div>`).join("")
+    : `<div class="empty">今天还没有血压记录</div>`;
+  $("health").innerHTML = `<h2>❤️ 健康日报<span class="sub">${t.date}</span></h2>
+    <div class="stats">
+      <div class="stat"><small>血压次数</small><b>${t.bp.length}</b>${t.high_count ? ` <span class="chip high">${t.high_count} 次偏高</span>` : ""}</div>
+      <div class="stat"><small>喝水</small><b>${t.water_cups}</b> 杯</div>
+    </div>
+    ${rows}
+    <p class="summary">${UI.esc(t.summary)}</p>
+    <div class="note">${UI.esc(t.note)} 数据由${UI.esc(s.elder_title)}口述、复述确认后记录。</div>`;
+}
+
+function renderMsgs(s) {
+  const items = s.notifications.filter((n) => n.contact === me)
+    .map((n) => ({ ts: n.ts, kind: n.kind, text: n.text }))
+    .concat(s.messages.filter((m) => m.from === me).map((m) => ({ ts: m.ts, kind: "mine", text: m.text })))
+    .sort((a, b) => b.ts - a.ts);
+  $("msgSub").textContent = items.length ? items.length + " 条" : "";
+  $("msgs").innerHTML = items.length
+    ? items.map((i) => `<li class="${i.kind === "mine" ? "mine" : ""}"><time>${UI.time(i.ts, false)}</time>
+        <span class="k ${i.kind}">${KIND[i.kind] || i.kind}</span><span class="t">${UI.esc(i.text)}</span></li>`).join("")
+    : `<li class="empty">还没有消息</li>`;
+  $("msgInput").placeholder = `给${s.elder_title}留言，会念给她听`;
+}
+
+function renderEcho(s) {
+  const e = s.echo[me], c = s.contacts.find((x) => x.id === me);
+  if (e && e.authorized) {
+    const st = e.style;
+    $("echo").innerHTML = `<h2>🗣️ 回声代聊 <span class="on-badge">已开启</span></h2>
+      <p>${UI.esc(s.elder_title)}想你的时候，CareMate 会用你留言的说话风格替你说两句，开口一定先说“让我替${UI.esc(c.pron)}说两句”。</p>
+      <dl class="profile">
+        <div><dt>风格档案</dt><dd>从你的 ${e.sample_count} 条留言里学到（只有文字）</dd></div>
+        <div><dt>称呼</dt><dd>${UI.esc(st.address || "—")}</dd></div>
+        <div><dt>口头禅</dt><dd>${st.catchphrases.length ? st.catchphrases.map(UI.esc).join(" / ") : "—（多发几条留言就会学到）"}</dd></div>
+        <div><dt>语气词</dt><dd>${UI.esc(st.particle || "—")}</dd></div>
+      </dl>
+      <button class="btn outline wide" id="revokeBtn">一键收回（立即清空风格档案）</button>`;
+    $("revokeBtn").onclick = (ev) => act("/api/echo/revoke", { contact: me }, ev.target);
+  } else {
+    $("echo").innerHTML = `<h2>🗣️ 回声代聊</h2>
+      <p>你忙的时候，让 CareMate 用你平时留言的口吻陪${UI.esc(s.elder_title)}说两句。</p>
+      <ul class="rules">
+        <li>只学文字风格（称呼、口头禅），不采集声音，不做声音克隆</li>
+        <li>开口必说“让我替${UI.esc(c.pron)}说两句”，不冒充你</li>
+        <li>只复用你说过的话，不替你做新的承诺</li>
+        <li>随时一键收回，立即清空</li>
+      </ul>
+      <button class="btn wide" id="authBtn">我同意，开启回声代聊</button>`;
+    $("authBtn").onclick = (ev) => act("/api/echo/authorize", { contact: me }, ev.target);
+  }
+}
+
+function renderCountdown(s) {
+  const el = $("ackLeft"), left = s.guard.ack_remaining;
+  if (el) el.textContent = left != null ? Math.ceil(left) + " 秒内没人确认会通知下一位家人。" : "其他家人也已收到通知。";
+}
+
+function render(s) {
+  S = s;
+  $("title").textContent = s.elder_title + "的 CareMate";
+  $("avatar").textContent = s.elder_title.slice(0, 1);
+  renderSeg(s); renderAlert(s); renderHealth(s); renderMsgs(s); renderEcho(s);
+}
+
+// 避免每 400ms 重绘打断点击：只有内容变了才重绘
+let lastKey = "";
+Bus.on(({ state, online }) => {
+  $("live").classList.toggle("off", !online);
+  $("liveText").textContent = online ? "实时连接" : "连接中断，正在重连…";
+  if (!online) return;
+  const g = state.guard;
+  const key = JSON.stringify([me, g.state, g.notified, g.acked_by, state.health.today, state.notifications, state.messages, state.echo]);
+  if (key !== lastKey) { lastKey = key; render(state); }
+  renderCountdown(state);
+});
+Bus.start();
+
+$("compose").onsubmit = async (e) => {
+  e.preventDefault();
+  const text = $("msgInput").value.trim();
+  if (!text) return;
+  $("msgInput").value = "";
+  await act("/api/family/message", { contact: me, text });
+};
+$("quick").querySelectorAll("button").forEach((b) => (b.onclick = () => { $("msgInput").value = b.textContent; $("msgInput").focus(); }));
+</script>
+</body>
+</html>

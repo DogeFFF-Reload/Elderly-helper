@@ -1,0 +1,51 @@
+{
+  "_说明": "scripted 台词。会被 TTS 念出来：别写斜杠和英文符号，数字之间用“比”。{xxx} 是占位符。",
+
+  "ask_ok": "{room}好像有人摔倒了，您还好吗？没事的话按一下绿键，或者说“我没事”。",
+  "ask_ok_night": "您还好吗？没事就按绿键，或者说“我没事”。",
+  "cancel_ok": "好，没事就好。您起身慢一点，我记下了。",
+  "cancel_after_sos": "好，没事就好。我已经跟家里说了您没事，让他们打个电话问问您。",
+  "sos_sent": "别怕，我已经按了求助键，通知了您{contact}。我在这儿陪着您。",
+  "family_coming": "您{contact}已经收到了，{pron}马上就到。",
+  "next_contact": "{prev}还没回复，我再通知您{contact}。",
+  "all_contacts_silent": "家里人暂时都没回复。需要的话您说“帮我打120”。",
+
+  "dial_confirm": "要帮您打120吗？{secs}秒内说“确认”我就拨，说“取消”就不拨。",
+  "dial_done": "已经帮您拨打120，这是演示模拟。也告诉您{contact}了。",
+  "dial_cancelled": "好，先不打。",
+  "dial_timeout": "没听到确认，先不打了。需要的话再说一次。",
+
+  "call_family": "好的，已经给您{contact}发了消息，让{pron}给您回电话。",
+  "contact_blocked": "我只能联系家里人：{contacts}。{who}不在名单里，我不能打。",
+
+  "deliver_start": "好的，药盒递过来了，您慢慢拿，拿稳了我再收回来。",
+  "deliver_unknown": "{item}我还没学过怎么递，现在只会递药盒。",
+
+  "health_readback": "我听到的是高压 {sys}、低压 {dia}{pulse_part}，对吗？",
+  "health_saved_normal": "好，记下了。{sys} 比 {dia}，在家庭自测的参考范围里。",
+  "health_saved_high": "好，记下了。{sys} 比 {dia}，比家庭自测参考值高一点，我同步给{contact}了。您先坐着歇会儿，明天同一时间再量量。",
+  "health_retry": "那您再说一遍，比如“高压138，低压85”。",
+  "health_invalid": "这个数好像不太对，您再说一遍血压？",
+  "water_saved": "记下了，喝了 {cups} 杯水，今天一共 {today} 杯，真不错。",
+
+  "exercise_start": "来，我们做手指操，一共十三拍，跟着我。",
+  "exercise_beat": "第{n}拍，{move}。",
+  "exercise_done": "做完啦，手指都活动开了！",
+  "exercise_stop": "好，那先歇会儿。",
+  "rps_booth": "猜拳要用摄像头看您的手势，我们到展台那边玩。",
+
+  "teach_steps": "{device}{task}，一共 {n} 步：{steps}。",
+  "teach_unknown_task": "这个我还没学过，不敢乱教。{device}我会教：{tasks}。要不要问问女儿？",
+  "teach_unknown_device": "这个我还没学过。我会教这些：{devices}。",
+
+  "message_sent": "留言发给您{contact}了。",
+  "message_empty": "您想跟{contact}说什么？比如“给女儿留言：我今天挺好的”。",
+  "safe_report": "好，已经给家里报了平安。",
+  "family_message": "您{contact}给您留言：{text}",
+
+  "echo_off": "{contact}还没开启回声代聊。要不要我给{pron}留个言？",
+
+  "elder_ok_idle": "好的，我一直在旁边。",
+  "blocked_skill": "这件事我不能做，已经记下来了。",
+  "chitchat": "我在呢。您可以说“把药递给我”、“我量了血压”，或者“叫我女儿”。"
+}

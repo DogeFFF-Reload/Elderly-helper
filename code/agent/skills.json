@@ -1,0 +1,15 @@
+{
+  "_说明": "技能白名单。agent 只能请求 agent_allowed 里的技能；fsm_only 的技能只有状态机能触发，agent 请求一律拦截。",
+  "agent_allowed": {
+    "deliver_medicine": {"desc": "递药盒", "items": ["药", "药盒", "药瓶"]},
+    "call_family": {"desc": "通知家属回电（只限联系人白名单）"},
+    "leave_message": {"desc": "给家属留言（只限联系人白名单）"},
+    "safe_report": {"desc": "报平安"},
+    "record_health": {"desc": "健康口述记账"},
+    "finger_exercise": {"desc": "手指操 13 拍"},
+    "teach_device": {"desc": "家电教学（步骤只来自 guides.json）"},
+    "echo_chat": {"desc": "回声代聊（需家属授权）"},
+    "request_dial": {"desc": "请求拨 120（只开确认窗，拨不拨由状态机定）"}
+  },
+  "fsm_only": ["press_sos", "dial_120", "gentle_hold", "notify_emergency"]
+}

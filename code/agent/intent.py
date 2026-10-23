@@ -1,0 +1,121 @@
+"""scripted 模式的意图识别：关键词规则，零网络依赖。
+
+classify(text, ctx) -> (intent, slots)
+ctx 由总线给出当前上下文：asking / dial_pending / health_pending / exercise_active / contacts。
+上下文相关的短回答（"对""确认""我没事"）优先于通用意图。
+"""
+import re
+
+from agent.health_tracker import parse_reading
+
+OK_WORDS = ("我没事", "没事", "没关系", "不用", "挺好", "我很好", "还好", "我好着")
+CONFIRM_WORDS = ("确认", "确定", "拨吧", "打吧", "快打", "是的打")
+CANCEL_WORDS = ("取消", "不用", "不打", "算了", "别打", "不要")
+YES_WORDS = ("对", "是", "没错", "正确", "嗯对", "确认", "记吧")
+NO_WORDS = ("不对", "不是", "错了", "说错", "不准")
+STOP_WORDS = ("停", "不做了", "歇会", "累了", "不练了")
+EMERGENCY = ("120", "急救", "救护车")
+CALL_VERBS = ("叫我", "叫一下", "帮我叫", "找我", "喊我", "打给", "打电话", "打个电话", "联系")
+ECHO_WORDS = ("想女儿", "想儿子", "想她", "想他", "陪我聊", "聊聊", "说说话", "想孩子")
+EXERCISE_WORDS = ("手指操", "做操", "活动手指", "动动手")
+TEACH_HINTS = ("怎么", "咋", "教我", "不会", "如何", "怎样")
+
+_PUNCT = re.compile(r"[\s，。？！,.?!~～、：:]")
+
+
+def _core(text):
+    return _PUNCT.sub("", text)
+
+
+def _starts(text, words):
+    return any(text.startswith(w) for w in words)
+
+
+def _has(text, words):
+    return any(w in text for w in words)
+
+
+def find_contact(text, contacts):
+    for c in contacts:
+        if any(a in text for a in c.get("aliases", [c["name"]])):
+            return c
+    return None
+
+
+def classify(text, ctx):
+    core = _core(text)
+    contacts = ctx.get("contacts", [])
+
+    if ctx.get("dial_pending"):
+        if _starts(core, CONFIRM_WORDS) or core in ("对", "是", "是的"):
+            return "dial_confirm", {}
+        if _has(core, CANCEL_WORDS):
+            return "dial_cancel", {}
+
+    if ctx.get("asking"):
+        if _has(core, OK_WORDS):
+            return "elder_ok", {}
+        return "elder_distress", {"dial": _has(core, EMERGENCY)}
+
+    if ctx.get("exercise_active") and _has(core, STOP_WORDS):
+        return "exercise_stop", {}
+
+    if ctx.get("health_pending"):
+        if parse_reading(text) is not None:
+            return "health_record", {}
+        if _starts(core, NO_WORDS):
+            return "health_reject", {}
+        if _starts(core, YES_WORDS):
+            return "health_confirm", {}
+
+    if _has(core, EMERGENCY):
+        return "dial_request", {}
+
+    # 教学放在"打电话"前面：如"微信视频电话怎么打"
+    if _has(core, TEACH_HINTS) or "用法" in core:
+        return "teach", {"text": text}
+
+    if "留言" in core or re.search(r"(告诉|跟|和)(.{1,3})(说|讲)", core):
+        c = find_contact(core, contacts) or (contacts[0] if contacts else None)
+        body = re.split(r"[：:]", text, maxsplit=1)
+        msg = body[1].strip() if len(body) > 1 else re.sub(r"^.*?(留言|说|讲)", "", core)
+        return "message", {"contact": c["id"] if c else None, "text": msg}
+
+    if "报平安" in core or "报个平安" in core:
+        return "safe_report", {}
+
+    if _has(core, ECHO_WORDS):
+        c = find_contact(core, contacts) or (contacts[0] if contacts else None)
+        return "echo", {"contact": c["id"] if c else None}
+
+    if _has(core, CALL_VERBS):
+        c = find_contact(core, contacts)
+        if c:
+            return "call_family", {"contact": c["id"]}
+        m = re.search(r"(?:给|打给|叫|找|联系|喊)(?:一下)?([一-龥]{1,4}?)(?:打电话|打个电话|过来|来|$)", core)
+        who = m.group(1) if m and m.group(1) not in ("我", "人") else "陌生号码"
+        return "call_blocked", {"who": who}
+
+    if _has(core, OK_WORDS):
+        return "elder_ok", {}
+
+    if parse_reading(text) is not None:
+        return "health_record", {}
+
+    if "递" in core or "拿" in core or core.startswith("把"):
+        m = re.search(r"把(.+?)(递|拿|给)", core)
+        if m:
+            item = m.group(1)
+        elif "药" in core:
+            item = "药"
+        else:
+            item = re.sub(r"^(帮我|给我|麻烦)?(递|拿)(一下|个)?", "", core) or core
+        return "deliver", {"item": item}
+
+    if _has(core, EXERCISE_WORDS):
+        return "exercise_start", {}
+
+    if "猜拳" in core or "石头剪刀布" in core:
+        return "rps", {}
+
+    return "chitchat", {"text": text}

@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CareMate 大屏</title>
+<style>
+  :root {
+    --bg: #0a0f1d; --panel: #111a2e; --panel-2: #16213a; --line: #22304f;
+    --text: #e8eef9; --muted: #8696b4; --dim: #5b6a88;
+    --ok: #34d399; --warn: #fbbf24; --danger: #f87171; --info: #7aa7ff;
+    --left: #2dd4bf; --right: #f5a524; --torso: #c9d4e8;
+    --radius: 18px;
+    font-family: "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+    font-size: clamp(14px, 1.05vw, 22px);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: radial-gradient(1200px 700px at 20% -10%, #15213d 0%, transparent 60%), var(--bg);
+    color: var(--text); overflow: hidden; transition: background .8s;
+    font-variant-numeric: tabular-nums;
+  }
+  body.night {
+    --bg: #05070f; --panel: #0b1222; --panel-2: #0f1830; --line: #1a2542;
+    background: radial-gradient(900px 600px at 85% -15%, rgba(250, 220, 140, .10) 0%, transparent 55%), var(--bg);
+  }
+  .app { display: grid; grid-template-rows: auto 1fr; height: 100vh; padding: 1.1rem 1.3rem 1.3rem; gap: 1rem; }
+
+  /* 顶栏 */
+  header { display: flex; align-items: center; gap: 1rem; }
+  .brand { display: flex; align-items: baseline; gap: .6rem; font-weight: 700; font-size: 1.35rem; letter-spacing: .02em; }
+  .brand .dot { width: .8rem; height: .8rem; border-radius: 50%; background: var(--ok); box-shadow: 0 0 12px var(--ok); align-self: center; }
+  .brand small { font-weight: 400; color: var(--muted); font-size: .95rem; }
+  .spacer { flex: 1; }
+  .chip { display: inline-flex; align-items: center; gap: .5rem; padding: .45rem 1rem; border-radius: 999px;
+          background: var(--panel); border: 1px solid var(--line); font-size: 1rem; white-space: nowrap; }
+  .mode.on { color: #ffe9a8; border-color: rgba(250, 220, 140, .45); box-shadow: 0 0 24px rgba(250, 220, 140, .18); }
+  .status i { width: .65rem; height: .65rem; border-radius: 50%; background: var(--ok); }
+  .status.ASKING { border-color: var(--warn); color: var(--warn); }
+  .status.ASKING i { background: var(--warn); animation: pulse 1s infinite; }
+  .status.SOS { border-color: var(--danger); color: #ffd1d1; background: rgba(248, 113, 113, .14); }
+  .status.SOS i { background: var(--danger); animation: pulse .7s infinite; }
+  .status.HELP_COMING { border-color: var(--ok); color: #c9f7e4; }
+  .clock { font-size: 1.6rem; font-weight: 600; min-width: 5.5ch; text-align: right; }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 999px;
+                 padding: .45rem .9rem; font: inherit; font-size: .9rem; cursor: pointer; }
+  button.ghost.on { color: var(--text); border-color: var(--info); }
+  .offline { color: var(--danger); border-color: var(--danger); display: none; }
+  .offline.show { display: inline-flex; }
+
+  main { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; gap: 1rem; min-height: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+
+  /* 骨架舞台 */
+  .stage { position: relative; overflow: hidden; min-height: 0; }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .stage-head { position: absolute; left: 1.1rem; right: 1.1rem; top: .9rem; display: flex; justify-content: space-between;
+                color: var(--muted); font-size: .95rem; z-index: 2; pointer-events: none; }
+  .privacy { color: var(--dim); }
+  .overlay { position: absolute; inset: 3rem 1.1rem 1.1rem; display: flex; flex-direction: column; gap: .8rem; z-index: 3; pointer-events: none; }
+  .overlay .grow { flex: 1; }
+  .banner { border-radius: 14px; padding: .9rem 1.2rem; font-size: 1.35rem; font-weight: 600; display: flex; gap: .8rem; align-items: center;
+            animation: drop .35s ease-out; backdrop-filter: blur(6px); }
+  .banner small { font-weight: 400; font-size: 1rem; opacity: .85; margin-left: auto; }
+  .banner.sos { background: rgba(127, 29, 29, .82); border: 1px solid var(--danger); box-shadow: 0 0 40px rgba(248, 113, 113, .35); }
+  .banner.coming { background: rgba(6, 78, 59, .82); border: 1px solid var(--ok); }
+  .placards { display: flex; gap: 1rem; justify-content: center; }
+  .placard { background: #fffaf0; color: #3b2a12; border-radius: 10px; padding: .9rem 1.4rem; font-size: 1.5rem; font-weight: 700;
+             box-shadow: 0 10px 30px rgba(0,0,0,.45); transform: rotate(-2deg); animation: rise .5s ease-out; }
+  .placard:nth-child(2) { transform: rotate(2deg); }
+  .placard small { display: block; font-size: .8rem; font-weight: 500; color: #8a6d3b; margin-bottom: .2rem; }
+
+  .card { background: rgba(17, 26, 46, .92); border: 1px solid var(--line); border-radius: 14px; padding: 1rem 1.2rem;
+          max-width: 36rem; animation: rise .35s ease-out; backdrop-filter: blur(6px); }
+  .card h3 { margin: 0 0 .5rem; font-size: 1.3rem; display: flex; align-items: center; gap: .6rem; }
+  .card h3 .count { margin-left: auto; font-size: 1rem; color: var(--warn); font-weight: 600; }
+  .card p { margin: .2rem 0; color: var(--muted); }
+  .card.warn { border-color: rgba(251, 191, 36, .6); }
+  .card.danger { border-color: rgba(248, 113, 113, .7); }
+  .card ol { margin: .3rem 0 0; padding-left: 1.5rem; font-size: 1.2rem; line-height: 1.7; }
+  .card .big { font-size: 2rem; font-weight: 700; color: var(--text); }
+  .card .tag { font-size: .85rem; color: var(--dim); }
+
+  .ask { display: flex; gap: 1.4rem; align-items: center; align-self: center; background: rgba(17, 26, 46, .9);
+         border: 1px solid var(--warn); border-radius: 18px; padding: 1.1rem 1.6rem; animation: rise .3s ease-out; }
+  .ring { --p: 1; width: 6.5rem; height: 6.5rem; border-radius: 50%; display: grid; place-items: center;
+          background: conic-gradient(var(--warn) calc(var(--p) * 360deg), rgba(255,255,255,.08) 0); position: relative; }
+  .ring::before { content: ""; position: absolute; inset: .5rem; border-radius: 50%; background: var(--panel); }
+  .ring b { position: relative; font-size: 2.4rem; line-height: 1; }
+  .ask h3 { margin: 0; font-size: 1.9rem; }
+  .ask p { margin: .3rem 0 0; color: var(--muted); font-size: 1.1rem; }
+
+  .beat { align-self: flex-end; text-align: right; }
+  .beat .n { font-size: 3.6rem; font-weight: 800; line-height: 1; color: var(--left); }
+  .beat .n small { font-size: 1.4rem; color: var(--muted); font-weight: 500; }
+
+  /* 字幕 */
+  .speech { padding: .9rem 1.3rem; display: grid; gap: .45rem; }
+  .line { display: grid; grid-template-columns: 7.5rem 1fr; align-items: baseline; gap: .8rem; min-height: 2.2rem; }
+  .line .who { color: var(--muted); font-size: 1rem; white-space: nowrap; }
+  .line.elder .text { font-size: 1.3rem; color: #cfe3ff; }
+  .line.ai .text { font-size: 1.7rem; font-weight: 600; line-height: 1.35; }
+  .line .text.fresh { animation: flash 1.2s ease-out; }
+
+  /* 右栏 */
+  .side { grid-row: 1 / span 2; grid-column: 2; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 1rem; min-height: 0; }
+  .timeline { display: flex; flex-direction: column; min-height: 0; padding: 1rem 0 .4rem; }
+  .timeline h2, .health h2 { margin: 0 1.2rem .6rem; font-size: 1rem; color: var(--muted); font-weight: 500; letter-spacing: .08em; }
+  .timeline ol { list-style: none; margin: 0; padding: 0 .6rem; overflow: hidden; flex: 1;
+                 mask-image: linear-gradient(to bottom, #000 80%, transparent); -webkit-mask-image: linear-gradient(to bottom, #000 80%, transparent); }
+  .timeline li { display: grid; grid-template-columns: 5.2rem 1.8rem 1fr; gap: .5rem; align-items: start; padding: .55rem .6rem;
+                 border-radius: 10px; font-size: 1.05rem; line-height: 1.4; }
+  .timeline li.new { animation: slide .45s ease-out; background: rgba(122, 167, 255, .08); }
+  .timeline time { color: var(--dim); font-size: .9rem; padding-top: .12rem; }
+  .timeline li.warn .t { color: #fde68a; }
+  .timeline li.danger .t { color: #fecaca; font-weight: 600; }
+  .timeline li.ok .t { color: #bbf7d0; }
+  .timeline li.elder .t { color: #cfe3ff; }
+  .timeline li.elder .t::before { content: "老人：“"; color: var(--muted); }
+  .timeline li.elder .t::after { content: "”"; color: var(--muted); }
+  .timeline li.arm .t { color: var(--muted); }
+
+  .health { padding: 1rem 0 1.1rem; }
+  .health .row { display: flex; gap: 1.4rem; align-items: flex-end; padding: 0 1.2rem; }
+  .health .bp { font-size: 2.3rem; font-weight: 700; line-height: 1; }
+  .health .bp small { font-size: 1rem; color: var(--muted); font-weight: 400; margin-left: .3rem; }
+  .flag { display: inline-block; font-size: .9rem; padding: .15rem .6rem; border-radius: 999px; margin-left: .4rem; vertical-align: middle; font-weight: 600; }
+  .flag.high { background: rgba(251, 191, 36, .16); color: var(--warn); border: 1px solid rgba(251, 191, 36, .5); }
+  .flag.normal { background: rgba(52, 211, 153, .12); color: var(--ok); border: 1px solid rgba(52, 211, 153, .4); }
+  .health .water { font-size: 1.3rem; }
+  .health .note { padding: .5rem 1.2rem 0; color: var(--dim); font-size: .85rem; }
+  .muted { color: var(--muted); }
+
+  @keyframes pulse { 50% { opacity: .35; } }
+  @keyframes slide { from { opacity: 0; transform: translateY(-10px); } }
+  @keyframes rise { from { opacity: 0; transform: translateY(12px); } }
+  @keyframes drop { from { opacity: 0; transform: translateY(-12px); } }
+  @keyframes flash { from { color: #fff; text-shadow: 0 0 18px rgba(122, 167, 255, .8); } }
+
+  @media (max-width: 900px) {
+    body { overflow: auto; }
+    .app { height: auto; padding: .8rem 16px; }
+    header { flex-wrap: wrap; }
+    main { grid-template-columns: 1fr; grid-template-rows: 60vh auto auto; }
+    .side { grid-row: auto; grid-column: auto; grid-template-rows: 50vh auto; }
+    .line { grid-template-columns: 1fr; gap: .1rem; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand"><span class="dot"></span>CareMate<small>床边守护</small></div>
+    <div class="spacer"></div>
+    <span class="chip offline" id="offline">⚠ 总线未连接</span>
+    <span class="chip mode" id="mode">☀️ 日间模式</span>
+    <span class="chip status IDLE" id="status"><i></i><span>守护中</span></span>
+    <button class="ghost" id="tts" title="用这台电脑的喇叭念 AI 台词（tts_player 没跑时的备用）">🔈 大屏播报：关</button>
+    <div class="clock" id="clock">--:--</div>
+  </header>
+
+  <main>
+    <section class="stage panel">
+      <div class="stage-head"><span id="room">卧室 · 床边摄像头</span><span class="privacy">🔒 只显示骨架剪影 · 不录制、不存储影像</span></div>
+      <canvas id="skeleton"></canvas>
+      <div class="overlay" id="overlay"></div>
+    </section>
+
+    <section class="speech panel">
+      <div class="line elder"><span class="who">🗣️ 老人</span><span class="text" id="heard"><span class="muted">—</span></span></div>
+      <div class="line ai"><span class="who">🔊 CareMate</span><span class="text" id="said"><span class="muted">—</span></span></div>
+    </section>
+
+    <aside class="side">
+      <section class="panel timeline"><h2>事件时间线</h2><ol id="timeline"></ol></section>
+      <section class="panel health" id="health"></section>
+    </aside>
+  </main>
+</div>
+
+<script src="/ui/shared/bus.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let S = null;
+let booted = false; // 首次加载拿到的历史台词不重播
+let lastSayId = 0, lastHeardTs = 0;
+const timeline = [];
+const HIDDEN = new Set(["say", "system"]);
+
+// ---------- 骨架（双色：左半身青、右半身橙；告警时整体变红） ----------
+const STANDING = {
+  head: [0.50, 0.16], neck: [0.50, 0.25], l_shoulder: [0.44, 0.27], r_shoulder: [0.56, 0.27],
+  l_elbow: [0.41, 0.40], r_elbow: [0.59, 0.40], l_wrist: [0.40, 0.52], r_wrist: [0.60, 0.52],
+  l_hip: [0.46, 0.54], r_hip: [0.54, 0.54], l_knee: [0.46, 0.70], r_knee: [0.54, 0.70],
+  l_ankle: [0.46, 0.86], r_ankle: [0.54, 0.86],
+};
+const FALLEN = {
+  head: [0.22, 0.80], neck: [0.30, 0.81], l_shoulder: [0.32, 0.76], r_shoulder: [0.32, 0.86],
+  l_elbow: [0.40, 0.72], r_elbow: [0.27, 0.90], l_wrist: [0.47, 0.76], r_wrist: [0.20, 0.88],
+  l_hip: [0.52, 0.79], r_hip: [0.52, 0.86], l_knee: [0.64, 0.78], r_knee: [0.65, 0.87],
+  l_ankle: [0.78, 0.80], r_ankle: [0.77, 0.88],
+};
+const BONES = [
+  ["l_shoulder", "r_shoulder", "c"], ["l_shoulder", "l_hip", "c"], ["r_shoulder", "r_hip", "c"], ["l_hip", "r_hip", "c"],
+  ["head", "neck", "c"],
+  ["l_shoulder", "l_elbow", "l"], ["l_elbow", "l_wrist", "l"], ["l_hip", "l_knee", "l"], ["l_knee", "l_ankle", "l"],
+  ["r_shoulder", "r_elbow", "r"], ["r_elbow", "r_wrist", "r"], ["r_hip", "r_knee", "r"], ["r_knee", "r_ankle", "r"],
+];
+const cur = JSON.parse(JSON.stringify(STANDING));
+const canvas = $("skeleton"), ctx = canvas.getContext("2d");
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+function target() {
+  const sk = S && S.skeleton;
+  if (!sk) return STANDING;
+  if (sk.pose === "live" && sk.keypoints) return sk.keypoints;
+  return sk.pose === "fallen" ? FALLEN : STANDING;
+}
+
+function draw(t) {
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) {
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  // 4:3 画面映射
+  const fh = Math.min(H * 0.92, (W * 3) / 4), fw = (fh * 4) / 3;
+  const ox = (W - fw) / 2, oy = (H - fh) / 2 + H * 0.03;
+  const P = (p) => [ox + p[0] * fw, oy + p[1] * fh];
+
+  // 背景网格 + 地面
+  ctx.strokeStyle = "rgba(255,255,255,.035)"; ctx.lineWidth = 1;
+  for (let i = 0; i <= 12; i++) { const x = ox + (fw * i) / 12; ctx.beginPath(); ctx.moveTo(x, oy); ctx.lineTo(x, oy + fh); ctx.stroke(); }
+  for (let i = 0; i <= 9; i++) { const y = oy + (fh * i) / 9; ctx.beginPath(); ctx.moveTo(ox, y); ctx.lineTo(ox + fw, y); ctx.stroke(); }
+  const floor = P([0, 0.9])[1];
+  const grad = ctx.createLinearGradient(0, floor, 0, floor + fh * 0.1);
+  grad.addColorStop(0, "rgba(122,167,255,.10)"); grad.addColorStop(1, "transparent");
+  ctx.fillStyle = grad; ctx.fillRect(ox, floor, fw, fh * 0.1);
+  ctx.strokeStyle = "rgba(122,167,255,.25)"; ctx.beginPath(); ctx.moveTo(ox, floor); ctx.lineTo(ox + fw, floor); ctx.stroke();
+
+  // 插值到目标姿态
+  const tgt = target();
+  const standing = !S || S.skeleton.pose === "standing";
+  for (const k in cur) {
+    if (!tgt[k]) continue;
+    cur[k][0] += (tgt[k][0] - cur[k][0]) * 0.12;
+    cur[k][1] += (tgt[k][1] - cur[k][1]) * 0.12;
+  }
+  const breathe = standing ? Math.sin(t / 900) * 0.004 : 0;
+  const pt = (k) => P([cur[k][0], cur[k][1] + (["l_knee", "r_knee", "l_ankle", "r_ankle"].includes(k) ? 0 : breathe)]);
+
+  const alarm = S && S.guard.state !== "IDLE";
+  const colors = alarm
+    ? { l: css("--danger"), r: css("--danger"), c: "#fca5a5" }
+    : { l: css("--left"), r: css("--right"), c: css("--torso") };
+  const lw = Math.max(6, fh * 0.022);
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.shadowBlur = alarm ? 28 + Math.sin(t / 160) * 10 : 16;
+  for (const [a, b, side] of BONES) {
+    const [x1, y1] = pt(a), [x2, y2] = pt(b);
+    ctx.strokeStyle = colors[side]; ctx.shadowColor = colors[side]; ctx.lineWidth = lw;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+  for (const k in cur) {
+    if (k === "head") continue;
+    const [x, y] = pt(k);
+    ctx.fillStyle = "#0b1222"; ctx.beginPath(); ctx.arc(x, y, lw * 0.55, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = k.startsWith("l_") ? colors.l : k.startsWith("r_") ? colors.r : colors.c;
+    ctx.beginPath(); ctx.arc(x, y, lw * 0.32, 0, Math.PI * 2); ctx.fill();
+  }
+  const [hx, hy] = pt("head");
+  ctx.strokeStyle = colors.c; ctx.lineWidth = lw * 0.8; ctx.shadowColor = colors.c; ctx.shadowBlur = alarm ? 24 : 12;
+  ctx.beginPath(); ctx.arc(hx, hy, fh * 0.045, 0, Math.PI * 2); ctx.stroke();
+  ctx.shadowBlur = 0;
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+
+// ---------- 叠加层 ----------
+// 按 key 原地更新：卡片只在出现时播一次入场动画，倒计时数字变化不重建元素（否则每次轮询都闪）
+function patch(container, items) {
+  const keep = new Set(items.map((i) => i.key));
+  for (const el of [...container.children]) if (!keep.has(el.dataset.key)) el.remove();
+  items.forEach((item, i) => {
+    let el = container.querySelector(`:scope > [data-key="${item.key}"]`);
+    if (!el) { el = document.createElement("div"); el.dataset.key = item.key; }
+    if (el.className !== item.cls) el.className = item.cls;
+    if (el._html !== item.html) { el.innerHTML = item.html; el._html = item.html; }
+    if (container.children[i] !== el) container.insertBefore(el, container.children[i] || null);
+  });
+}
+
+function overlay(s) {
+  const g = s.guard, items = [];
+  const name = (id) => UI.contactName(s, id);
+  if (g.state === "SOS") {
+    items.push({ key: "sos", cls: "banner sos", html: `🚨 已按下 SOS · 已通知${UI.esc(g.notified.map(name).join("、"))}
+      <small>等待家属确认 ${UI.secs(g.ack_remaining)}</small>` });
+  }
+  if (g.state === "HELP_COMING") {
+    items.push({ key: "coming", cls: "banner coming", html: `💚 ${UI.esc(name(g.acked_by))}已确认 · 马上就到` });
+    items.push({ key: "placards", cls: "placards", html: `
+      <div class="placard"><small>手#1 举牌</small>家人已收到</div>
+      <div class="placard"><small>手#2 轻握 + 举牌</small>别怕，${UI.esc(name(g.acked_by))}马上到</div>` });
+  }
+  items.push({ key: "grow", cls: "grow", html: "" });
+  if (g.state === "ASKING") {
+    const p = g.wait ? Math.max(0, g.remaining / g.wait) : 0;
+    items.push({ key: "ask", cls: "ask", html: `<div class="ring" style="--p:${p.toFixed(3)}"><b>${Math.ceil(g.remaining)}</b></div>
+      <div><h3>您还好吗？</h3><p>按绿键或说“我没事”即取消 · ${g.night ? "夜间" : "日间"}等待 ${g.wait} 秒</p></div>` });
+  }
+  if (g.dial_pending) {
+    items.push({ key: "dial", cls: "card danger", html: `<h3>📞 拨打 120？<span class="count">${UI.secs(g.dial_remaining)}</span></h3>
+      <p>说“确认”才拨，说“取消”或超时都不拨（双重确认）</p>` });
+  }
+  const hp = s.health.pending;
+  if (hp) {
+    items.push({ key: "health-" + hp.sys + "-" + hp.dia, cls: "card warn", html: `<h3>❤️ 复述确认<span class="count">${UI.secs(hp.remaining)}</span></h3>
+      <div class="big">高压 ${hp.sys} · 低压 ${hp.dia}${hp.pulse ? " · 心率 " + hp.pulse : ""}</div>
+      <p>老人说“对”才记账；说“不对”就重报</p>` });
+  }
+  if (s.teach) {
+    const t = s.teach;
+    items.push(t.status === "ok"
+      ? { key: "teach-" + t.ts, cls: "card", html: `<h3>📖 ${UI.esc(t.device)} · ${UI.esc(t.task)}</h3><ol>${t.steps.map((x) => `<li>${UI.esc(x)}</li>`).join("")}</ol>
+         <p class="tag">步骤来自预置教学库 guides.json</p>` }
+      : { key: "teach-" + t.ts, cls: "card warn", html: `<h3>📖 这个没学过，不乱教</h3><p>${UI.esc(t.device)}会教：${UI.esc(t.known.join("、"))}</p>
+         <p class="tag">教学步骤只来自 guides.json，不许现编</p>` });
+  }
+  if (s.exercise.active) {
+    items.push({ key: "beat", cls: "beat", html: `<div class="n">${s.exercise.beat}<small> / ${s.exercise.total} 拍</small></div>
+      <div class="muted">🖐️ 手指操带练</div>` });
+  }
+  patch($("overlay"), items);
+}
+
+function header(s) {
+  const n = s.night.active;
+  document.body.classList.toggle("night", n);
+  $("mode").className = "chip mode" + (n ? " on" : "");
+  $("mode").textContent = n ? `🌙 夜间模式 · 询问 ${s.params.ask_wait_night} 秒` : `☀️ 日间模式 · 询问 ${s.params.ask_wait_day} 秒`;
+  const g = s.guard;
+  const text = {
+    IDLE: "守护中",
+    ASKING: `询问中 ${UI.secs(g.remaining)}`,
+    SOS: "已求助 · 等待家属",
+    HELP_COMING: `${UI.contactName(s, g.acked_by)}马上到`,
+  }[g.state];
+  if ($("status").className !== "chip status " + g.state) $("status").className = "chip status " + g.state;
+  $("status").querySelector("span").textContent = text;
+  $("room").textContent = (g.room || "卧室") + " · 床边摄像头";
+}
+
+function speech(s) {
+  if (s.last_heard && s.last_heard.ts !== lastHeardTs) {
+    lastHeardTs = s.last_heard.ts;
+    $("heard").innerHTML = "“" + UI.esc(s.last_heard.text) + "”";
+    $("heard").classList.remove("fresh"); void $("heard").offsetWidth; $("heard").classList.add("fresh");
+  }
+  if (s.last_say && s.last_say.id !== lastSayId) {
+    lastSayId = s.last_say.id;
+    $("said").textContent = s.last_say.text;
+    $("said").classList.remove("fresh"); void $("said").offsetWidth; $("said").classList.add("fresh");
+  }
+  if (!s.last_say && lastSayId) { lastSayId = 0; $("said").innerHTML = '<span class="muted">—</span>'; }
+  if (!s.last_heard && lastHeardTs) { lastHeardTs = 0; $("heard").innerHTML = '<span class="muted">—</span>'; }
+}
+
+function health(s) {
+  const today = s.health.today, last = today.bp[today.bp.length - 1];
+  const bp = last
+    ? `<div class="bp">${last.sys}/${last.dia}<small>mmHg</small><span class="flag ${last.flag === "偏高" ? "high" : "normal"}">${last.flag}</span></div>`
+    : `<div class="bp muted" style="font-size:1.3rem">今天还没量血压</div>`;
+  $("health").innerHTML = `<h2>今日健康</h2><div class="row">${bp}
+    <div class="water">💧 ${today.water_cups} 杯</div></div>
+    <div class="note">家庭自测参考 135/85 · 只做记录与提醒，不作诊断</div>`;
+}
+
+function renderTimeline(fresh) {
+  $("timeline").innerHTML = timeline.slice(0, 40).map((ev) => {
+    const cls = [ev.level, ev.type === "heard" ? "elder" : "", ev.type === "arm" ? "arm" : "", fresh.has(ev.id) ? "new" : ""].join(" ");
+    return `<li class="${cls}"><time>${UI.time(ev.ts)}</time><span>${UI.icon(ev)}</span><span class="t">${UI.esc(ev.text)}</span></li>`;
+  }).join("");
+}
+
+// ---------- 大屏播报（浏览器 TTS，tts_player 的备用） ----------
+let ttsOn = false;
+try { ttsOn = localStorage.getItem("cm-monitor-tts") === "1"; } catch (e) {}
+function paintTts() { $("tts").textContent = ttsOn ? "🔊 大屏播报：开" : "🔈 大屏播报：关"; $("tts").classList.toggle("on", ttsOn); }
+paintTts();
+$("tts").onclick = () => {
+  ttsOn = !ttsOn; paintTts();
+  try { localStorage.setItem("cm-monitor-tts", ttsOn ? "1" : "0"); } catch (e) {}
+  if (ttsOn) speak("大屏播报已打开");
+};
+function speak(text) {
+  if (!ttsOn || !("speechSynthesis" in window)) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "zh-CN"; u.rate = 0.95;
+  const v = speechSynthesis.getVoices().find((x) => /^zh/i.test(x.lang));
+  if (v) u.voice = v;
+  speechSynthesis.speak(u);
+}
+
+// ---------- 主循环 ----------
+Bus.on(({ state, events, reset, online }) => {
+  $("offline").classList.toggle("show", !online);
+  if (!online) return;
+  if (reset) timeline.length = 0;
+  const fresh = new Set();
+  for (const ev of events) {
+    if (ev.type === "say" && booted) speak(ev.text);
+    if (HIDDEN.has(ev.type) || ev.type === "reset") continue;
+    timeline.unshift(ev); fresh.add(ev.id);
+  }
+  timeline.length = Math.min(timeline.length, 80);
+  S = state;
+  header(state); overlay(state); speech(state); health(state);
+  if (fresh.size || reset) renderTimeline(booted ? fresh : new Set());
+  booted = true;
+});
+Bus.start();
+
+setInterval(() => { const d = new Date(); $("clock").textContent = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }, 1000);
+document.addEventListener("dblclick", () => { if (!document.fullscreenElement) document.documentElement.requestFullscreen?.(); else document.exitFullscreen?.(); });
+</script>
+</body>
+</html>
