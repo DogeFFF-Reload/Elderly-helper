@@ -26,7 +26,7 @@ def nodes(**patch):
     """在 GOOD 上改几项：clients / heard / params_changed 整体替换，其余按字段合并。"""
     n = copy.deepcopy(GOOD)
     for key, value in patch.items():
-        if key in ("clients", "heard", "params_changed"):
+        if key in ("clients", "heard", "params_changed", "tz"):
             n[key] = value
         else:
             n[key].update(value)
@@ -98,6 +98,22 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(levels(rows)["LLM"], "warn")
         rows = preflight.check(nodes(llm={"mode": "llm", "enabled": False}))
         self.assertEqual(levels(rows)["LLM"], "warn")
+
+    def test_timezone_mismatch_warns(self):
+        rows = preflight.check(nodes(tz={"offset": 0.0, "expected": 8}))
+        level, _, text, fix = row(rows, "时区")
+        self.assertEqual(level, "warn")
+        self.assertIn("UTC+0", text)
+        self.assertIn("UTC+8", text)
+        self.assertIn("Asia/Shanghai", fix)
+
+    def test_timezone_match_is_silent(self):
+        rows = preflight.check(nodes(tz={"offset": 8.0, "expected": 8}))
+        self.assertNotIn("时区", levels(rows))
+
+    def test_old_master_without_tz_is_ignored(self):
+        rows = preflight.check(nodes())
+        self.assertNotIn("时区", levels(rows))
 
 
 class NodesEndpointTest(unittest.TestCase):
