@@ -489,19 +489,53 @@ def probe(out=print):
     return good
 
 
+PARK_TOLERANCE = 0.05   # 离 rest 每个关节都在这么多 rad 以内，就算已经在 rest
+
+
+def park(a, out=print):
+    """退出前慢速回 rest（阻尼挡不住重力，抬着的 J2/J3 会往下沉）。路上不安全就不动；
+    再按一次 Ctrl+C（或再来一个 SIGTERM）立刻停住保持。返回臂是否在 rest。"""
+    b = a.backend
+    ok, why = b.ready()
+    if not ok:
+        out("[臂] 退出：%s，不回 rest" % why)
+        return False
+    a._setup()
+    rest = a.cfg["points"]["rest"]["q"]
+    q = b.joints()
+    if max(abs(x - r) for x, r in zip(q, rest)) <= PARK_TOLERANCE:
+        return True
+    try:
+        S.check_segment(q, rest, a.cfg, "rest")
+    except S.SafetyError as e:
+        out("[臂] 退出：回 rest 的路不安全（%s），停在原地" % e)
+        return False
+    secs = S.duration(q, rest, a.cfg, slow=True)
+    out("[臂] 退出前慢速回 rest（%.0f 秒）；再按一次 Ctrl+C 立刻停住" % secs)
+    try:
+        if b.move(rest, secs, threading.Event()):
+            return True
+    except KeyboardInterrupt:
+        out("[臂] 停住")
+    except ArmError as e:
+        out("[臂] 回 rest 没成功：%s" % e)
+    b.hold()
+    return False
+
+
 def _shutdown():
-    """退出：臂停在原地，再转阻尼（之后进程一退，SDK 的失联保护也会让电机阻尼）。"""
+    """退出：作废排队、停住，慢速回 rest，再转阻尼（进程退出时 SDK 也会让电机阻尼）。"""
     a = arm()
     a.stop()
     a.wait_idle(3.0)
     if a.backend.mock or not a.backend.status()["connected"]:
         return
-    print("[臂] 退出：停住后转阻尼。不在 rest 位的话 J2/J3 会慢慢往下沉——关服务前先让臂回 home（操作台重置）",
-          flush=True)
+    if not park(a, out=lambda s: print(s, flush=True)):
+        print("[臂] 不在 rest：转阻尼后 J2/J3 会慢慢往下沉，扶住臂", flush=True)
     try:
         a.backend.brake()
     except Exception as e:  # noqa: BLE001
-        print("[臂] 阻尼指令没发出去：%s（进程退出 0.5 秒后固件也会阻尼）" % e, flush=True)
+        print("[臂] 阻尼指令没发出去：%s（进程退出时 SDK 还会再发一次）" % e, flush=True)
 
 
 def _terminate(*_):

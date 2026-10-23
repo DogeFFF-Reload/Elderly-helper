@@ -464,6 +464,65 @@ class WorkerTest(unittest.TestCase):
         self.assertNotIn("rest", st["untaught"])
 
 
+# ---------- 退出前回 rest ----------
+
+class InterruptedArm(MockArm):
+    """回 rest 的路上被第二次 Ctrl+C 打断。"""
+
+    def move(self, q, seconds, abort, torque_scale=1.0):
+        raise KeyboardInterrupt
+
+
+class ParkTest(unittest.TestCase):
+    def setUp(self):
+        fresh_hands()
+        self.addCleanup(arm_service._HANDS.clear)
+        self.lines = []
+
+    def worker(self, backend, skills_path=None):
+        w = arm_service.ArmWorker(backend, skills_path=skills_path)
+        self.addCleanup(w.stop)
+        return w
+
+    def test_returns_to_rest_slowly(self):
+        start = point_q("above_sos")
+        b = MockArm(time_scale=0, q=start)
+        w = self.worker(b)
+        self.assertTrue(arm_service.park(w, out=self.lines.append))
+        target, secs, _, finished = b.moves[-1]
+        self.assertEqual((target, finished), (REST, True))
+        self.assertAlmostEqual(secs, S.duration(start, REST, w.cfg, slow=True))
+        self.assertIn("回 rest", self.lines[0])
+
+    def test_already_at_rest_does_not_move(self):
+        b = MockArm(time_scale=0, q=[0.01] * 6)
+        self.assertTrue(arm_service.park(self.worker(b), out=self.lines.append))
+        self.assertEqual(b.moves, [])
+
+    def test_unsafe_path_stays_put(self):
+        start = [-1.0, 0, 0, 0, 0, 0]
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = skills_file(tmp, lambda raw: raw["keep_out"].append(
+            zone_around(tool_position([-0.5, 0, 0, 0, 0, 0], S.load_config("hand1")["tool_length"]))))
+        b = MockArm(time_scale=0, q=start)
+        self.assertFalse(arm_service.park(self.worker(b, path), out=self.lines.append))
+        self.assertEqual(b.moves, [])
+        self.assertIn("不安全", self.lines[0])
+
+    def test_second_ctrl_c_holds(self):
+        b = InterruptedArm(time_scale=0, q=point_q("above_sos"))
+        self.assertFalse(arm_service.park(self.worker(b), out=self.lines.append))
+        self.assertEqual(b.holds, 1)
+        self.assertIn("停住", self.lines[-1])
+
+    def test_locked_arm_not_moved(self):
+        b = MockArm(time_scale=0, q=point_q("above_sos"))
+        b.tripped = "电机层越界锁定"
+        self.assertFalse(arm_service.park(self.worker(b), out=self.lines.append))
+        self.assertEqual(b.moves, [])
+
+
 # ---------- 后端 ----------
 
 class FakeRobot:

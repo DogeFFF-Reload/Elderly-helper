@@ -10,8 +10,9 @@
   q          退出：先在当前位置保持住，再问要不要慢慢回 rest
 记完把 X5 上的 code/hand_controller/arm_skills.json 拷回笔记本提交，跑一遍 python tests/run_all.py arm。
 
-安全：两人操作，一人扶臂一人敲键盘，手边就是物理急停。主循环卡住 0.5 秒以上（程序卡死、崩溃），
-SDK 的失联保护会让电机阻尼——臂会慢慢下沉，不会突然掉。
+安全：两人操作，一人扶臂一人敲键盘，手边就是物理急停。X5 上固件失联保护是关着的（motor_timeout_ms
+必须为 0），程序卡死时电机会一直顶着最后一份重力补偿力矩，换了姿态就不再平衡：扶住臂，拍急停。
+正常退出（q、Ctrl+C）时 SDK 让电机阻尼，不在 rest 的话臂会慢慢下沉。
 """
 import argparse
 import json
@@ -141,7 +142,7 @@ def main():
             arm.move(REST, S.duration(q, REST, cfg, slow=True), threading.Event())
         except Exception as e:  # noqa: BLE001
             print("没回 rest：%s。扶住臂再退出" % e)
-    print("退出后 0.5 秒电机进入阻尼：不在 rest 的话臂会慢慢下沉，扶一下。")
+    print("退出后电机进入阻尼：不在 rest 的话臂会慢慢下沉，扶一下。")
 
 
 if __name__ == "__main__":

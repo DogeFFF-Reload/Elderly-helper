@@ -6,8 +6,12 @@
   move(q, 秒, abort, torque_scale) → 走到 q 返回 True；abort 被置位就立刻返回 False（停在哪由调用方 hold）
   wait(秒, abort) → 技能里的停顿；被打断返回 True
   grip(close)    → 夹爪开合（只有装了夹爪才有）
-  hold()         → 停在当前位置（位置模式保持，SDK 保活线程会一直重发）
+  hold()         → 停在当前位置（位置模式，固件会一直执行这条指令）
   brake()        → 全部电机阻尼（关机前最后一步；J2/J3 会慢慢下沉，不会掉下来）
+
+真臂只发位置类指令（moveJ / Joint_Pos_Vel / 夹爪位置），**不用 Joint_Vel**：X5 上 motor_timeout_ms 必须是 0
+（固件超时后电机卡在 mode 11、只能断电恢复），所以 X5 一崩，电机会一直执行最后一条指令——
+位置指令就停在原地保持，速度指令会一直转下去。
 
 选后端：环境变量 ARM_BACKEND=mock（默认）| panthera。
 真臂只在 X5 上跑，用装了 SDK 的 Python：~/panthera_venv/bin/python -m hand_controller.arm_service
@@ -103,7 +107,7 @@ class MockArm:
 
 
 class PantheraArm:
-    """Panthera-HT（SDK 在 X5 的 ~/Panthera-HT_SDK，配合用户改过的 Panthera_lib：单实例锁、失联保护、电机层越界锁定）。"""
+    """Panthera-HT（SDK 在 X5 的 ~/Panthera-HT_SDK，配合用户改过的 Panthera_lib：单实例锁、电机层越界锁定）。"""
 
     name = "panthera"
     mock = False
