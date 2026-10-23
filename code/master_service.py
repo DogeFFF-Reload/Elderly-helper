@@ -1,10 +1,11 @@
-"""主脑总线 :8000 —— /mock /api /ui 路由、事件中心、AI 口播。
+"""主脑总线 :8000 —— /mock /api /ui 路由、事件中心、AI 口播。软件模块维护，其他人要新接口提需求。
 
-注意：这是交互端开发用的 stand-in 版（按 v2.5 文档接口重建），正式版归软件同学维护。
 对外接口与文档一致：
   POST /mock/voice  {"text": "..."}       老人说的话（ASR 桥也走这里）
   POST /mock/fall?room=客厅                跌倒事件（视觉桥同格式）
   POST /mock/button?key=ok                床头盒绿键"我没事"
+  GET  /api/box?id=box1                   床头盒轮询：灯色 + 心跳（协议草案，见 README）
+  GET/POST /api/params                    演示参数查看 / 运行中调整
   GET  /ui/monitor | /ui/family | /ui/console
 
 运行：python -m master_service [--host 0.0.0.0] [--port 8000]
@@ -13,6 +14,7 @@ import argparse
 import json
 import mimetypes
 import queue
+import sys
 import threading
 import time
 import urllib.parse
@@ -28,12 +30,25 @@ from agent.llm_client import LLMClient
 from agent.supervisor import Supervisor
 from agent.voice_profile import StyleProfile
 from hand_controller.poses import FINGER_MOVES, label as pose_label
-from state_machine.guard_fsm import ASKING, GuardFSM
+from state_machine.guard_fsm import ASKING, HELP_COMING, IDLE, SOS, GuardFSM
 from voice.text_normalize import is_filler, normalize
 
 UI_DIR = config.CODE_DIR / "ui"
 MAX_EVENTS = 500
 TEACH_CARD_SECONDS = 45.0
+BOX_TIMEOUT = 3.0
+
+# 意图 → 技能：老人提的每个请求都先过 supervisor（白名单 + 资源锁）
+SKILL_OF = {
+    "deliver": "deliver_medicine", "exercise_start": "finger_exercise",
+    "call_family": "call_family", "message": "leave_message", "safe_report": "safe_report",
+    "health_record": "record_health", "health_confirm": "record_health", "health_reject": "record_health",
+    "teach": "teach_device", "echo": "echo_chat", "dial_request": "request_dial",
+}
+
+# 床头盒灯：(颜色, 闪法)。固件只管照着亮，逻辑全在主脑
+BOX_LED = {IDLE: ("green", "breath"), ASKING: ("yellow", "blink"), SOS: ("red", "blink"),
+           HELP_COMING: ("blue", "solid")}
 
 
 class EventLog:
@@ -90,6 +105,45 @@ class ArmClient:
                 self.online = False
 
 
+class SpeechQueue:
+    """llm 模式的台词线程：LLM 生成不占总线锁（状态机照常 tick），台词按入队顺序播出；
+    后面还有台词在排队就不等 LLM、这句直接用 scripted，紧急台词最多晚几十毫秒。"""
+
+    def __init__(self, bus):
+        self.bus = bus
+        self.q = queue.Queue()
+        self.gen = 0
+        threading.Thread(target=self._worker, daemon=True).start()
+
+    def put(self, key, params=None, text=None):
+        self.q.put((self.gen, key, params or {}, text))
+
+    def clear(self):
+        """重置演示时作废还没播的台词。"""
+        self.gen += 1
+
+    def drain(self):
+        self.q.join()
+
+    def _worker(self):
+        while True:
+            gen, key, params, text = self.q.get()
+            info = None
+            try:
+                if text is None and gen == self.gen:
+                    try:
+                        text, info = self.bus.llm.render(key, params, abort=lambda: not self.q.empty())
+                    except Exception:  # noqa: BLE001 台词线程不能死，否则之后连 SOS 台词都播不出来
+                        text = self.bus.llm.scripted(key, **params)
+                with self.bus.lock:
+                    if gen == self.gen:
+                        self.bus._speak(text)
+                        if info:
+                            self.bus._note_llm(info)
+            finally:
+                self.q.task_done()
+
+
 def _say(key, **params):
     return {"do": "say", "key": key, "params": params}
 
@@ -99,7 +153,7 @@ def _ev(type_, text, level="info", who="system"):
 
 
 class Bus:
-    def __init__(self, cfg=None, data_dir=None, clock=time.time, arm=None):
+    def __init__(self, cfg=None, data_dir=None, clock=time.time, arm=None, llm=None):
         self.cfg = cfg or config.load()
         self.clock = clock
         self.lock = threading.RLock()
@@ -109,12 +163,17 @@ class Bus:
         self.health = HealthTracker(d / "health.json" if d else None, clock, self.cfg["health_confirm_window"])
         self.style = StyleProfile(d / "voice_profile.json" if d else None, clock)
         self.guides = DeviceHelper()
-        self.llm = LLMClient(self.cfg["llm_mode"])
+        self.llm = llm or LLMClient.from_config(self.cfg)
+        self.speech = SpeechQueue(self) if self.llm.enabled else None
         self.supervisor = Supervisor(self.cfg["contacts"])
         self.arm = arm if arm is not None else ArmClient(self.cfg["arm_url"])
-        self.night_mode = "auto"
+        self.night_mode = self.cfg["night_override"]
+        self.box_seen = None
         self._reset_runtime()
-        self.events.add("system", "系统启动（台词通道：%s）" % self.cfg["llm_mode"])
+        channel = self.llm.mode
+        if self.llm.mode == "llm":
+            channel += "，超时 %g 秒回落 scripted" % self.llm.timeout if self.llm.enabled else "，接口未配置 → 全部 scripted"
+        self.events.add("system", "系统启动（台词通道：%s）" % channel)
 
     def _reset_runtime(self):
         self.messages = []
@@ -143,11 +202,36 @@ class Bus:
         hour = time.localtime(self.clock()).tm_hour
         return config.is_night(hour, self.cfg["night_start_hour"], self.cfg["night_end_hour"])
 
+    def _busy(self):
+        """状态机当前占用的资源：保命链一启动，臂和手#1 就归状态机。"""
+        return {"arm"} if self.fsm.state != IDLE else set()
+
     def _speak(self, text):
         if not text:
             return
         ev = self.events.add("say", text, who="ai")
         self.last_say = {"id": ev["id"], "text": text, "ts": ev["ts"]}
+
+    def _say_line(self, key, params):
+        if self.speech:
+            self.speech.put(key, params)
+        else:
+            self._speak(self.llm.scripted(key, **params))
+
+    def _say_text(self, text):
+        if self.speech:
+            self.speech.put(None, text=text)
+        else:
+            self._speak(text)
+
+    def _note_llm(self, info):
+        """LLM 回落只在刚进冷却或内容没过检查时记一笔（type=system，大屏不显示，操作台看得到）。"""
+        reason = info["reason"] or ""
+        if info["tripped"]:
+            self.events.add("system", "LLM %s（%s）→ 回落 scripted，%g 秒内台词都走 scripted" % (
+                "超时" if reason == "timeout" else "出错", self.llm.stats["last_error"], self.llm.cooldown), "warn")
+        elif reason.startswith("rejected"):
+            self.events.add("system", "LLM 台词没过检查（%s）→ 这句用 scripted" % reason.split(": ", 1)[1], "warn")
 
     def _notify(self, contact_id, kind, text):
         c = self.contact(contact_id or self.primary["id"]) or self.primary
@@ -165,9 +249,9 @@ class Bus:
             if kind == "say":
                 params = {"contact": self.primary["name"], "pron": self.primary["pron"]}
                 params.update(a.get("params", {}))
-                self._speak(self.llm.say(a["key"], **params))
+                self._say_line(a["key"], params)
             elif kind == "say_text":
-                self._speak(a["text"])
+                self._say_text(a["text"])
             elif kind == "event":
                 self.events.add(a["type"], a["text"], a.get("level", "info"), who=a.get("who", "system"))
             elif kind == "arm":
@@ -204,6 +288,16 @@ class Bus:
 
     def _handle(self, name, slots, text):
         sup = self.supervisor
+        skill = SKILL_OF.get(name)
+        if skill:
+            ok, reason = sup.check(skill, contact=slots.get("contact"), item=slots.get("item"), busy=self._busy())
+            if not ok:
+                what = "递“%s”" % slots["item"] if name == "deliver" else sup.allowed[skill]["desc"]
+                if sup.blocked[-1]["busy"]:
+                    return [_ev("blocked", "已挂起：%s（%s）" % (what, reason), "warn"), _say("skill_busy")]
+                if name == "deliver":
+                    return self._blocked(what, reason, "deliver_unknown", item=slots["item"])
+                return self._blocked(what, reason, "blocked_skill")
         if name == "dial_confirm":
             return self.fsm.confirm_dial()
         if name == "dial_cancel":
@@ -227,9 +321,6 @@ class Bus:
         if name == "health_reject":
             return self.health.reject()
         if name == "deliver":
-            ok, reason = sup.check("deliver_medicine", item=slots["item"])
-            if not ok:
-                return self._blocked("递“%s”" % slots["item"], reason, "deliver_unknown", item=slots["item"])
             return [_ev("deliver", "老人要药 → 递药盒", "info", "system"),
                     {"do": "arm", "pose": "deliver_medicine", "hand": 1},
                     _say("deliver_start")]
@@ -277,7 +368,7 @@ class Bus:
             return self._stop_exercise("老人喊停")
         if name == "rps":
             return [_say("rps_booth")]
-        return [_say("chitchat")]
+        return [_say("chitchat", text=text)]  # text 只给 llm 通道参考，scripted 模板不用
 
     def _teach(self, text):
         r = self.guides.match(text)
@@ -395,10 +486,28 @@ class Bus:
             self.events.add("night", text)
             return {"ok": True, "night": self.is_night()}
 
+    def params(self):
+        return {k: self.cfg[k] for k in config.TUNABLE}
+
+    def set_params(self, updates):
+        """运行中调演示参数（彩排时按访谈调等待时长、夜间窗口）。下一次事件起生效，重启恢复配置文件的值。"""
+        with self.lock:
+            before = dict(self.cfg)
+            changed, errors = config.apply_params(self.cfg, updates)
+            if errors:
+                return {"ok": False, "errors": errors, "params": self.params()}
+            self.health.confirm_window = self.cfg["health_confirm_window"]
+            self.llm.timeout = self.cfg["llm_timeout"]
+            self.llm.cooldown = self.cfg["llm_cooldown"]
+            if changed:
+                self.events.add("system", "演示参数调整：" + "，".join(
+                    "%s %g→%g" % (k, before[k], v) for k, v in changed.items()))
+            return {"ok": True, "changed": changed, "params": self.params()}
+
     def agent_propose(self, skill):
         """演示/测试用：模拟 LLM 直接请求某个技能，看 supervisor 拦不拦。"""
         with self.lock:
-            ok, reason = self.supervisor.check(skill)
+            ok, reason = self.supervisor.check(skill, busy=self._busy())
             if ok:
                 self.events.add("agent", "agent 请求“%s”：白名单内，放行" % skill, "ok")
             else:
@@ -411,7 +520,9 @@ class Bus:
             self.health.reset(clear_records=clear_data)
             if clear_data:
                 self.style.reset()
-            self.night_mode = "auto"
+            if self.speech:
+                self.speech.clear()
+            self.night_mode = self.cfg["night_override"]
             self._reset_runtime()
             self.events.clear()
             self.events.add("reset", "演示已重置" + ("（健康记录与风格档案已清空）" if clear_data else ""))
@@ -442,6 +553,17 @@ class Bus:
             if acts:
                 self._run(acts)
 
+    # ---------- 床头盒（协议草案，待硬件同学确认） ----------
+
+    def box_poll(self, box_id="box1"):
+        """床头盒每 0.5 秒 GET 一次：拿灯色，同时当心跳。绿键仍走 POST /mock/button?key=ok。"""
+        with self.lock:
+            self.box_seen = {"id": box_id, "ts": self.clock()}
+            g = self.fsm.snapshot()
+            led, pattern = BOX_LED[g["state"]]
+            return {"ok": True, "state": g["state"], "led": led, "pattern": pattern,
+                    "night": self.is_night(), "remaining": g["remaining"], "dial_pending": g["dial_pending"]}
+
     # ---------- 输出 ----------
 
     def snapshot(self):
@@ -463,10 +585,12 @@ class Bus:
                 "exercise": {"active": ex is not None, "beat": ex["beat"] if ex else 0, "total": len(FINGER_MOVES)},
                 "skeleton": self.skeleton,
                 "arm": {"online": self.arm.online},
+                "box": {"online": bool(self.box_seen and self.clock() - self.box_seen["ts"] < BOX_TIMEOUT),
+                        "id": self.box_seen["id"] if self.box_seen else None},
+                "llm": self.llm.status(),
                 "last_say": self.last_say,
                 "last_heard": self.last_heard,
-                "params": {k: self.cfg[k] for k in ("ask_wait_day", "ask_wait_night", "dial_confirm_window",
-                                                    "family_ack_timeout", "health_confirm_window")},
+                "params": self.params(),
             }
 
     def poll(self, since):
@@ -489,6 +613,28 @@ def _read_json(handler):
         except (UnicodeDecodeError, ValueError):
             continue
     return {}
+
+
+def dispatch_post(bus, path, body, query=None):
+    """POST 路由表；HTTP 层和 demo_driver --local 共用。没有这个路由返回 None。"""
+    q = query or {}
+    arg = lambda k, d=None: body.get(k, q.get(k, d))  # noqa: E731
+    routes = {
+        "/mock/voice": lambda: bus.voice(arg("text", "")),
+        "/mock/fall": lambda: bus.fall(arg("room")),
+        "/mock/button": lambda: bus.button(arg("key", "ok")),
+        "/api/skeleton": lambda: bus.update_skeleton(body or q),
+        "/api/family/ack": lambda: bus.family_ack(arg("contact", bus.primary["id"])),
+        "/api/family/message": lambda: bus.family_message(arg("contact", bus.primary["id"]), arg("text", "")),
+        "/api/echo/authorize": lambda: bus.echo_authorize(arg("contact", bus.primary["id"])),
+        "/api/echo/revoke": lambda: bus.echo_revoke(arg("contact", bus.primary["id"])),
+        "/api/night": lambda: bus.set_night(arg("mode", "auto")),
+        "/api/params": lambda: bus.set_params(body or q),
+        "/api/agent/propose": lambda: bus.agent_propose(arg("skill", "")),
+        "/api/reset": lambda: bus.reset(clear_data=str(arg("all", "0")) == "1"),
+    }
+    fn = routes.get(path)
+    return fn() if fn else None
 
 
 def make_handler(bus):
@@ -538,6 +684,11 @@ def make_handler(bus):
                     return self._json(bus.health.daily_report())
             if path == "/api/guides":
                 return self._json(bus.guides.catalog())
+            if path == "/api/box":
+                return self._json(bus.box_poll(q.get("id", ["box1"])[0]))
+            if path == "/api/params":
+                with bus.lock:
+                    return self._json({"params": bus.params(), "limits": config.LIMITS})
             if path.startswith("/ui/"):
                 return self._static(path)
             self._json({"ok": False, "error": "not found"}, 404)
@@ -545,26 +696,10 @@ def make_handler(bus):
         def do_POST(self):
             url = urllib.parse.urlparse(self.path)
             q = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
-            body = _read_json(self)
-            arg = lambda k, d=None: body.get(k, q.get(k, d))  # noqa: E731
-            path = url.path
-            routes = {
-                "/mock/voice": lambda: bus.voice(arg("text", "")),
-                "/mock/fall": lambda: bus.fall(arg("room")),
-                "/mock/button": lambda: bus.button(arg("key", "ok")),
-                "/api/skeleton": lambda: bus.update_skeleton(body or q),
-                "/api/family/ack": lambda: bus.family_ack(arg("contact", bus.primary["id"])),
-                "/api/family/message": lambda: bus.family_message(arg("contact", bus.primary["id"]), arg("text", "")),
-                "/api/echo/authorize": lambda: bus.echo_authorize(arg("contact", bus.primary["id"])),
-                "/api/echo/revoke": lambda: bus.echo_revoke(arg("contact", bus.primary["id"])),
-                "/api/night": lambda: bus.set_night(arg("mode", "auto")),
-                "/api/agent/propose": lambda: bus.agent_propose(arg("skill", "")),
-                "/api/reset": lambda: bus.reset(clear_data=str(arg("all", "0")) == "1"),
-            }
-            fn = routes.get(path)
-            if fn is None:
+            result = dispatch_post(bus, url.path, _read_json(self), q)
+            if result is None:
                 return self._json({"ok": False, "error": "not found"}, 404)
-            self._json(fn())
+            self._json(result)
 
         def log_message(self, *args):
             pass
@@ -593,10 +728,17 @@ def main():
     ap.add_argument("--host", default="127.0.0.1", help="多节点联调用 0.0.0.0")
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args()
-    bus = Bus(data_dir=config.DATA_DIR)
+    warnings = []
+    try:
+        cfg = config.load(warnings=warnings)
+    except config.ConfigError as e:
+        sys.exit(str(e))
+    for w in warnings:
+        print("[配置提示] " + w)
+    bus = Bus(cfg, data_dir=config.DATA_DIR)
     server = serve(bus, args.host, args.port)
     base = "http://127.0.0.1:%d" % args.port
-    print("master_service on %s:%d" % (args.host, args.port))
+    print("master_service on %s:%d（台词通道：%s）" % (args.host, args.port, cfg["llm_mode"]))
     for name in ("monitor", "family", "console"):
         print("  %-8s %s/ui/%s" % (name, base, name))
     try:
