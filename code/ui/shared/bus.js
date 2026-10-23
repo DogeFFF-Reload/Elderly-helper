@@ -60,7 +60,7 @@ const UI = {
       fall: "⚠️", ask: "❓", ok: "✅", sos: "🚨", notify: "📨", family_ack: "💚", dial: "📞",
       health: "❤️", deliver: "💊", teach: "📖", message: "✉️", echo: "💬", exercise: "🖐️",
       blocked: "⛔", agent: "🤖", night: "🌙", arm: "🦾", heard: "🗣️", say: "🔊", button: "🟢",
-      reset: "↺", system: "⚙️",
+      reset: "↺", system: "⚙️", estop: "🛑",
     })[ev.type] || "•";
   },
   contactName(state, id) {
