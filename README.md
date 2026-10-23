@@ -124,7 +124,7 @@ python -m voice.asr_bridge --device 1
 | `ui/`、`voice/`、`agent/health_tracker.py`、`agent/voice_profile.py`、`agent/guides.json`、`agent/device_helper.py`、`agent/lines.json` | **交互端** | 用这里的 |
 | `master_service.py`、`state_machine/`、`agent/intent.py`、`agent/supervisor.py`、`agent/skills.json`、`agent/llm_client.py`、`config.py`、`demo_driver.py`、`tests/`、`tools/` | **软件** | 用这里的（§10）；软件同学若另有正式版，用 `tools/merge_gate.py` 对照合并 |
 | `hand_controller/` | 硬件 | stand-in；`poses.py` 的 `label` 会显示在大屏时间线上 |
-| `vision/`、`gesture/` | 演示 | stand-in，只实现了 `--mock` |
+| `vision/`、`gesture/`、`deploy/` | 演示 | 已实现（见 §11）；猜拳的主脑一侧（`/api/rps/gesture`、判输赢）在软件分支 `software/rps-hook` |
 
 归属的机器可读版在 `code/tools/owners.py`，`run_all` 和 `merge_gate` 都按它判断"找谁"。
 
@@ -138,7 +138,7 @@ python -m voice.asr_bridge --device 1
 
 - 【硬件】喇叭和麦克风最终装在床头盒还是 X5？在床头盒的话，`tts_player --backend cmd` 把音频转给盒子，协议等硬件同学定。
 - 【全队】会场噪音下 Vosk 小模型的识别率需要实测；不够用的话换 `vosk-model-cn-0.22`（大模型）或 sherpa-onnx，桥的接口不变。
-- 【演示】`fall_bridge --camera/--video` 尚未实现，大屏骨架目前用预置姿态；视觉模块推关键点到 `/api/skeleton` 后大屏会直接画实时骨架。
+- 【演示】`fall_bridge --camera` 还没在真人画面上实拍调参（见 §11.3）；大屏已能画视觉推来的实时骨架。
 - 【硬件 × 软件】床头盒协议是软件这边出的草案（§10.6），等硬件同学确认或改。
 
 ## 10. 软件模块（主脑与安全内核）
@@ -242,3 +242,77 @@ python -m demo_driver --local           # 不连服务，假时钟几秒跑完
 4. Day2 12:00 前打 tag 冻结：`git tag demo-final`
 
 本次软件模块唯一碰到别人的文件：`agent/lines.json`（队长）加了一句 `skill_busy` 台词，供资源锁挂起时口播。
+
+## 11. 视觉模块（演示）
+
+按 §7.3 演示同学的四项任务实现：跌倒检测、猜拳识别、X5 运行环境。核心规则是纯标准库，**只有取摄像头画面和跑姿态模型需要装包**。
+
+| # | 任务 | 状态 | 在哪 |
+|---|---|---|---|
+| ① | 笔记本跑通 `--camera`，依赖写进 README | ✅ 姿态/手部模型已在 mediapipe 1.1.1 官方测试图上实测（站立人像躯干 2°、旋转 90° 后 89°、张开的手判为"布"）；**摄像头取帧（cv2）还没在本机实拍过**，见 11.3 | `vision/fall_bridge.py`、`vision/pose_backends.py` |
+| ② | 用真实画面调 `fall_rules`，降低误报漏报 | ✅ 规则改成看时间（见 11.2），9 个合成场景 × 多种帧率/抖动 0 误判；配套调参窗口、录制、离线评估工具 | `gesture/fall_rules.py`、`vision/preview.py`、`vision/eval_falls.py` |
+| ③ | `--video` + 预录跌倒视频（Plan B） | ✅ `--video` 按真实时间播放；另有 `--keypoints`（回放录下的骨架，不需要摄像头和模型）和 `--synthetic fall`（内置合成跌倒） | `vision/fall_bridge.py`、`vision/synth.py` |
+| ④ | 3 块 X5 装环境、写开机脚本 | ✅ 装环境、systemd 开机自启、桌面登录后自启（喇叭/大屏）；还没在 X5 实机上跑过 | `deploy/` |
+| — | 猜拳手势识别 | ✅ 视觉只认手势（分类 + 多帧投票）并回传；一局流程和判输赢在主脑，由软件分支 `software/rps-hook` 提供 | `gesture/rps_engine.py`、`vision/rps_bridge.py` |
+
+回归：`python tests/run_all.py` 合并 main 后 16 套 132 条（视觉新增 `test_fall_detector`，`test_rps_engine` 改为只测视觉一侧；`test_fall_detector` 的负责人登记在 `software/rps-hook` 里）。本分支只改视觉文件，`master_service.py` 等软件文件一行没动。
+
+### 11.1 跑起来
+
+```powershell
+# 依赖（只装 mediapipe：它自带 opencv-contrib-python，别再另装 opencv-python）
+pip install -r code/requirements-vision.txt
+cd code
+python -m vision.pose_backends --download     # 下载姿态 + 手部模型（约 13MB）到 code/vision/models/
+python -m vision.pose_backends --check        # 自检：加载两个模型各跑一帧
+
+python -m vision.fall_bridge --camera --preview            # 实拍 + 本机调参窗口
+python -m vision.fall_bridge --video falls/fall_01.mp4     # Plan B：预录视频
+python -m vision.fall_bridge --keypoints falls/fall_01.jsonl   # Plan B：回放骨架（不需要模型）
+python -m vision.fall_bridge --synthetic fall              # 兜底：内置合成跌倒，什么都不用装
+python -m vision.rps_bridge --camera                       # 猜拳（展台）；--stdin 键盘代替摄像头
+```
+
+发给总线的格式和 mock 一模一样：倒地时 `POST /mock/fall?room=…`，平时约 5 次/秒 `POST /api/skeleton`，大屏直接画实时骨架。画面只在内存里处理，不落盘不外发。
+
+### 11.2 跌倒规则：看"过程"，不看单帧
+
+单帧只看得出"身体横着"，分不清摔倒、弯腰捡东西、上床躺下。现在的判定：
+
+- **快速跌倒**：1 秒内髋部下降 ≥ 0.5 个躯干长、躯干变横（站着或坐着摔下来都算）→ 2 秒内没站起来 → 报警。看不到人也算"没站起来"（摔在床后被挡住）。
+- **缓慢滑倒**：横躺在低处（比站立时低）、不在床区，持续 12 秒 → 报警。
+- **不报**：踉跄后马上站起、坐下、弯腰（髋部不降）、在床区里躺着。
+- 报警后要站稳 2 秒才重新布防，一次摔倒只报一次。
+
+合成场景实测：从开始摔到报警 2.3 秒左右（落地后约 1.7 秒），之后主脑再按日 5 秒 / 夜 3 秒询问。所有阈值在 `DEFAULT_RULES`，命令行可改：`--set lying_angle=50`、`--bed 0.55,0.40,0.98,0.75`（床区，归一化坐标）、`--rules my_rules.json`。
+
+### 11.3 实拍调参流程（演示同学要做的）
+
+1. `--camera --preview`：窗口里看骨架、躯干角度、髋部下降、规则状态；按 `q` 退出。
+2. 录素材（只存坐标，不存画面）：`--camera --record-keypoints recordings/fall_01.jsonl`。文件名带 `fall` 的是跌倒，其余（`sit_`、`bend_`、`bed_` …）是日常动作。建议各录 3 段以上，摔的时候垫好垫子。
+3. 批量评估：`python -m vision.eval_falls recordings/`，输出每段是否漏报 / 误报和报警时间；改参数再跑：`--set confirm_hold=1.5`。
+4. 定下来的参数写进 `rules.json`，开机脚本里 `VISION_ARGS="--rules rules.json"`。
+5. 录好的 `recordings/` 可以提交进仓库，以后谁改规则都先跑一遍 eval。
+
+### 11.4 Plan B 顺序
+
+现场跌倒判定不稳时，从上往下换：`--camera` → `--video 预录视频` → `--keypoints 预录骨架` → `--synthetic fall` → 操作台"触发摔倒"按钮。后三种不依赖摄像头和光照。
+
+### 11.5 三块 X5（§1.2 部署映射）
+
+```bash
+cp deploy/x5.env.example deploy/x5.env      # 改 MASTER_HOST / ARM_HOST / CAMERA_INDEX
+bash deploy/setup_x5.sh a                    # a=视觉 b=主脑+大屏+语音 c=执行端：装 apt 包、建 .venv、跑回归自检
+bash deploy/install_services.sh a            # 开机自启
+bash deploy/start.sh vision                  # 手动起单个服务调试：vision|rps|master|tts|asr|arm|kiosk
+```
+
+- 不需要声卡/屏幕的（vision / master / arm）装成 systemd 服务，开机就起、挂了 2 秒自动重启；日志 `journalctl -u caremate-vision -f`。
+- 要用喇叭/麦克风/屏幕的（tts / asr / 大屏浏览器 kiosk）装成桌面登录后自启，因为系统服务拿不到登录用户的音频和显示。
+- mediapipe 有 Linux aarch64 轮子，X5（Ubuntu 22.04）可以直接 pip 装；X5 若连不上 Google，从笔记本拷 `code/vision/models/` 过去。
+- 假设是 **USB 摄像头**；若用 MIPI 摄像头，取帧要换地平线的接口，`opencv_source` 之外的逻辑不变。
+- 笔记本单机彩排：`powershell -ExecutionPolicy Bypass -File deploy\start_laptop.ps1 [-Vision camera]`，每个服务一个窗口。
+
+### 11.6 猜拳一局怎么走
+
+视觉这边只做一件事：在揭晓前后约 2 秒内逐帧识别老人的手势、多帧投票，回传 `POST /api/rps/gesture {"round": n, "gesture": "rock"|"scissors"|"paper"|null}`。一局怎么走、机器人出什么、谁赢，都在主脑一侧（`software/rps-hook`，README §10.7）。手势识别按"指尖到手腕的距离"判断手指伸直，和手怎么转、离多远、画面比例都无关。

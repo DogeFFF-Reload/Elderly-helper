@@ -5,13 +5,21 @@ health.json
 voice_profile.json
 *.tmp
 
-# 离线语音模型体积大，各自下载
+# 离线语音 / 姿态模型体积大，各自下载（python -m vision.pose_backends --download）
 code/voice/models/
+code/vision/models/
 
 __pycache__/
 *.pyc
 code/config.local.json
 
+# 本机虚拟环境 / pip 缓存
+.venv/
+.cache/
+
 # 本机 Claude 预览启动配置
 .claude/launch.json
 .claude/settings.local.json
+
+# 各现场自己的 IP 等配置
+deploy/x5.env
