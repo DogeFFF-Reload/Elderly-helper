@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
-# 一次性装环境（每块 X5 跑一次）：bash deploy/setup_x5.sh a|b|c
-#   a = X5-A 视觉   b = X5-B 主脑 + 大屏 + 语音   c = X5-C 执行端
+# 一次性装环境（两块 X5 各跑一次）：bash deploy/setup_x5.sh a|b
+#   a = X5-A 视觉   b = X5-B 主脑 + 大屏 + 语音 + 执行端（USB-RS485 连双手）
 set -euo pipefail
 
 ROLE="${1:-}"
-case "$ROLE" in a|b|c) ;; *) echo "用法：$0 a|b|c" >&2; exit 2 ;; esac
+if [ "$ROLE" = c ]; then
+  echo "提示：只有两块 X5，执行端已并进 b（X5-B），按 b 装" >&2
+  ROLE=b
+fi
+case "$ROLE" in a|b) ;; *) echo "用法：$0 a|b" >&2; exit 2 ;; esac
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [ ! -f "$ROOT/deploy/x5.env" ]; then
   cp "$ROOT/deploy/x5.env.example" "$ROOT/deploy/x5.env"
-  echo "已生成 deploy/x5.env，记得改 MASTER_HOST / ARM_HOST"
+  echo "已生成 deploy/x5.env，记得改 MASTER_HOST（X5-B 的地址）"
 fi
 # shellcheck source=/dev/null
 source "$ROOT/deploy/x5.env"
@@ -28,8 +32,8 @@ PIP=("$ROOT/.venv/bin/python" -m pip install -i "$PIP_INDEX")
 "${PIP[@]}" --upgrade pip
 case "$ROLE" in
   a) "${PIP[@]}" -r "$ROOT/code/requirements-vision.txt" ;;
-  b) if [ "${WITH_ASR:-0}" = 1 ]; then "${PIP[@]}" -r "$ROOT/code/requirements-voice.txt"; fi ;;
-  c) : ;;   # 目前只用标准库；RS485 实装后在这里加 pyserial
+  b) # 执行端目前只用标准库；RS485 实装后在这里加 pyserial
+     if [ "${WITH_ASR:-0}" = 1 ]; then "${PIP[@]}" -r "$ROOT/code/requirements-voice.txt"; fi ;;
 esac
 
 echo "--- 自检 ---"
@@ -42,6 +46,10 @@ case "$ROLE" in
     if ! id -nG | grep -qw video; then
       echo "提示：当前用户不在 video 组，摄像头可能打不开：sudo usermod -aG video $USER 后重新登录"
     fi ;;
-  b) espeak-ng -v cmn "喇叭测试" || true ;;
+  b)
+    espeak-ng -v cmn "喇叭测试" || true
+    if ! id -nG | grep -qw dialout; then
+      echo "提示：当前用户不在 dialout 组，USB-RS485 可能打不开：sudo usermod -aG dialout $USER 后重新登录"
+    fi ;;
 esac
 echo "装好了。下一步：bash deploy/install_services.sh $ROLE"
