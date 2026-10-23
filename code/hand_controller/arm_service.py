@@ -37,7 +37,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from config import utf8_console
 from hand_controller import arm_safety as S
 from hand_controller import rh56_register_map as RM
-from hand_controller.arm_backend import ArmError, make_backend
+from hand_controller.arm_backend import TOLERANCE, ArmError, make_backend
 from hand_controller.arm_kinematics import tool_position
 from hand_controller.poses import JOINTS, POSES, RHYTHMS, SAFETY, label
 from hand_controller.rh56f2_driver import RH56F2, HandError
@@ -183,6 +183,7 @@ class ArmWorker:
         self.done = 0
         self.aborted = 0
         self.last_error = None
+        self.settle = None       # 最近一次走到点位时每个关节差多少度（看重力下垂）
         threading.Thread(target=self._run, daemon=True).start()
 
     @property
@@ -308,6 +309,12 @@ class ArmWorker:
                 if not self.backend.move(p["q"], secs, self.abort, p.get("torque_scale", 1.0)):
                     return False
                 self.at = arg
+                err = self.backend.last_errors
+                if err:
+                    self.settle = {"point": arg, "err_deg": S.deg(err)}
+                    if max(err) > TOLERANCE:
+                        print("[臂] 到 %s 停稳了，但离目标差 %s°（位置模式没有重力前馈，带载关节会下垂）"
+                              % (arg, S.deg(err)), flush=True)
             elif kind == "grip":
                 self.step = "末端 %s" % arg
                 self._grip(name, arg)
@@ -336,7 +343,7 @@ class ArmWorker:
     def status(self):
         st = dict(self.backend.status(), effector=self.effector, busy=self.running is not None,
                   current=self.current, step=self.step, queued=len(self.pending), at=self.at,
-                  done=self.done, aborted=self.aborted, last_error=self.last_error)
+                  done=self.done, aborted=self.aborted, last_error=self.last_error, settle=self.settle)
         if self.cfg:
             st["untaught"] = sorted(n for n, p in self.cfg["points"].items() if not p.get("taught"))
         if st["connected"]:

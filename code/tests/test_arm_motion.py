@@ -496,8 +496,10 @@ class WorkerTest(unittest.TestCase):
         w.request("home")
         st = w.status()
         for field in ("backend", "mock", "effector", "busy", "queued", "done", "aborted", "joints_deg", "tool_m",
-                      "untaught", "last_error"):
+                      "untaught", "last_error", "settle"):
             self.assertIn(field, st)
+        self.assertTrue(w.wait_idle())
+        self.assertEqual(w.status()["settle"], {"point": "rest", "err_deg": [0.0] * 6})
         self.assertIn("sos_press", st["untaught"])
         self.assertNotIn("rest", st["untaught"])
 
@@ -569,13 +571,14 @@ class FakeRobot:
     motor_count = 6
     max_torque = [21.0, 36.0, 36.0, 21.0, 10.0, 10.0]
 
-    def __init__(self, reach_after=2, accept=True):
+    def __init__(self, reach_after=2, accept=True, errors=None):
         self.has_gripper = True
         self._hard_limit_tripped = False
         self.pos = [0.0] * 6
         self.calls = []
         self.reach_after = reach_after
         self.accept = accept
+        self.errors = errors or (lambda n: [0.2] * 6)   # 第 n 次查到位时各关节的偏差
         self.checks = 0
 
     def send_get_motor_state_cmd(self):
@@ -597,7 +600,8 @@ class FakeRobot:
         if self.checks >= self.reach_after:
             self.pos = list(target)
             return True, [0.0] * 6
-        return False, [0.2] * 6
+        errors = self.errors(self.checks)
+        return all(e <= tolerance for e in errors), errors
 
     def Joint_Pos_Vel(self, pos, vel, max_tqu=None, iswait=False):
         self.calls.append(("hold", list(pos), list(vel)))
@@ -651,6 +655,31 @@ class PantheraBackendTest(unittest.TestCase):
             with self.assertRaises(ArmError) as cm:
                 b.move([0.1] * 6, 0.05, threading.Event())
         self.assertIn("挡住", str(cm.exception))
+
+    def test_settled_gravity_sag_counts_as_reached(self):
+        """实测 J3 抬 15° 停在差 2.5° 的地方不动了：停稳、差得不多就算到，偏差记下来，不等满 SETTLE。"""
+        sag = [0.0, 0.02, 0.06, 0.1, 0.0, 0.0]
+        b = self.backend(reach_after=10 ** 9, errors=lambda n: sag)
+        started = time.monotonic()
+        with mock.patch("hand_controller.arm_backend.STILL_SECONDS", 0.05):
+            self.assertTrue(b.move([0.1] * 6, 0.05, threading.Event()))
+        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertEqual(b.last_errors, sag)
+
+    def test_still_moving_is_not_settled(self):
+        """偏差还在一点点变小（还在走）就接着等，到容差内才算到。"""
+        b = self.backend(reach_after=10 ** 9, errors=lambda n: [max(0.0, 0.14 - 0.005 * n)] + [0.0] * 5)
+        with mock.patch("hand_controller.arm_backend.STILL_SECONDS", 0.05):
+            self.assertTrue(b.move([0.1] * 6, 0.01, threading.Event()))
+        self.assertLessEqual(max(b.last_errors), 0.08)
+
+    def test_large_settled_error_is_blocked(self):
+        b = self.backend(reach_after=10 ** 9, errors=lambda n: [0.0, 0.0, 0.3, 0.0, 0.0, 0.0])
+        with mock.patch("hand_controller.arm_backend.SETTLE", 0.2), \
+                mock.patch("hand_controller.arm_backend.STILL_SECONDS", 0.05):
+            with self.assertRaises(ArmError) as cm:
+                b.move([0.1] * 6, 0.05, threading.Event())
+        self.assertIn("17.2°", str(cm.exception))
 
     def test_hold_targets_current_position(self):
         b = self.backend()

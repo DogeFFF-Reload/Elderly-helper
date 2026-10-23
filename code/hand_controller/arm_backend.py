@@ -33,7 +33,13 @@ from hand_controller.arm_kinematics import GRIPPER_TCP, body_points
 
 REST = [0.0] * 6
 TOLERANCE = 0.08     # 到位判定（rad，约 4.6°）；SDK 默认 0.1
-SETTLE = 3.0         # 规定时长之后再等这么久还没到位 = 被挡住了
+# 位置模式（pos_vel_MAXtqe）没有重力前馈，带载的关节停稳后会差几度（2026-10-24 实测：J3 抬 15° 差 2.5°）。
+# 规定时长到了、臂已经停稳（STILL_SECONDS 内每个关节变化都不到 STILL_RAD），差得不超过 SAG_TOLERANCE 也算到位，
+# 差多少记进 last_errors；差得更多 = 被挡住
+SAG_TOLERANCE = 0.15   # 约 8.6°
+STILL_RAD = 0.004      # 约 0.2°
+STILL_SECONDS = 0.4
+SETTLE = 3.0         # 规定时长之后再等这么久还没到位、也没停稳在 SAG_TOLERANCE 内 = 被挡住了
 HOLD_VEL = 0.2       # hold 时每个关节的速度上限（rad/s）：目标就是当前位置，只为把运动刹住
 
 
@@ -54,6 +60,7 @@ class MockArm:
         self.has_gripper = has_gripper
         self.q = list(q or REST)
         self.moves = []     # (目标, 时长, torque_scale, 是否走完)
+        self.last_errors = [0.0] * 6
         self.grips = []     # True = 合上
         self.holds = 0
         self.braked = False
@@ -118,6 +125,7 @@ class PantheraArm:
         self.config_path = config_path or os.environ.get("PANTHERA_CONFIG") or None
         self.robot = None
         self.error = None
+        self.last_errors = None   # 最近一次 move 结束时每个关节离目标多远（rad）
         self._mu = threading.RLock()
 
     @property
@@ -160,16 +168,25 @@ class PantheraArm:
         max_tqu = [t * torque_scale for t in r.max_torque]
         if r.moveJ(list(q), seconds, max_tqu=max_tqu, iswait=False) is False:
             raise ArmError("SDK 拒绝了这次 moveJ（多半是关节限位，看 arm_service 窗口里 SDK 打印的警告）")
-        deadline = time.monotonic() + seconds + SETTLE
-        errors = [0.0]
+        t0 = time.monotonic()
+        deadline = t0 + seconds + SETTLE
+        errors, still = [0.0], None   # still = (从什么时候起, 那时的偏差)：判断停稳
         while time.monotonic() < deadline:
             if abort.wait(0.02):
                 return False
             if getattr(r, "_hard_limit_tripped", False):
                 raise ArmError("电机层越界锁定，全部电机已阻尼")
             reached, errors = r.check_position_reached(list(q), TOLERANCE)
+            self.last_errors = [float(e) for e in errors]
             if reached:
                 return True
+            now = time.monotonic()
+            if now - t0 < seconds:
+                continue
+            if still is None or max(abs(a - b) for a, b in zip(errors, still[1])) > STILL_RAD:
+                still = (now, list(errors))
+            elif now - still[0] >= STILL_SECONDS and max(errors) <= SAG_TOLERANCE:
+                return True   # 停稳了，差的是重力下垂；调用方看 last_errors
         raise ArmError("%.1f 秒还没走到位（最大偏差 %.1f°）：可能被挡住了" % (
             seconds + SETTLE, math.degrees(max(errors))))
 
