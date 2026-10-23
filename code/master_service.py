@@ -260,10 +260,10 @@ class Bus:
         self.arm_down_noted = False
         if arm is None:
             self.arm.start_probing()
-        self.night_mode = self.cfg["night_override"]
-        self.box_seen = None
         self.clients = {}   # /api/events 的订阅者 → 最近一次来拉的时间（tts_player、asr_bridge…）
         self.started = clock()
+        self.night_mode = self.cfg["night_override"]
+        self.box_seen = None
         self._reset_runtime()
         channel = self.llm.mode
         if self.llm.mode == "llm":
