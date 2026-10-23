@@ -15,6 +15,22 @@ POSES = {
     "rps_paper": {"label": "手#1 出：布", "hand": 1},
 }
 
+# RH56F2 kit vocabulary.  These names are accepted at the HTTP boundary and
+# are kept here as a single source of truth so the physical backend and the
+# mock expose the same action inventory.
+for _name, _label, _hand in (
+    ("rock", "出：石头", 1), ("paper", "出：布", 1),
+    ("scissors", "出：剪刀", 1), ("ok", "手势：OK", 1),
+    ("thumbs_up", "手势：点赞", 1), ("fingers_1", "手指：一", 1),
+    ("fingers_2", "手指：二", 1), ("fingers_3", "手指：三", 1),
+    ("fingers_4", "手指：四", 1), ("fingers_5", "手指：五", 1),
+    ("hold_card", "捏住提示牌", 1), ("grip_pillow", "按键握持", 1),
+    ("nod_like", "点头点赞", 1), ("clench_open", "握拳再张开", 1),
+    ("count_five", "数一到五", 1), ("comfort_rhythm", "手#2 轻握节拍", 2),
+    ("wave", "挥手", 1),
+):
+    POSES.setdefault(_name, {"label": _label, "hand": _hand})
+
 # 手指操 13 拍：(口令, 手形)
 FINGER_MOVES = [
     ("双手握拳", "fist"),

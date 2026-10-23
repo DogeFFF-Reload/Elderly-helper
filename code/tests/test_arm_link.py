@@ -2,6 +2,7 @@
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
+from urllib.request import Request, urlopen
 from unittest import mock
 
 from helpers import FakeArm, events, make_bus
@@ -98,6 +99,76 @@ class ArmClientTest(unittest.TestCase):
         arm.send("press_sos", 1)
         arm.drain()
         self.assertEqual(arm.status()["done"], 2)
+
+    def test_kit_aliases_stay_on_our_single_service(self):
+        """kit 的验收命令可以打到仓库服务，但内部仍记录规范动作名。"""
+        for path in ("/press_sos", "/pose/comfort_rhythm?hand=2", "/handover_med",
+                     "/pose/rock", "/pose/thumbs_up?hand=1"):
+            req = Request(self.url + path, data=b"", method="POST")
+            with urlopen(req, timeout=1) as response:
+                self.assertEqual(response.status, 200)
+        self.assertEqual([h["pose"] for h in arm_service.HISTORY],
+                         ["press_sos", "gentle_hold", "deliver_medicine", "rps_rock",
+                          "sign_family_received"])
+        self.assertEqual([h["requested"] for h in arm_service.HISTORY],
+                         ["press_sos", "comfort_rhythm", "handover_med", "rock", "thumbs_up"])
+
+    def test_unknown_alias_is_rejected_without_execution(self):
+        # kit-compatible path: documented as HTTP 200 with ok=false
+        with urlopen(Request(self.url + "/pose/no_such_pose", data=b"", method="POST"), timeout=1) as response:
+            self.assertEqual(response.status, 200)
+            self.assertIn('"ok": false', response.read().decode("utf-8"))
+        # master-facing query path: HTTP error so ArmClient counts rejection
+        req = Request(self.url + "/pose?name=no_such_pose", data=b"", method="POST")
+        with self.assertRaises(Exception) as ctx:
+            urlopen(req, timeout=1)
+        self.assertIn("400", str(ctx.exception))
+        self.assertEqual(arm_service.HISTORY, [])
+
+    def test_http_real_branch_with_in_memory_backend(self):
+        """Exercise the non-mock HTTP branch without a serial device."""
+        fake = arm_service.RH56Backend(
+            arm_service.RH56F2(mock=True), arm_service.RH56F2(mock=True))
+        old_mock = arm_service.MOCK_SERIAL
+        old_history = list(arm_service.HISTORY)
+        try:
+            arm_service.MOCK_SERIAL = False
+            arm_service.HISTORY.clear()
+            with mock.patch.object(arm_service, "_ensure_real_backend", return_value=fake), \
+                 mock.patch.object(arm_service, "_execute",
+                                   side_effect=lambda pose, hand: fake.execute(pose, hand)):
+                server = ThreadingHTTPServer(("127.0.0.1", 0), arm_service.Handler)
+                server.daemon_threads = True
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                def stop_server():
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=2)
+                self.addCleanup(stop_server)
+                base = "http://127.0.0.1:%d" % server.server_address[1]
+                req = Request(base + "/pose/fingers_5", data=b"", method="POST")
+                with urlopen(req, timeout=1) as response:
+                    payload = response.read().decode("utf-8")
+                    self.assertEqual(response.status, 200)
+                    self.assertIn('"backend": "rh56_serial"', payload)
+                with urlopen(base + "/status", timeout=1) as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertIn('"mock": true', response.read().decode("utf-8"))
+        finally:
+            arm_service.MOCK_SERIAL = old_mock
+            arm_service.HISTORY[:] = old_history
+
+    def test_action_history_is_bounded(self):
+        old_history = list(arm_service.HISTORY)
+        try:
+            arm_service.HISTORY.clear()
+            for index in range(arm_service.HISTORY_LIMIT + 25):
+                arm_service._record_history({"n": index})
+            self.assertEqual(len(arm_service.HISTORY), arm_service.HISTORY_LIMIT)
+            self.assertEqual(arm_service.HISTORY[0]["n"], 25)
+        finally:
+            arm_service.HISTORY[:] = old_history
 
 
 class DeadArm(FakeArm):

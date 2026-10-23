@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 一次性装环境（两块 X5 各跑一次）：bash deploy/setup_x5.sh a|b
-#   a = X5-A 视觉   b = X5-B 主脑 + 大屏 + 语音 + 执行端（USB-RS485 连双手）
+#   a = X5-A 视觉 / 手机保底哨兵   b = X5-B 主脑 + 大屏 + 语音 + 执行端（USB-RS485 连双手）
 set -euo pipefail
 
 ROLE="${1:-}"
@@ -31,8 +31,13 @@ python3 -m venv "$ROOT/.venv"
 PIP=("$ROOT/.venv/bin/python" -m pip install -i "$PIP_INDEX")
 "${PIP[@]}" --upgrade pip
 case "$ROLE" in
-  a) "${PIP[@]}" -r "$ROOT/code/requirements-vision.txt" ;;
-  b) # 执行端目前只用标准库；RS485 实装后在这里加 pyserial
+  a)
+    "${PIP[@]}" -r "$ROOT/code/requirements-vision.txt"
+    # 手机哨兵只依赖 Pillow；即使 PHONE_URL 还没填，提前装好也方便现场换机位
+    "${PIP[@]}" -r "$ROOT/code/requirements-phonecam.txt" ;;
+  b)
+     # X5-B owns the repository arm_service and the two RH56F2 RS485 links.
+     "${PIP[@]}" -r "$ROOT/code/requirements-hardware.txt"
      if [ "${WITH_ASR:-0}" = 1 ]; then "${PIP[@]}" -r "$ROOT/code/requirements-voice.txt"; fi ;;
 esac
 
@@ -41,7 +46,7 @@ cd "$ROOT/code"
 "$ROOT/.venv/bin/python" tests/run_all.py
 case "$ROLE" in
   a)
-    "$ROOT/.venv/bin/python" -c "import cv2, mediapipe; print('cv2', cv2.__version__, '| mediapipe', mediapipe.__version__)"
+    "$ROOT/.venv/bin/python" -c "import cv2, mediapipe, PIL; print('cv2', cv2.__version__, '| mediapipe', mediapipe.__version__, '| pillow', PIL.__version__)"
     v4l2-ctl --list-devices || true
     if ! id -nG | grep -qw video; then
       echo "提示：当前用户不在 video 组，摄像头可能打不开：sudo usermod -aG video $USER 后重新登录"

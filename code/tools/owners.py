@@ -16,9 +16,12 @@ PATHS = {
     "code/tools/": "software",
     "code/hand_controller/": "hardware",
     "firmware/": "hardware",
+    "code/requirements-hardware.txt": "hardware",
     "code/vision/": "demo",
+    "code/camera/": "demo",
     "code/gesture/": "demo",
     "code/requirements-vision.txt": "demo",
+    "code/requirements-phonecam.txt": "demo",
     "deploy/": "demo",
     "code/ui/": "captain",
     "code/voice/": "captain",
@@ -49,11 +52,14 @@ TESTS = {
     "test_exercise": ("hardware",),
     "test_rps_engine": ("demo",),
     "test_fall_detector": ("demo",),
+    "test_phone_fall_watch": ("demo",),
+    "test_rh56_driver": ("hardware",),
     "test_rps_hook": ("software",),
     "test_vision_teach_report": ("demo", "captain"),  # 跌倒/夜间归演示，教学/日报/健康归队长
     "test_voice_profile": ("captain",),
     "test_asr_chain": ("captain",),
     "test_health_readback": ("captain",),
+    "test_hardware_preflight": ("hardware",),
 }
 
 

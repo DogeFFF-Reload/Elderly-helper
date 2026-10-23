@@ -242,7 +242,21 @@ python -m demo_driver --local           # 不连服务，假时钟几秒跑完
 - **断链保护（§5.2 的总线一侧）**：排队超过 `arm_stale`（5 秒）还没发出去的动作直接丢，链路恢复时臂不会补做一串过期动作。**不重发**：超时的请求可能已经到了执行端，重发 press_sos 等于按两下。
 - `arm_timeout`（1.5 秒）、`arm_stale` 是配置项，也能经 `/api/params` 现场调。
 
-**和硬件同学的约定**：`POST /pose` 收到就回 200，动作在执行端自己做，别等做完才回，否则超过 `arm_timeout` 会被当成离线；做不了的动作回 4xx，在 JSON 的 `error` 里写原因，总线原样显示；`GET /status` 保持可用，总线靠它探测在线。现在的 mock 已经是这样。
+**和硬件同学的约定**：全队只运行仓库里的 `code/hand_controller/arm_service.py`，不要把 kit 自带的第二份服务放到 8013。主脑使用 `POST /pose?name=<规范动作>&hand=<1|2>`；为了让 kit 的验收命令也能打到同一个服务，执行端还兼容 `/pose/<动作>`、`/press_sos`、`/handover_med`、`/reset`，并把 `rock`、`comfort_rhythm`、`thumbs_up`、`handover_med` 映射到仓库规范动作。
+
+双手的真实后端已接入 `rh56f2_driver.py`：Modbus RTU、RS485、115200-8N1、从站 ID 1/2、FC03/FC06/FC16 帧都集中在 `rh56_register_map.py` 和 `rh56_backend.py`。但硬件资料明确说目标/状态/控制寄存器仍是占位值，因此真实写入必须同时满足 `MOCK_SERIAL=0`、`RH56_REGMAP_CONFIRMED=1`，并将 `rh56_register_map.py` 的 `PROVISIONAL=False`；否则服务会拒绝打开真实写链路并返回 503，防止误写未知寄存器。现场核对 `docs/10_RH56F2驱动笔记_待核对.md` 后才允许打开这个开关。Panthera-HT 仍通过 `arm_backend_vendor.py` 接入，SDK 未安装或动作映射未填时会诚实返回失败。
+
+无论是真手还是 mock，`POST /pose` 都应快速回执；动作执行不能阻塞 HTTP 请求。做不了的动作返回错误，在 JSON 的 `error` 里写原因，总线原样显示；`GET /status` 保持可用，总线靠它探测在线。
+
+双手真机环境安装 `pip install -r code/requirements-hardware.txt`。默认仍是安全的 mock：`MOCK_SERIAL=1`。切到 RH56F2 真手前，先按 `docs/10_RH56F2驱动笔记_待核对.md` 核对目标、速度、状态和控制四类寄存器，更新 `rh56_register_map.py` 并把 `PROVISIONAL=False`，再配置 `MOCK_SERIAL=0 RH56_REGMAP_CONFIRMED=1` 以及 `HAND1_PORT/HAND2_PORT`；只接通串口或只安装 pyserial 不代表动作已经验证。Panthera 相关资料见 `docs/22_真实控制资料卡.md`，SDK 到手前保持 `ARM_BACKEND=mock` 或让 Panthera 动作明确失败。
+
+上真机前可以先运行只读检查：`cd code && python -m tools.hardware_preflight --arm-url http://127.0.0.1:8013`。它只扫描可见串口并读取执行端 `/status`，不会发姿态或写 Modbus；现场要强制检查 real 条件时加 `--mode real --hand1-port <COMx> --hand2-port <COMx> --require-real`。寄存器表仍标记为占位时，该命令会明确阻塞 real 模式。
+
+按优先级接续现场工作见 `docs/25_现场执行清单_优先级.md`；其中包含真手低风险顺序、Panthera SDK 四项资料、手机跌倒三连验收和可直接填写的现场回执。
+
+不在现场时运行 `powershell -ExecutionPolicy Bypass -File deploy/offline_smoke.ps1`。它强制 `MOCK_SERIAL=1`，只跑回归、编译和假时钟演示，完全不会扫描或连接硬件。
+
+Windows 笔记本可以用 `powershell -ExecutionPolicy Bypass -File deploy/start_hand.ps1 -Mode mock` 起仓库服务；寄存器核对完成后再用 `-Mode real -ConfirmRegisterMap -Hand1Port COM5 -Hand2Port COM6`。`deploy/hand_demo.ps1` 只发张开、挥手、点赞三条手姿态，便于先验收双手，不会绕过主脑直接触发 SOS。
 
 ### 10.9 联调自检（`tools/preflight`）
 
@@ -383,3 +397,16 @@ bash deploy/start.sh vision                  # 手动起单个服务调试：vis
 ### 11.6 猜拳一局怎么走
 
 视觉这边只做一件事：在揭晓前后约 2 秒内逐帧识别老人的手势、多帧投票，回传 `POST /api/rps/gesture {"round": n, "gesture": "rock"|"scissors"|"paper"|null}`。一局怎么走、机器人出什么、谁赢，都在主脑一侧（`software/rps-hook`，README §10.7）。手势识别按"指尖到手腕的距离"判断手指伸直，和手怎么转、离多远、画面比例都无关。
+
+## 12. 手机摄像头保底哨兵
+
+当 X5 的 MIPI 摄像头不可用时，可以用安卓手机运行 IP Webcam，把手机当作临时视觉输入。哨兵只负责从 `/shot.jpg` 取帧、计算动作能量并向主脑发送 `POST /mock/fall`；它不直接调用机械臂，跌倒后的询问、升级和家属通知仍由主脑状态机负责。
+
+```powershell
+pip install -r code/requirements-phonecam.txt
+cd code
+python -m camera.phone_fall_watch --phone http://<手机IP>:8080 --arm 0
+python -m camera.phone_fall_watch --phone http://<手机IP>:8080 --master http://127.0.0.1:8000 --thresh 38 --cooldown 30 --arm 1 --room 客厅
+```
+
+`--arm 0` 用于现场校准，`--arm 1` 才会真正上报；`--conn` 控制连续超阈值帧数。手机和主脑必须处于同一网络，手机应保持插电并关闭省电策略。X5 部署可在 `deploy/x5.env` 设置 `PHONE_URL` 和 `PHONE_ARGS`，然后运行 `bash deploy/start.sh phone`；执行 `bash deploy/install_services.sh a` 时若已配置 `PHONE_URL`，会在 X5-A 上安装手机哨兵 systemd 服务。完整交接步骤见 `docs/21_交接_手机摄像头组.md`。

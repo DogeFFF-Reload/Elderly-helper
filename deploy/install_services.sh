@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 开机自启：bash deploy/install_services.sh a|b
-#   a = X5-A 视觉   b = X5-B 主脑 + 大屏 + 语音 + 执行端
+#   a = X5-A 视觉 / 手机保底哨兵   b = X5-B 主脑 + 大屏 + 语音 + 执行端
 #   不需要声卡/屏幕的（vision / master / arm）→ systemd 系统服务：开机就起，挂了 2 秒后自动重启
 #   要用喇叭、麦克风、屏幕的（tts / asr / kiosk）→ 桌面登录后自启（~/.config/autostart），
 #   因为系统服务拿不到登录用户的音频和显示
@@ -54,7 +54,9 @@ EOF
 }
 
 case "$ROLE" in
-  a) unit vision ;;
+  a)
+    unit vision
+    if [ -n "${PHONE_URL:-}" ]; then unit phone; fi ;;
   b)
     unit arm      # 执行端和主脑同一块：主脑 → 执行端走本机回环，不经过 Wi-Fi
     unit master

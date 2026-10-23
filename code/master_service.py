@@ -151,8 +151,11 @@ class ArmClient:
         try:
             urllib.request.urlopen(req, timeout=self.timeout).read()
         except urllib.error.HTTPError as e:
-            self._link(True)
-            return False, "rejected", _http_error_text(e)
+            # 4xx means the service is alive but rejected this action.  A
+            # 5xx means its backend (for example the RH56 serial map) is not
+            # usable, so preflight must treat it as offline/unavailable.
+            self._link(e.code < 500)
+            return False, "rejected" if e.code < 500 else "offline", _http_error_text(e)
         except Exception as e:  # noqa: BLE001 连不上、超时、对端断开都算离线
             self._link(False)
             return False, "offline", str(getattr(e, "reason", e))
