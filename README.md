@@ -217,7 +217,18 @@ python -m demo_driver --local           # 不连服务，假时钟几秒跑完
 
 喇叭放哪还没定（见 §9）。选 HTTP 轮询是因为 ESP32-S3 连 Wi-Fi 后最好写，也不用在主脑上再开一个长连接服务。
 
-### 10.7 回归与合并
+### 10.7 猜拳接口（视觉 → 主脑）
+
+视觉只负责认出老人出了什么，**输赢由主脑判**（`master_service.rps_judge`，确定性代码）：
+
+- 老人说"石头剪刀布" → 主脑先随机定好机器人出什么（`/api/state` 的 `rps.robot` 揭晓前为 `null`）→ 发 `rps` 事件（`phase=start`、`reveal_in` 秒后揭晓）→ 到点手#1 摆出 `rps_rock / rps_scissors / rps_paper`
+- 视觉回传：`POST /api/rps/gesture {"round": n, "gesture": "rock" | "scissors" | "paper" | null}`；`null` = 没看清，也会揭晓并请老人再来一局
+- 揭晓后 `rps_timeout` 秒没回传 → 提示到展台玩；跌倒事件直接取消这一局
+- 猜拳登记为用到臂的技能 `rock_paper_scissors`（`uses: ["arm"]`），保命链进行中被资源锁挂起
+- `rps_reveal_delay`（默认 3.5 秒）、`rps_timeout`（默认 6 秒）进了 `LIMITS`，可经 `/api/params` 调
+- 顺带改了别人的文件：`lines.json`（队长，6 句猜拳台词）、`poses.py`（硬件，3 个出拳动作）、两块屏的猜拳卡片和兜底按钮（队长）
+
+### 10.8 回归与合并
 
 - 新增 4 套：`test_llm_fallback`（回落、冷却、内容检查、不占锁、紧急插队）、`test_config_params`、`test_demo_driver`、`test_merge_gate`。另外 `test_agent_supervisor` 补了资源锁，`test_bus_http` 补了 `/api/params` 和 `/api/box`。
 - 测试只读 `config.py` 默认值，不受本机 `config.local.json` 和环境变量影响（`config.load(use_local=False)`）。

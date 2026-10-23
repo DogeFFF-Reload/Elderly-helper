@@ -14,6 +14,7 @@ import argparse
 import json
 import mimetypes
 import queue
+import random
 import sys
 import threading
 import time
@@ -39,11 +40,24 @@ TEACH_CARD_SECONDS = 45.0
 BOX_TIMEOUT = 3.0
 
 # 意图 → 技能：老人提的每个请求都先过 supervisor（白名单 + 资源锁）
+# 猜拳规则归主脑（谁赢由确定性代码判）；视觉只负责认出老人出了什么，按这三个字符串回传
+RPS_NAMES = {"rock": "石头", "scissors": "剪刀", "paper": "布"}
+RPS_BEATS = {"rock": "scissors", "scissors": "paper", "paper": "rock"}
+
+
+def rps_judge(player, robot):
+    """站在老人角度：'win' / 'lose' / 'draw'。"""
+    if player == robot:
+        return "draw"
+    return "win" if RPS_BEATS[player] == robot else "lose"
+
+
 SKILL_OF = {
     "deliver": "deliver_medicine", "exercise_start": "finger_exercise",
     "call_family": "call_family", "message": "leave_message", "safe_report": "safe_report",
     "health_record": "record_health", "health_confirm": "record_health", "health_reject": "record_health",
     "teach": "teach_device", "echo": "echo_chat", "dial_request": "request_dial",
+    "rps": "rock_paper_scissors",
 }
 
 # 床头盒灯：(颜色, 闪法)。固件只管照着亮，逻辑全在主脑
@@ -169,6 +183,8 @@ class Bus:
         self.arm = arm if arm is not None else ArmClient(self.cfg["arm_url"])
         self.night_mode = self.cfg["night_override"]
         self.box_seen = None
+        self.rng = random.SystemRandom()
+        self.next_rps_id = 1
         self._reset_runtime()
         channel = self.llm.mode
         if self.llm.mode == "llm":
@@ -184,6 +200,8 @@ class Bus:
         self.skeleton = {"pose": "standing", "keypoints": None, "ts": self.clock()}
         self.last_say = None
         self.last_heard = None
+        self.rps = None
+        self.rps_last = None
 
     # ---------- 工具 ----------
 
@@ -367,8 +385,70 @@ class Bus:
         if name == "exercise_stop":
             return self._stop_exercise("老人喊停")
         if name == "rps":
-            return [_say("rps_booth")]
+            return self._rps_start()
         return [_say("chitchat", text=text)]  # text 只给 llm 通道参考，scripted 模板不用
+
+    # ---------- 猜拳（陪）----------
+
+    def _rps_start(self):
+        if self.rps:
+            return []
+        rid = self.next_rps_id
+        self.next_rps_id += 1
+        now = self.clock()
+        # 机器人在看到老人手势之前就定好出什么，揭晓时手#1 才摆出来 —— 公平
+        self.rps = {"round": rid, "robot": self.rng.choice(sorted(RPS_NAMES)), "revealed": False,
+                    "reveal_at": now + self.cfg["rps_reveal_delay"],
+                    "deadline": now + self.cfg["rps_reveal_delay"] + self.cfg["rps_timeout"]}
+        self.rps_last = None
+        self.teach_card = None
+        self.events.add("rps", "猜拳第 %d 局：等老人出手势" % rid, round=rid, phase="start",
+                        reveal_in=self.cfg["rps_reveal_delay"])
+        return [_say("rps_start")]
+
+    def _rps_reveal(self):
+        r = self.rps
+        if r and not r["revealed"]:
+            r["revealed"] = True
+            return [{"do": "arm", "pose": "rps_" + r["robot"], "hand": 1}]
+        return []
+
+    def rps_gesture(self, round_id, gesture):
+        """视觉（或操作台兜底按钮）回传老人的手势；输赢在这里判（rps_judge）。"""
+        with self.lock:
+            r = self.rps
+            try:
+                same = round_id is None or int(round_id) == r["round"]
+            except (TypeError, ValueError):
+                same = False
+            if not r or not same:
+                return {"ok": False, "reason": "no such round"}
+            acts = self._rps_reveal()
+            robot, names = r["robot"], RPS_NAMES
+            self.rps = None
+            if gesture not in RPS_NAMES:
+                result = None
+                acts += [_ev("rps", "猜拳第 %d 局：没看清老人的手势（我出%s）" % (r["round"], names[robot]), "warn"),
+                         _say("rps_unclear")]
+            else:
+                result = rps_judge(gesture, robot)
+                verdict = {"win": "老人赢", "lose": "机器人赢", "draw": "平局"}[result]
+                acts += [_ev("rps", "猜拳第 %d 局：老人出%s，我出%s → %s" % (r["round"], names[gesture], names[robot], verdict), "ok"),
+                         _say("rps_" + result, player=names[gesture], robot=names[robot])]
+            self.rps_last = {"round": r["round"], "robot": robot, "player": gesture if result else None,
+                             "result": result, "ts": self.clock()}
+            self._run(acts)
+            return {"ok": True, "result": result, "robot": robot}
+
+    def _rps_view(self):
+        r = self.rps
+        if r:
+            return {"round": r["round"], "phase": "revealed" if r["revealed"] else "countdown",
+                    "robot": r["robot"] if r["revealed"] else None,
+                    "reveal_in": max(0.0, round(r["reveal_at"] - self.clock(), 1))}
+        if self.rps_last:
+            return dict(self.rps_last, phase="done")
+        return None
 
     def _teach(self, text):
         r = self.guides.match(text)
@@ -402,6 +482,7 @@ class Bus:
                 self.exercise = None
                 acts.append(_ev("exercise", "手指操因跌倒事件中断"))
             self.teach_card = None
+            self.rps = None
             if self.skeleton["pose"] != "live":
                 self.skeleton = {"pose": "fallen", "keypoints": None, "ts": self.clock()}
             acts += self.fsm.fall_detected(room, self.is_night())
@@ -550,6 +631,14 @@ class Bus:
                              _say("exercise_beat", n=i + 1, move=move)]
             if self.teach_card and now - self.teach_card["ts"] > TEACH_CARD_SECONDS:
                 self.teach_card = None
+            r = self.rps
+            if r and now >= r["reveal_at"]:
+                acts += self._rps_reveal()
+            if r and now >= r["deadline"]:
+                self.rps = None
+                acts += [_ev("rps", "猜拳第 %d 局超时：视觉没有回传手势" % r["round"], "warn"), _say("rps_no_camera")]
+            if self.rps_last and now - self.rps_last["ts"] > 10:
+                self.rps_last = None
             if acts:
                 self._run(acts)
 
@@ -583,6 +672,7 @@ class Bus:
                 "notifications": self.notifications[-30:],
                 "teach": self.teach_card,
                 "exercise": {"active": ex is not None, "beat": ex["beat"] if ex else 0, "total": len(FINGER_MOVES)},
+                "rps": self._rps_view(),
                 "skeleton": self.skeleton,
                 "arm": {"online": self.arm.online},
                 "box": {"online": bool(self.box_seen and self.clock() - self.box_seen["ts"] < BOX_TIMEOUT),
@@ -632,6 +722,7 @@ def dispatch_post(bus, path, body, query=None):
         "/api/params": lambda: bus.set_params(body or q),
         "/api/agent/propose": lambda: bus.agent_propose(arg("skill", "")),
         "/api/reset": lambda: bus.reset(clear_data=str(arg("all", "0")) == "1"),
+        "/api/rps/gesture": lambda: bus.rps_gesture(arg("round"), arg("gesture")),
     }
     fn = routes.get(path)
     return fn() if fn else None

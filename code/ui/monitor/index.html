@@ -332,6 +332,20 @@ function overlay(s) {
       : { key: "teach-" + t.ts, cls: "card warn", html: `<h3>📖 这个没学过，不乱教</h3><p>${UI.esc(t.device)}会教：${UI.esc(t.known.join("、"))}</p>
          <p class="tag">教学步骤只来自 guides.json，不许现编</p>` });
   }
+  const r = s.rps;
+  if (r) {
+    const N = { rock: "✊ 石头", scissors: "✌️ 剪刀", paper: "🖐️ 布" };
+    const head = `<h3>✊✌️🖐️ 猜拳 · 第 ${r.round} 局${r.phase === "countdown" ? `<span class="count">${UI.secs(r.reveal_in)}</span>` : ""}</h3>`;
+    if (r.phase === "countdown") {
+      items.push({ key: "rps-" + r.round, cls: "card", html: head + `<p>石头、剪刀、布……机器人已经想好出什么了，揭晓前谁也看不到</p>` });
+    } else if (r.phase === "revealed") {
+      items.push({ key: "rps-" + r.round, cls: "card", html: head + `<div class="big">手#1 出：${N[r.robot]}</div><p>正在看老人的手势…</p>` });
+    } else {
+      const res = { win: "老人赢啦 🎉", lose: "机器人赢了这局", draw: "平局" }[r.result] || "没看清老人的手势";
+      items.push({ key: "rps-" + r.round + "-done", cls: "card", html: head +
+        `<div class="big">${r.player ? N[r.player] : "？"}  vs  ${N[r.robot]}</div><p>${res}</p>` });
+    }
+  }
   if (s.exercise.active) {
     items.push({ key: "beat", cls: "beat", html: `<div class="n">${s.exercise.beat}<small> / ${s.exercise.total} 拍</small></div>
       <div class="muted">🖐️ 手指操带练</div>` });
