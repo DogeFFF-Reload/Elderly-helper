@@ -1,4 +1,4 @@
-"""RH56F2 驱动 + 执行服务：Modbus 帧、寄存器换算、串口复用/重连、HTTP 层和主脑联调。
+"""RH56F2 驱动 + 执行服务：EB 90 帧、寄存器换算、串口复用/重连、HTTP 层和主脑联调。
 
 真机路径全部用 FakeSerial，不依赖 pyserial；HTTP 层起真的 ThreadingHTTPServer，
 只有"急停作废排队"那条按需求 patch arm_service._execute。
@@ -19,50 +19,85 @@ from hand_controller import arm_service, poses
 from hand_controller import rh56_register_map
 from hand_controller import rh56_register_map as RM
 from hand_controller import rh56f2_driver
-from hand_controller.rh56f2_driver import ModbusError, RH56F2, crc16, frame
+from hand_controller.rh56f2_driver import HandError, RH56F2, checksum, frame_read, frame_write, pack_shorts
 from master_service import ArmClient
+
+
+# ---------- 手册原文的帧（《RH56 用户手册 V1.09》§2.2） ----------
+# 期望值一律用这里的常量核对，不用被测模块的 checksum 反推。
+
+MANUAL_READ_REQ = bytes.fromhex("eb 90 01 04 11 0a 06 0c 32")
+MANUAL_WRITE_REQ = bytes.fromhex(
+    "eb 90 01 0f 12 ce 05 64 00 64 00 64 00 64 00 e8 03 00 00 70")
+MANUAL_READ_RESP = bytes.fromhex(
+    "90 eb 01 0f 11 0a 06 64 00 64 00 64 00 64 00 e8 03 00 00 ac")
+MANUAL_WRITE_RESP = bytes.fromhex("90 eb 01 04 12 ce 05 01 eb")
+
+
+def sum8(body):
+    """测试自己算的校验：包头之后全部字节累加和 & 0xFF。"""
+    return sum(body) & 0xFF
+
+
+def make_read_response(hand_id, addr, data):
+    """90 EB | ID | n+3 | 11 | 地址低 地址高 | 数据 n 字节 | 校验。"""
+    data = bytes(data)
+    body = bytes([hand_id, len(data) + 3, 0x11, addr & 0xFF, addr >> 8]) + data
+    return b"\x90\xEB" + body + bytes([sum8(body)])
+
+
+def make_write_ack(hand_id, addr, status=0x01):
+    """90 EB | ID | 04 | 12 | 地址低 地址高 | 01 | 校验。"""
+    body = bytes([hand_id, 0x04, 0x12, addr & 0xFF, addr >> 8, status])
+    return b"\x90\xEB" + body + bytes([sum8(body)])
+
+
+def default_responder(req, data=None):
+    """按 EB 90 协议回包；读数据来自 data={地址: bytes}，没有就全 0。"""
+    if len(req) < 8:
+        return b""
+    hand_id, addr = req[2], req[5] | req[6] << 8
+    if req[4] == 0x11:
+        n = req[7] if len(req) > 7 else 0
+        payload = (data or {}).get(addr, b"")
+        payload = (bytes(payload) + bytes(n))[:n]
+        return make_read_response(hand_id, addr, payload)
+    if req[4] == 0x12:
+        return make_write_ack(hand_id, addr)
+    return b""
 
 
 # ---------- 假串口 / 假工厂 ----------
 
-def default_responder(req):
-    """FC03 回 count 个 0x0001；FC06/FC16 回 8 字节"回显"帧（从站、功能码、地址、数量/值、CRC）。"""
-    if len(req) < 6:
-        return b""
-    slave, func = req[0], req[1]
-    if func == 0x03:
-        count = struct.unpack(">H", req[4:6])[0]
-        data = b"".join(struct.pack(">H", 1) for _ in range(count))
-        body = bytes([slave, func, 2 * count]) + data
-        return body + struct.pack("<H", crc16(body))
-    if func in (0x06, 0x10):
-        body = req[:6]
-        return body + struct.pack("<H", crc16(body))
-    return b""
-
-
 class FakeSerial:
     """只实现驱动用到的几个串口方法；read(n) 可以少于 n，模拟超时。"""
 
-    def __init__(self, responder=None):
-        self.responder = responder or default_responder
+    def __init__(self, responder=None, echo=False, data=None):
+        self.responder = responder
+        self.echo = echo
+        self.data = dict(data or {})
         self.written = []
         self.closed = False
-        self._pending = b""
+        self._pending = bytearray()
 
-    def write(self, data):
-        data = bytes(data)
-        self.written.append(data)
-        self._pending = self.responder(data)
-        return len(data)
+    def write(self, b):
+        b = bytes(b)
+        self.written.append(b)
+        if self.echo:
+            self._pending.extend(b)          # USB-RS485 转换器把自己发的字节回显一遍
+        if self.responder is not None:
+            self._pending.extend(self.responder(b) or b"")
+        else:
+            self._pending.extend(default_responder(b, self.data))
+        return len(b)
 
     def read(self, n):
-        out = self._pending[:n]
-        self._pending = self._pending[n:]
+        out = bytes(self._pending[:n])
+        del self._pending[:n]
         return out
 
     def reset_input_buffer(self):
-        pass
+        self._pending.clear()
 
     def close(self):
         self.closed = True
@@ -85,8 +120,8 @@ class CountingFactory:
         return serial
 
 
-def real_driver(port="FAKE1", slave=1, responder=None, factory=None):
-    factory = factory or CountingFactory(lambda p, n: FakeSerial(responder))
+def real_driver(port="FAKE1", slave=1, responder=None, factory=None, data=None, echo=False):
+    factory = factory or CountingFactory(lambda p, n: FakeSerial(responder, echo=echo, data=data))
     return RH56F2(port, slave, mock=False, serial_factory=factory), factory
 
 
@@ -113,106 +148,208 @@ class DriverTest(unittest.TestCase):
     def tearDown(self):
         rh56f2_driver._PORTS.clear()
 
-    def assert_fc16(self, req, addr, values, slave=1):
-        self.assertEqual(req[0], slave)
-        self.assertEqual(req[1], 0x10)
-        self.assertEqual(struct.unpack(">H", req[2:4])[0], addr)
-        self.assertEqual(struct.unpack(">H", req[4:6])[0], len(values))
-        self.assertEqual(req[6], 2 * len(values))
-        self.assertEqual(struct.unpack(">%dH" % len(values), req[7:7 + 2 * len(values)]),
-                         tuple(values))
-        self.assertEqual(struct.unpack("<H", req[-2:])[0], crc16(req[:-2]))
+    def assert_last_frame(self, ser, hand_id, addr, data):
+        self.assertEqual(ser.written[-1], frame_write(hand_id, addr, data))
 
-    def test_frame_matches_modbus_example(self):
-        self.assertEqual(frame(1, 3, bytes.fromhex("0000000a")),
-                         bytes.fromhex("01 03 00 00 00 0a c5 cd"))
+    # ---- 手册 golden ----
 
-    def test_mock_mode_never_touches_serial(self):
+    def test_manual_golden_frames(self):
+        self.assertEqual(frame_read(1, 1546, 12), MANUAL_READ_REQ)
+        self.assertEqual(
+            frame_write(1, 1486, pack_shorts([100, 100, 100, 100, 1000, 0])),
+            MANUAL_WRITE_REQ)
+
+        # 测试辅助函数本身也要和手册原文对得上
+        self.assertEqual(
+            make_read_response(1, 1546, pack_shorts([100, 100, 100, 100, 1000, 0])),
+            MANUAL_READ_RESP)
+        self.assertEqual(make_write_ack(1, 1486), MANUAL_WRITE_RESP)
+
+        self.assertEqual(checksum(MANUAL_READ_RESP[2:-1]), MANUAL_READ_RESP[-1])
+        self.assertEqual(checksum(MANUAL_WRITE_RESP[2:-1]), MANUAL_WRITE_RESP[-1])
+
+    def test_manual_read_response_parses_angles(self):
+        ser = FakeSerial(responder=lambda req: MANUAL_READ_RESP)
+        d = RH56F2("FAKE1", 1, mock=False, serial_factory=lambda port: ser)
+        self.assertEqual(d.read_angles(), {
+            "pinky": 10.0, "ring": 10.0, "middle": 10.0,
+            "index": 10.0, "thumb": 100.0, "thumb_rot": 0.0,
+        })
+        self.assertEqual(ser.written, [MANUAL_READ_REQ])
+
+    # ---- mock ----
+
+    def test_mock_never_touches_serial_and_tracks_angles(self):
         def boom(port):
             raise AssertionError("mock 模式不该调用 serial_factory")
 
         d = RH56F2("", 1, mock=True, serial_factory=boom)
-        d.move(poses.JOINTS["finger_fist"])
+        self.assertEqual(d.read_angles(), {j: 100.0 for j in RM.JOINT_ORDER})
+
+        joints = poses.JOINTS["finger_fist"]
+        d.move(joints)
         self.assertTrue(any(entry.startswith("TX ") for entry in d.log), list(d.log))
-        self.assertEqual(d.last, poses.JOINTS["finger_fist"])
-        self.assertEqual(d.read_registers(0x200, 2), [0, 0])
+        self.assertEqual(d.last, joints)
+        expected = {j: round(RH56F2.to_raw(joints[j]) * 100.0 / RM.VALUE_MAX, 1)
+                    for j in RM.JOINT_ORDER}
+        self.assertEqual(d.read_angles(), expected)
+
+        before = d.read_angles()
+        d.hold()
+        self.assertEqual(d.read_angles(), before, "-1 表示保持，mock 角度不能变")
+
+    # ---- 换算 ----
 
     def test_move_missing_joint_raises(self):
         d = mock_driver()
         joints = dict(poses.JOINTS["release"])
         joints.pop("pinky")
-        with self.assertRaises(ModbusError):
+        with self.assertRaises(HandError):
             d.move(joints)
 
     def test_to_raw_range_and_midpoint(self):
         self.assertEqual(RH56F2.to_raw(-5), RM.VALUE_MIN)
         self.assertEqual(RH56F2.to_raw(150), RM.VALUE_MAX)
-        midpoint = int(round(RM.VALUE_MIN + (RM.VALUE_MAX - RM.VALUE_MIN) * 50 / 100.0))
-        self.assertEqual(RH56F2.to_raw(50), midpoint)
+        self.assertEqual(RH56F2.to_raw(50), 500)
+
+    # ---- VERIFIED 门 ----
 
     def test_unverified_real_hand_refuses_write_but_can_read(self):
         d, factory = real_driver()
         self.assertTrue(d.connect())
         with mock.patch.object(rh56_register_map, "VERIFIED", False):
-            with self.assertRaises(ModbusError) as caught:
+            with self.assertRaises(HandError) as caught:
                 d.move(poses.JOINTS["release"])
             self.assertIn("VERIFIED", str(caught.exception))
             self.assertEqual(factory.serials[0].written, [], "未核对时不能往总线写动作")
-            self.assertEqual(d.read_registers(RM.REG_STATUS, 2), [1, 1])
+            self.assertEqual(len(d.read_angles()), len(RM.JOINT_ORDER))
+
+    # ---- 真机写帧 ----
 
     def test_verified_move_frames(self):
         d, factory = real_driver()
+        release = poses.JOINTS["release"]
+        angle_frame = frame_write(
+            1, RM.REG_ANGLE_SET,
+            pack_shorts([RH56F2.to_raw(release[j]) for j in RM.JOINT_ORDER]))
         with mock.patch.object(rh56_register_map, "VERIFIED", True):
-            d.move(poses.JOINTS["release"])
+            d.move(release)
             ser = factory.serials[0]
             self.assertEqual(len(ser.written), 1)
-            self.assert_fc16(ser.written[-1], RM.REG_TARGET_BASE,
-                             [d.to_raw(poses.JOINTS["release"][j]) for j in RM.JOINT_ORDER])
-            self.assertEqual(d.last, poses.JOINTS["release"])
+            self.assertEqual(ser.written[-1], angle_frame)
+            self.assertEqual(d.last, release)
 
-            d.move(poses.JOINTS["release"], speed=40)
+            d.move(release, speed=40)
             self.assertEqual(len(ser.written), 3)
-            self.assert_fc16(ser.written[1], RM.REG_SPEED_BASE,
-                             [d.to_raw(40)] * len(RM.JOINT_ORDER))
-            self.assert_fc16(ser.written[2], RM.REG_TARGET_BASE,
-                             [d.to_raw(poses.JOINTS["release"][j]) for j in RM.JOINT_ORDER])
+            speed_frame = frame_write(1, RM.REG_SPEED_SET, pack_shorts([400] * 6))
+            self.assertEqual(ser.written[1], speed_frame)
+            self.assertEqual(ser.written[2], angle_frame)
 
-    def test_exception_response_reports_code(self):
-        def responder(req):
-            body = bytes([req[0], 0x83, 0x02])
-            return body + struct.pack("<H", crc16(body))
+    def test_verified_set_force_frames(self):
+        d, factory = real_driver()
+        with mock.patch.object(rh56_register_map, "VERIFIED", True):
+            d.set_force(300)
+            ser = factory.serials[0]
+            self.assert_last_frame(ser, 1, RM.REG_FORCE_SET, pack_shorts([300] * 6))
 
-        d, _ = real_driver(responder=responder)
-        with self.assertRaises(ModbusError) as caught:
-            d.read_registers(RM.REG_STATUS, 2)
-        self.assertIn("异常码 2", str(caught.exception))
+            d.set_force(5000)
+            self.assertEqual(len(ser.written), 2)
+            self.assert_last_frame(ser, 1, RM.REG_FORCE_SET, pack_shorts([1000] * 6))
 
-    def test_empty_response_reports_no_reply(self):
+    def test_verified_hold_frame(self):
+        d, factory = real_driver()
+        with mock.patch.object(rh56_register_map, "VERIFIED", True):
+            d.hold()
+        ser = factory.serials[0]
+        self.assertEqual(len(ser.written), 1)
+        self.assert_last_frame(ser, 1, RM.REG_ANGLE_SET, pack_shorts([-1] * 6))
+        self.assertEqual(ser.written[-1][7:-1], b"\xFF" * 12)
+
+    # ---- 写白名单 ----
+
+    BAD_WRITES = (
+        (1000, b"\x02"),     # HAND_ID
+        (1005, b"\x01"),     # SAVE
+        (1006, b"\x01"),     # RESET_PARA
+        (1486, bytes(14)),   # 越过 ANGLE_SET 末尾
+    )
+
+    def test_write_whitelist_mock(self):
+        d = mock_driver()
+        for addr, data in self.BAD_WRITES:
+            with self.subTest(addr=addr):
+                with self.assertRaises(HandError):
+                    d.write(addr, data)
+
+    def test_write_whitelist_real_verified(self):
+        d, factory = real_driver()
+        self.assertTrue(d.connect())
+        ser = factory.serials[0]
+        with mock.patch.object(rh56_register_map, "VERIFIED", True):
+            for addr, data in self.BAD_WRITES:
+                with self.subTest(addr=addr):
+                    with self.assertRaises(HandError):
+                        d.write(addr, data)
+        self.assertEqual(ser.written, [], "被白名单拒绝的写不能发到总线")
+
+    # ---- 回包异常 ----
+
+    def test_read_empty_response_reports_no_reply(self):
         d, _ = real_driver(responder=lambda req: b"")
-        with self.assertRaises(ModbusError) as caught:
-            d.read_registers(RM.REG_STATUS, 2)
+        with self.assertRaises(HandError) as caught:
+            d.read_angles()
         self.assertIn("没回应", str(caught.exception))
 
-    def test_bad_crc_response(self):
+    def test_read_short_response_reports_incomplete(self):
+        d, _ = real_driver(responder=lambda req: MANUAL_READ_RESP[:10])
+        with self.assertRaises(HandError) as caught:
+            d.read_angles()
+        self.assertIn("不完整", str(caught.exception))
+
+    def test_read_bad_header_reports_header(self):
+        bad = b"\x00\x00" + MANUAL_READ_RESP[2:]
+        d, _ = real_driver(responder=lambda req: bad)
+        with self.assertRaises(HandError) as caught:
+            d.read_angles()
+        self.assertIn("包头", str(caught.exception))
+
+    def test_read_bad_checksum_reports_checksum(self):
+        bad = MANUAL_READ_RESP[:-1] + bytes([MANUAL_READ_RESP[-1] ^ 0xFF])
+        d, _ = real_driver(responder=lambda req: bad)
+        with self.assertRaises(HandError) as caught:
+            d.read_angles()
+        self.assertIn("校验和", str(caught.exception))
+
+    def test_read_wrong_id_reports_mismatch(self):
+        wrong_id = make_read_response(2, RM.REG_ANGLE_ACT, pack_shorts([100] * 6))
+        d, _ = real_driver(slave=1, responder=lambda req: wrong_id)
+        with self.assertRaises(HandError) as caught:
+            d.read_angles()
+        self.assertIn("对不上", str(caught.exception))
+
+    def test_write_unconfirmed_reports_not_confirmed(self):
         def responder(req):
-            good = default_responder(req)
-            return good[:-1] + bytes([good[-1] ^ 0xFF])
+            if req[4] == 0x12:
+                return make_write_ack(req[2], req[5] | req[6] << 8, status=0x00)
+            return default_responder(req)
 
         d, _ = real_driver(responder=responder)
-        with self.assertRaises(ModbusError) as caught:
-            d.read_registers(RM.REG_STATUS, 2)
-        self.assertIn("CRC", str(caught.exception))
+        with mock.patch.object(rh56_register_map, "VERIFIED", True):
+            with self.assertRaises(HandError) as caught:
+                d.move(poses.JOINTS["release"])
+        self.assertIn("没被确认", str(caught.exception))
 
-    def test_wrong_slave_response(self):
-        def responder(req):
-            count = struct.unpack(">H", req[4:6])[0]
-            body = bytes([req[0] + 1, 3, 2 * count]) + b"".join(
-                struct.pack(">H", 1) for _ in range(count))
-            return body + struct.pack("<H", crc16(body))
+    # ---- 回显 ----
 
-        d, _ = real_driver(slave=1, responder=responder)
-        with self.assertRaises(ModbusError):
-            d.read_registers(RM.REG_STATUS, 2)
+    def test_echo_read_angles(self):
+        raw = [100, 200, 300, 400, 500, 600]
+        d, factory = real_driver(echo=True, data={RM.REG_ANGLE_ACT: pack_shorts(raw)})
+        expected = {j: round(v * 100.0 / RM.VALUE_MAX, 1)
+                    for j, v in zip(RM.JOINT_ORDER, raw)}
+        self.assertEqual(d.read_angles(), expected)
+        self.assertEqual(factory.serials[0].written, [MANUAL_READ_REQ])
+
+    # ---- 串口掉线 / 复用 / 连接 ----
 
     def test_write_oserror_drops_port_and_reopens(self):
         class BadWrite(FakeSerial):
@@ -221,14 +358,14 @@ class DriverTest(unittest.TestCase):
 
         factory = CountingFactory(lambda port, n: BadWrite() if n == 1 else FakeSerial())
         d = RH56F2("FAKE1", 1, mock=False, serial_factory=factory)
-        with self.assertRaises(ModbusError):
-            d.read_registers(RM.REG_STATUS, 1)
+        with self.assertRaises(HandError):
+            d.read_angles()
         self.assertIsNone(d.ser)
         self.assertTrue(d.error)
         self.assertNotIn("FAKE1", rh56f2_driver._PORTS)
         self.assertTrue(factory.serials[0].closed)
 
-        self.assertEqual(d.read_registers(RM.REG_STATUS, 2), [1, 1])
+        self.assertEqual(len(d.read_angles()), len(RM.JOINT_ORDER))
         self.assertEqual(factory.calls, 2, "串口掉了之后下一次读要重新打开")
 
     def test_two_drivers_share_one_port(self):
@@ -276,6 +413,11 @@ class PoseTableTest(unittest.TestCase):
                 self.assertIn(joint, joints)
                 self.assertGreaterEqual(joints[joint], poses.GENTLE_MIN_OPEN,
                                         "gentle_hold 第 %d 步 %s 握得太紧" % (step_no, joint))
+
+    def test_gentle_hold_force_in_grams(self):
+        force = poses.RHYTHMS["gentle_hold"]["force"]
+        self.assertGreaterEqual(force, 1)
+        self.assertLessEqual(force, 500)
 
 
 # ---------- 执行服务 ----------
@@ -465,11 +607,38 @@ class ServiceTest(unittest.TestCase):
         lines = []
         self.assertTrue(arm_service.probe(out=lines.append))
         self.assertEqual(len(lines), 2)
+        for line in lines:
+            self.assertIn("实际角度", line)
 
         fresh_hands(mock_driver(1), RH56F2("", 2, mock=False))
         lines = []
         self.assertFalse(arm_service.probe(out=lines.append))
+        self.assertEqual(len(lines), 2)
         self.assertTrue(any("读不到" in line for line in lines), lines)
+
+    # ---- 急停写真机 ----
+
+    def test_stop_sends_hold_to_verified_real_hand(self):
+        factory = CountingFactory()
+        fresh_hands(mock_driver(1),
+                    RH56F2("FAKE1", 2, mock=False, serial_factory=factory))
+        with mock.patch.object(rh56_register_map, "VERIFIED", True):
+            code, body = http_post(self.url, "/stop")
+        self.assertEqual(code, 200, body)
+        ser = factory.serials[0]
+        self.assertEqual(ser.written[-1],
+                         frame_write(2, RM.REG_ANGLE_SET, pack_shorts([-1] * 6)))
+
+    def test_stop_does_not_write_to_unverified_real_hand(self):
+        factory = CountingFactory()
+        d2 = RH56F2("FAKE1", 2, mock=False, serial_factory=factory)
+        fresh_hands(mock_driver(1), d2)
+        self.assertTrue(d2.connect())
+        ser = factory.serials[0]
+        with mock.patch.object(rh56_register_map, "VERIFIED", False):
+            code, body = http_post(self.url, "/stop")
+        self.assertEqual(code, 200, body)
+        self.assertEqual(ser.written, [], "未核对寄存器表时急停也不能写总线")
 
 
 if __name__ == "__main__":

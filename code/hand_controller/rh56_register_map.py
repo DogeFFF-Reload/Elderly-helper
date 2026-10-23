@@ -1,31 +1,45 @@
-"""RH56F2 寄存器映射 —— 上真机前唯一必改的文件（对照官方手册）。来源：caremate_hand2_kit。
+"""RH56 灵巧手寄存器表 —— 摘自《因时机器人仿人五指灵巧手--RH56用户手册V1.09cn》（RS485）。
 
-⚠️ 下面的地址、量程、关节顺序全部是**占位值**（:TODO:），手册到手前不要信。
-核对完把 VERIFIED 改成 True，真机模式才会发动作；之前真机模式只读（rh56f2_driver 会拒绝写）。
+地址是手册 §2.4 的十进制地址，单位是字节：一个 short 占两个地址，低字节在前。
+通信走手册 §2.2 的因时自有协议（包头 EB 90，0x11 读 / 0x12 写，见 rh56f2_driver）。
+手册里的 Modbus RTU 没写清"Modbus 寄存器号和这张表的地址怎么对应"，所以不用它。
 
-还没定的大前提：手到底走 RS485 Modbus RTU（驱动现在就是这么写的），还是 CAN / CAN-FD
-（随货的蓝盒丝印 COM-USB-CANFD-01）。如果是 CAN，rh56f2_driver 的帧格式要整个换，这个文件只是开始。
-
-单位约定：仓库内部统一用「开合度 0~100」（0=全握，100=全开），driver 负责换算成寄存器原始值。
+VERIFIED 改成 True 之前，真机模式只读不写。改之前要确认：
+  1. 手上型号是 RH56F2-E2…（RS485 版）。E4… 是 CAN FD 版，帧格式完全不同（见《CAN增补协议V0.0.2cn》）
+  2. 24V 上电后 `arm_service --probe` 读 ANGLE_ACT 能读到 6 个 0~1000 的数
+F2 系列是否和这本 V1.09（RH56 通用手册）完全一致，以 F2 自己的资料为准，有出入改这里。
 """
 
-VERIFIED = False          # :TODO: 按手册核对完下面每一项后改成 True
+VERIFIED = False
 
-SLAVE_ID_HAND1 = 1        # 手#1（在臂上）
-SLAVE_ID_HAND2 = 2        # 手#2（床头旁）
-BAUD = 115200             # :TODO:
+# 通信（手册 p7、p16）
+SLAVE_ID_HAND1 = 1        # HAND_ID 出厂默认 1
+SLAVE_ID_HAND2 = 2        # ⚠ 出厂也是 1：两只手接同一条总线前，先用官方上位机把手#2 改成 2；各接各的串口就不用改
+BAUD = 115200             # REDU_RATIO 默认 0 = 115200
 PARITY = "N"
 STOPBITS = 1
 TIMEOUT = 0.3             # 等回包的秒数
 
-# ---- :TODO: 现场核对的寄存器（占位地址） ----
-REG_TARGET_BASE = 0x0100        # 目标位置：6 个连续寄存器（FC16 批量写）
-REG_SPEED_BASE = 0x0106         # 目标速度：6 个
-REG_FORCE_BASE = 0x010C         # 力度上限：6 个（轻握安抚靠它限力，§5.2）
-REG_STATUS = 0x0200             # 状态 / 错误码（FC03 读 2 个）
+# 寄存器（手册 §2.4，十进制字节地址）
+REG_ANGLE_SET = 1486      # 6 short：目标角度 -1、0~1000（1000 完全张开，0 握紧，-1 该指不动）
+REG_FORCE_SET = 1498      # 6 short：力控阈值 0~1000，单位 g，手指受力到这个值就停
+REG_SPEED_SET = 1522      # 6 short：速度 0~1000（1000 ≈ 空载全行程 800ms）
+REG_ANGLE_ACT = 1546      # 6 short：实际角度 0~1000（只读）
+REG_FORCE_ACT = 1582      # 6 short：实际受力 g（只读）
+REG_ERROR = 1606          # 6 byte：故障位 bit0 堵转 / bit1 过温 / bit2 过流 / bit3 电机异常 / bit4 通讯（只读）
+REG_STATUS = 1612         # 6 byte：状态（只读）
+REG_TEMP = 1618           # 6 byte：温度 ℃（只读）
 
-VALUE_MIN, VALUE_MAX = 0, 1000  # 原始值范围 :TODO: 核实；开合度 0 → VALUE_MIN，100 → VALUE_MAX
+# 驱动只许写这几组（左闭右开的字节地址）。HAND_ID(1000)、REDU_RATIO(1002)、SAVE(1005)、
+# RESET_PARA(1006) 这类会改 ID / 波特率 / 写 FLASH / 恢复出厂的，一律不许程序写，要改用官方上位机
+WRITABLE = (
+    (REG_ANGLE_SET, REG_ANGLE_SET + 12),
+    (REG_FORCE_SET, REG_FORCE_SET + 12),
+    (REG_SPEED_SET, REG_SPEED_SET + 12),
+)
 
-# 6 个寄存器依次对应的关节 :TODO: 核对顺序（不少灵巧手手册是小指在前、拇指旋转在最后），
-# 以及第 6 个到底是不是拇指旋转
-JOINT_ORDER = ["thumb", "index", "middle", "ring", "pinky", "thumb_rot"]
+VALUE_MIN, VALUE_MAX = 0, 1000   # 角度：开合度 0（握紧）→ 0，100（张开）→ 1000
+FORCE_MAX = 1000                 # g
+
+# 6 个寄存器依次对应的关节（手册 p18-19）；thumb = 拇指弯曲，thumb_rot = 拇指旋转
+JOINT_ORDER = ["pinky", "ring", "middle", "index", "thumb", "thumb_rot"]

@@ -128,7 +128,7 @@ python -m voice.asr_bridge --device 1
 |---|---|---|
 | `ui/`、`voice/`、`agent/health_tracker.py`、`agent/voice_profile.py`、`agent/guides.json`、`agent/device_helper.py`、`agent/lines.json` | **交互端** | 用这里的 |
 | `master_service.py`、`state_machine/`、`agent/intent.py`、`agent/supervisor.py`、`agent/skills.json`、`agent/llm_client.py`、`config.py`、`demo_driver.py`、`tests/`、`tools/` | **软件** | 用这里的（§10）；软件同学若另有正式版，用 `tools/merge_gate.py` 对照合并 |
-| `hand_controller/` | 硬件 | RH56F2 驱动 + 执行服务（§10.13，来自 hand2 kit，软件代接）；`poses.py` 的 `label` 会显示在大屏时间线上 |
+| `hand_controller/` | 硬件 | RH56F2 驱动（EB 90 协议，按官方手册 V1.09）+ 执行服务（§10.13，软件代接）；`poses.py` 的 `label` 会显示在大屏时间线上 |
 | `vision/`、`gesture/`、`deploy/` | 演示 | 已实现（见 §11）；猜拳的主脑一侧（`/api/rps/gesture`、判输赢）归软件，见 §10.7 |
 
 归属的机器可读版在 `code/tools/owners.py`，`run_all` 和 `merge_gate` 都按它判断"找谁"。
@@ -307,31 +307,30 @@ CareMate 联调自检 · http://127.0.0.1:8000
 
 夜间模式和健康日报的“今天”按**本机时区**算。X5 装好 Ubuntu 默认 UTC，比北京时间慢 8 小时，晚上 8 点它以为是中午。自检会比对本机 UTC 偏移和 `expected_utc_offset`（默认 +8），不一致报 ⚠️：X5 上 `sudo timedatectl set-timezone Asia/Shanghai` 后重启主脑；演示的夜间段本来就用操作台开关，不依赖钟点。回归测试的假时钟也改成按本机时区取“上午 10 点”，在任何时区的机器上都能跑过。
 
-### 10.13 执行端接真手（RH56F2 驱动，来自 caremate_hand2_kit）
+### 10.13 执行端接真手（RH56F2，按因时官方手册 V1.09）
 
-kit 里的驱动和寄存器表接进了仓库，**执行端接口没变**（`POST /pose?name=&hand=`、`/stop`、`/status`），主脑一行没改。
-**不要**用 kit 里的 `arm_service.py` 覆盖仓库的：它的接口是 `/pose/<名字>`、动作名是 `rock / comfort_rhythm` 一套，主脑发的每个动作都会被 404。
+驱动按《因时机器人仿人五指灵巧手--RH56用户手册V1.09cn》§2.2 的 **EB 90 自有协议**重写（kit 里的 Modbus 版地址全是占位、和手册对不上）。**执行端接口没变**（`POST /pose?name=&hand=`、`/stop`、`/status`），主脑一行没改。
+**不要**用 kit 里的 `arm_service.py` / `START_HAND.bat` / `GO_HAND.ps1`：接口是 `/pose/<名字>` 一套（主脑发的动作全 404），而且一找到 COM 口就往占位地址 `0x0100` 写动作。这只手**不需要烧录**，出厂自带固件。
 
 | 文件 | 干什么 |
 |---|---|
-| `hand_controller/rh56f2_driver.py` | Modbus RTU（FC03/06/16）。比 kit 版多了：回包校验、两手共用一个串口、串口断了自动重开；去掉了 kit 版 `move()` 里先往目标首寄存器写 0 的占位（真机上会让拇指先握到底） |
-| `hand_controller/rh56_register_map.py` | **占位**地址 + `VERIFIED = False`。没核对前真机模式只读：能读状态，发动作一律回 503 |
-| `hand_controller/poses.py` | 新增 `JOINTS`：仓库每个动作名 → 六个关节开合度（0 全握 / 100 全开）；`RHYTHMS`：轻握安抚的一握一松节拍 |
-| `hand_controller/arm_service.py` | 收到就回 200，每只手一个线程做动作；新动作或 `/stop` 立刻打断节拍，急停前排着的动作作废 |
+| `hand_controller/rh56f2_driver.py` | EB 90 协议：读 `EB 90 ID 04 11 地址低 地址高 字节数 校验`，写 `EB 90 ID 字节数+3 12 地址低 地址高 数据 校验`，校验 = 去掉包头后累加和低 8 位。回包逐项校验（包头 `90 EB`、ID、命令、地址、长度、校验和）；兼容会回显的 USB-RS485 转换器；两只手可共用一个口；串口断了自动重开。帧格式和手册 4 个原文例子逐字节一致（测试盯着） |
+| `hand_controller/rh56_register_map.py` | 手册地址：`ANGLE_SET` 1486、`FORCE_SET` 1498（g）、`SPEED_SET` 1522、`ANGLE_ACT` 1546、`FORCE_ACT` 1582、`ERROR` 1606、`STATUS` 1612、`TEMP` 1618。关节顺序 **小拇指、无名指、中指、食指、拇指弯曲、拇指旋转**；角度 1000 = 张开、0 = 握紧、-1 = 不动。**只许写角度 / 力度 / 速度**，改 ID、波特率、`SAVE`（写 FLASH）、`RESET_PARA`（恢复出厂）一律拒绝。`VERIFIED = False` 时真机只读 |
+| `hand_controller/poses.py` | `JOINTS`：仓库每个动作名 → 六个关节开合度（0 握紧 / 100 张开，驱动 ×10 成角度）；`RHYTHMS`：轻握安抚的一握一松节拍 |
+| `hand_controller/arm_service.py` | 收到就回 200，每只手一个线程；新动作或 `/stop` 立刻打断节拍、急停前排着的作废；真手 `/stop` 还会把角度设置值写 -1（手册：手指停在当前位置） |
 
-环境变量（和 kit 的 docs/20 写法一致）：`MOCK_SERIAL=0` 才碰串口（默认 mock）；`HAND1_PORT`/`HAND1_ID`、`HAND2_PORT`/`HAND2_ID`（默认从站 1 / 2；两只手同一条总线就填同一个口）。真机要 `pip install pyserial`。
+环境变量：`MOCK_SERIAL=0` 才碰串口（默认 mock）；`HAND1_PORT`/`HAND1_ID`、`HAND2_PORT`/`HAND2_ID`。**手出厂 ID 都是 1**：两只手各接各的串口时设 `HAND2_ID=1`；要接同一条总线，先用官方上位机把手#2 改成 2（程序不写 ID）。真机要 `pip install pyserial`。
 
 **第一次上真手**（Windows 用 `set`，X5 用 `export`）：
 
-1. 装 CH340 驱动，插蓝盒，设备管理器里看新出现的 COM 口。X5 上是 `/dev/ttyUSB*`，`setup_x5.sh b` 已经装了 pyserial（`requirements-hand.txt`）并把用户加进 `dialout` 组，**重新登录一次**才打得开串口。
-2. **先不上 24V**：`MOCK_SERIAL=0 HAND2_PORT=COM6 python -m hand_controller.arm_service --probe`。应该是"读不到：没回应"；如果是"打不开"，说明口号不对或驱动没装。
-3. 上 24V 再 `--probe`：读到状态寄存器 = 线、从站号、波特率都对。**读不到先别往下走**——手可能根本不是 Modbus RTU（见下）。
-4. 按手册改 `rh56_register_map.py`（地址、量程、关节顺序），改完 `VERIFIED = True`。
-5. 起服务，先发最安全的张开：`POST /pose?name=release&hand=2`，再试 `gentle_hold`、`/stop`。`JOINTS` 里标 `:示教:` 的数对着实物调。
+1. 看手上型号：`RH56F2-E2…` 是 RS485 版，走这套驱动；`E4…` 是 CAN FD 版，帧格式完全不同（因时《CAN增补协议V0.0.2cn》：1 Mbps、29 位扩展帧，ID 里编手号 / 寄存器地址 / 读写位），要另写。
+2. 插转换器，设备管理器里看 COM 口（本组笔记本上蓝盒是 COM7，COM3~6 是蓝牙）。X5 上是 `/dev/ttyUSB*`，`setup_x5.sh b` 已装 pyserial 并把用户加进 `dialout` 组，**重新登录一次**。
+3. 上 24V 后跑只读探测：`MOCK_SERIAL=0 HAND2_PORT=COM7 HAND2_ID=1 python -m hand_controller.arm_service --probe`。它只发一条读 `ANGLE_ACT` 的指令，读到 6 个 0~100 的开合度 = 线、ID、波特率、协议都对。**读不到先别往下走**。
+4. 读通了再把 `VERIFIED` 改成 `True`；起服务，先发最安全的张开：`POST /pose?name=release&hand=2`，再试 `gentle_hold`、`/stop`。`JOINTS` 里标 `:示教:` 的数对着实物调。
 
-**安全**：轻握节拍最紧也只到开合度 50（`GENTLE_MIN_OPEN`，测试盯着），力度上限 30（力度寄存器核对后才真写），最长 60 秒；`/stop` 一按节拍立刻停、排队作废。
+**安全**：轻握节拍最紧只到开合度 50（`GENTLE_MIN_OPEN`，测试盯着），`FORCE_SET` 300 g（手指受力到了就停），最长 60 秒；`/stop` 打断节拍、作废排队、真手写 -1 停住。手册里没有专门的急停寄存器，**拔 24V 是最后一道**。
 
-**还没定的**：蓝盒丝印是 `COM-USB-CANFD-01`（USB 转 CAN-FD），而驱动按 RS485 Modbus RTU 写。手册到手先确认手到底走哪种总线；如果是 CAN，驱动的帧格式要换，`poses.JOINTS` 和 `arm_service` 不用动。臂（Panthera-HT）的 SDK 还没接，臂的部分只打印。
+**还没定的**：蓝盒丝印是 `COM-USB-CANFD-01`（USB 转 CAN-FD），在电脑上显示为 CH340 串口；它能不能透传 RS485 的 EB 90 帧，要等型号确认、上 24V 后用探测验证。F2 和这本 RH56 通用手册（V1.09）是否完全一致，以 F2 自己的资料为准。臂（Panthera-HT）的 SDK 还没接，臂的部分只打印。
 
 ### 10.10 回归与合并
 

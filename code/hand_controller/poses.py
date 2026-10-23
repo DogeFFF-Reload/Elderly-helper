@@ -75,9 +75,9 @@ for _k, _f in enumerate((IX, MI, RG, PK), 1):           # :示教: 拇指转过�
     JOINTS["finger_pinch_%d" % _k] = dict(PAPER, **{TH: 35, _f: 45, TR: 85})
 
 # 轻握安抚：一握一松的节拍，循环到新动作 / 急停打断，最长 max_seconds。
-# 握紧那一拍也只到 GENTLE_MIN_OPEN，不握到底（§5.2 握力上限）；force 是力度寄存器上限，核对后才会真写
+# 握紧那一拍也只到 GENTLE_MIN_OPEN，不握到底（§5.2 握力上限）；force 写进 FORCE_SET，单位 g，手指受力到了就停
 GENTLE_MIN_OPEN = 50
 RHYTHMS = {
     "gentle_hold": {"steps": [(_j(55, 55, 55, 55, 55, 55), 1.2), (_j(80, 85, 85, 85, 85, 55), 1.2)],
-                    "max_seconds": 60, "force": 30},
+                    "max_seconds": 60, "force": 300},
 }

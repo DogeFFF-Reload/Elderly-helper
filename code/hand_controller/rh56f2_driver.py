@@ -1,13 +1,15 @@
-"""RH56F2 灵巧手驱动：最小 Modbus RTU（FC03 读 / FC06 写一个 / FC16 写多个）。真机才要 pyserial。
+"""RH56 灵巧手驱动：手册 §2.2 的因时自有 RS485 协议（包头 EB 90）。真机才要 pyserial。
 
-来源 caremate_hand2_kit 的同名文件，改了这几处：
-- 去掉 move() 里"先往目标位置首寄存器写 0"的占位：真机上那一下会让拇指先握到底
-- 校验回包（从站号、功能码、CRC、异常码），读寄存器真的解析出数值
-- 两只手可以共用一个串口（同一条总线、不同从站号），串口加锁
-- mock / 真机由构造参数决定（默认看环境变量 MOCK_SERIAL），测试可以注入假串口
-- 寄存器表没核对（rh56_register_map.VERIFIED = False）时，真机只读，写动作直接拒绝
+  读：EB 90 | ID | 04        | 11 | 地址低 地址高 | 字节数   | 校验
+  回：90 EB | ID | 字节数+3  | 11 | 地址低 地址高 | 数据…    | 校验
+  写：EB 90 | ID | 字节数+3  | 12 | 地址低 地址高 | 数据…    | 校验
+  回：90 EB | ID | 04        | 12 | 地址低 地址高 | 01       | 校验
+  校验 = 去掉两个包头字节后其余字节累加和的低 8 位；short 低字节在前、有符号（-1 = 该指不动）。
 
-开合度约定：0 = 全握，100 = 全开（和 poses.JOINTS 一致）。
+地址和关节顺序见 rh56_register_map。安全上的几道门：
+- mock（默认，MOCK_SERIAL 不为 0）只记帧不碰串口；读角度返回模拟值
+- 真机模式下 rh56_register_map.VERIFIED 为 False 时只读不写
+- 任何模式都只许写 WRITABLE 里的寄存器（角度 / 力度 / 速度），改 ID、波特率、存 FLASH、恢复出厂一律拒绝
 """
 import collections
 import os
@@ -16,27 +18,36 @@ import threading
 
 from hand_controller import rh56_register_map as RM
 
+HEAD_TX = b"\xEB\x90"
+HEAD_RX = b"\x90\xEB"
+CMD_READ, CMD_WRITE = 0x11, 0x12
+
 
 def mock_from_env():
-    """MOCK_SERIAL=0 才走真串口；不设或其他值都是 mock（只记帧、不发）。"""
+    """MOCK_SERIAL=0 才走真串口；不设或其他值都是 mock。"""
     return os.environ.get("MOCK_SERIAL", "1") != "0"
 
 
-def crc16(data):
-    crc = 0xFFFF
-    for b in data:
-        crc ^= b
-        for _ in range(8):
-            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
-    return crc
+def checksum(body):
+    """body = 包头之后的全部字节（不含校验本身）。"""
+    return sum(body) & 0xFF
 
 
-def frame(slave, func, payload):
-    body = bytes([slave, func]) + payload
-    return body + struct.pack("<H", crc16(body))
+def frame_read(hand_id, addr, nbytes):
+    body = bytes([hand_id, 0x04, CMD_READ, addr & 0xFF, addr >> 8, nbytes])
+    return HEAD_TX + body + bytes([checksum(body)])
 
 
-class ModbusError(Exception):
+def frame_write(hand_id, addr, data):
+    body = bytes([hand_id, len(data) + 3, CMD_WRITE, addr & 0xFF, addr >> 8]) + bytes(data)
+    return HEAD_TX + body + bytes([checksum(body)])
+
+
+def pack_shorts(values):
+    return struct.pack("<%dh" % len(values), *values)
+
+
+class HandError(Exception):
     pass
 
 
@@ -45,20 +56,21 @@ def _pyserial(port):
     return serial.Serial(port, RM.BAUD, parity=RM.PARITY, stopbits=RM.STOPBITS, timeout=RM.TIMEOUT)
 
 
-_PORTS = {}            # 串口名 → [serial, lock]：两只手同一条总线时共用
+_PORTS = {}            # 串口名 → [serial, lock]：多只手同一条总线（不同 ID）时共用
 _PORTS_MU = threading.Lock()
 
 
 class RH56F2:
-    def __init__(self, port="", slave_id=RM.SLAVE_ID_HAND1, mock=None, serial_factory=None):
+    def __init__(self, port="", hand_id=RM.SLAVE_ID_HAND1, mock=None, serial_factory=None):
         self.port = port
-        self.slave = slave_id
+        self.slave = hand_id
         self.mock = mock_from_env() if mock is None else mock
         self.factory = serial_factory or _pyserial
         self.ser = None
         self.lock = None
         self.error = None
         self.last = None                          # 最近一次下发的开合度
+        self.sim_angles = [RM.VALUE_MAX] * 6      # mock 下的"实际角度"：开机张开，move 后跟着变
         self.log = collections.deque(maxlen=50)   # 最近的收发帧，排错用
 
     # ---------- 串口 ----------
@@ -68,7 +80,7 @@ class RH56F2:
         if self.mock or self.ser is not None:
             return True
         if not self.port:
-            self.error = "没配串口（环境变量 HAND<n>_PORT，如 COM6 或 /dev/ttyUSB0）"
+            self.error = "没配串口（环境变量 HAND<n>_PORT，如 COM7 或 /dev/ttyUSB0）"
             return False
         try:
             with _PORTS_MU:
@@ -93,62 +105,83 @@ class RH56F2:
         self.ser = self.lock = None
         self.error = why
 
-    # ---------- Modbus ----------
+    # ---------- 收发 ----------
 
-    def _transact(self, func, payload, expect_len):
-        req = frame(self.slave, func, payload)
+    def _transact(self, req, expect_len):
         self.log.append("TX " + req.hex(" "))
-        if self.mock:
-            return None
         if not self.connect():
-            raise ModbusError(self.error)
+            raise HandError(self.error)
         try:
             with self.lock:
                 self.ser.reset_input_buffer()
                 self.ser.write(req)
                 resp = self.ser.read(expect_len)
+                if resp[:len(req)] == req:    # 有的 USB-RS485 转换器会把自己发的字节回显一遍：跳过
+                    resp = resp[len(req):] + self.ser.read(len(req))
         except Exception as e:  # noqa: BLE001 串口层出错 = 线断了
             self._drop("串口 %s 出错：%s" % (self.port, e))
-            raise ModbusError(self.error)
+            raise HandError(self.error)
         self.log.append("RX " + resp.hex(" "))
-        return self._check(func, resp, expect_len)
-
-    def _check(self, func, resp, expect_len):
-        crc_ok = lambda r: crc16(r[:-2]) == struct.unpack("<H", r[-2:])[0]  # noqa: E731
-        if len(resp) == 5 and resp[1] == func | 0x80 and crc_ok(resp):
-            raise ModbusError("从站 %d 回异常码 %d（地址或功能码不对？对照手册）" % (self.slave, resp[2]))
-        if len(resp) < expect_len:
-            raise ModbusError("从站 %d 没回应（收到 %d/%d 字节）：查 24V、A/B 线、从站号、波特率" % (
-                self.slave, len(resp), expect_len))
-        if not crc_ok(resp):
-            raise ModbusError("从站 %d 回包 CRC 不对：线上有干扰或波特率不对" % self.slave)
-        if resp[0] != self.slave or resp[1] != func:
-            raise ModbusError("回包不是从站 %d 功能码 %d 的：%s" % (self.slave, func, resp.hex(" ")))
         return resp
 
-    def read_registers(self, addr, count=1):
-        resp = self._transact(0x03, struct.pack(">HH", addr, count), 5 + 2 * count)
-        if resp is None:
-            return [0] * count
-        return list(struct.unpack(">%dH" % count, resp[3:3 + 2 * count]))
+    def _check(self, resp, cmd, addr, expect_len):
+        if not resp:
+            raise HandError("手 %d 没回应：查 24V、A/B 线、手的 ID、波特率，以及型号是不是 RS485 版（E2）" % self.slave)
+        if len(resp) < expect_len:
+            raise HandError("手 %d 回包不完整（%d/%d 字节）：%s" % (self.slave, len(resp), expect_len, resp.hex(" ")))
+        resp = resp[:expect_len]
+        if resp[:2] != HEAD_RX:
+            raise HandError("回包包头不是 90 EB：%s（协议不对？）" % resp.hex(" "))
+        if checksum(resp[2:-1]) != resp[-1]:
+            raise HandError("回包校验和不对：%s" % resp.hex(" "))
+        if resp[2] != self.slave or resp[4] != cmd or resp[5] | resp[6] << 8 != addr:
+            raise HandError("回包对不上（ID / 命令 / 地址）：%s" % resp.hex(" "))
+        return resp
 
-    def write_register(self, addr, value):
-        self._guard_write()
-        self._transact(0x06, struct.pack(">HH", addr, value), 8)
+    def read(self, addr, nbytes):
+        """读 nbytes 个字节，返回数据部分。"""
+        req = frame_read(self.slave, addr, nbytes)
+        if self.mock:
+            self.log.append("TX " + req.hex(" "))
+            return self._sim_read(addr, nbytes)
+        expect = 8 + nbytes
+        resp = self._check(self._transact(req, expect), CMD_READ, addr, expect)
+        if resp[3] != nbytes + 3:
+            raise HandError("回包长度字段不对：%s" % resp.hex(" "))
+        return resp[7:7 + nbytes]
 
-    def write_registers(self, addr, values):
-        self._guard_write()
-        payload = struct.pack(">HHB", addr, len(values), 2 * len(values)) + struct.pack(">%dH" % len(values), *values)
-        self._transact(0x10, payload, 8)
-
-    def _guard_write(self):
+    def write(self, addr, data):
+        if not any(lo <= addr and addr + len(data) <= hi for lo, hi in RM.WRITABLE):
+            raise HandError("地址 %d 起 %d 字节不在允许写的范围（只许写角度 / 力度 / 速度）" % (addr, len(data)))
         if not self.mock and not RM.VERIFIED:
-            raise ModbusError("寄存器表还没按手册核对（rh56_register_map.VERIFIED = False）：真机只读，不发动作")
+            raise HandError("寄存器表还没确认（rh56_register_map.VERIFIED = False）：真机只读，不发动作")
+        req = frame_write(self.slave, addr, data)
+        if self.mock:
+            self.log.append("TX " + req.hex(" "))
+            if addr == RM.REG_ANGLE_SET:
+                self.sim_angles = [v if v >= 0 else old for v, old in
+                                   zip(struct.unpack("<%dh" % (len(data) // 2), data), self.sim_angles)]
+            return
+        resp = self._check(self._transact(req, 9), CMD_WRITE, addr, 9)
+        if resp[3] != 0x04 or resp[7] != 0x01:
+            raise HandError("写入没被确认：%s" % resp.hex(" "))
+
+    def _sim_read(self, addr, nbytes):
+        if addr == RM.REG_ANGLE_ACT and nbytes == 12:
+            return pack_shorts(self.sim_angles)
+        return bytes(nbytes)
+
+    def read_shorts(self, addr, count):
+        return list(struct.unpack("<%dh" % count, self.read(addr, 2 * count)))
+
+    def write_shorts(self, addr, values):
+        self.write(addr, pack_shorts(values))
 
     # ---------- 业务层 ----------
 
     @staticmethod
     def to_raw(pct):
+        """开合度 0（握紧）~100（张开）→ 角度 0~1000。"""
         pct = max(0.0, min(100.0, float(pct)))
         return int(round(RM.VALUE_MIN + (RM.VALUE_MAX - RM.VALUE_MIN) * pct / 100.0))
 
@@ -156,18 +189,25 @@ class RH56F2:
         """joints = {关节: 开合度}，6 个关节必须给全（少一个就是动作表写漏了，宁可报错不乱猜）。"""
         missing = [j for j in RM.JOINT_ORDER if j not in joints]
         if missing:
-            raise ModbusError("动作缺关节：%s" % "、".join(missing))
+            raise HandError("动作缺关节：%s" % "、".join(missing))
         if speed is not None:
-            self.write_registers(RM.REG_SPEED_BASE, [self.to_raw(speed)] * len(RM.JOINT_ORDER))
-        self.write_registers(RM.REG_TARGET_BASE, [self.to_raw(joints[j]) for j in RM.JOINT_ORDER])
+            self.write_shorts(RM.REG_SPEED_SET, [self.to_raw(speed)] * 6)
+        self.write_shorts(RM.REG_ANGLE_SET, [self.to_raw(joints[j]) for j in RM.JOINT_ORDER])
         self.last = dict(joints)
 
-    def set_force(self, pct):
-        """力度上限（0~100），每个手指一样。"""
-        self.write_registers(RM.REG_FORCE_BASE, [self.to_raw(pct)] * len(RM.JOINT_ORDER))
+    def set_force(self, grams):
+        """每根手指的力控阈值（g，0~1000）：受力到这个值手指就停。"""
+        g = int(max(0, min(RM.FORCE_MAX, grams)))
+        self.write_shorts(RM.REG_FORCE_SET, [g] * 6)
 
-    def read_status(self):
-        return self.read_registers(RM.REG_STATUS, 2)
+    def hold(self):
+        """六个角度设置值写 -1：手册说"该指无反应，保持当前实际位置"。急停时用。"""
+        self.write_shorts(RM.REG_ANGLE_SET, [-1] * 6)
+
+    def read_angles(self):
+        """读 ANGLE_ACT，返回 {关节: 开合度 0~100}。只读，探测就用它。"""
+        raw = self.read_shorts(RM.REG_ANGLE_ACT, 6)
+        return {j: round(v * 100.0 / RM.VALUE_MAX, 1) for j, v in zip(RM.JOINT_ORDER, raw)}
 
     def status(self):
         return {"port": self.port, "id": self.slave, "mock": self.mock,

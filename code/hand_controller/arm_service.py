@@ -4,16 +4,16 @@ POST /pose?name=press_sos&hand=1   收到就回 200，动作在这只手自己�
 POST /stop                         软件急停：清掉排队、打断节拍；之后的 /pose 照常接收（主脑急停期间不会发）
 GET  /status                       在线 + 每只手的驱动状态 + 最近动作
 
-手：rh56f2_driver（Modbus RTU），动作 → 五指开合度查 poses.JOINTS / poses.RHYTHMS。
+手：rh56f2_driver（手册 §2.2 的 EB 90 协议），动作 → 五指开合度查 poses.JOINTS / poses.RHYTHMS。
 臂（Panthera-HT）：SDK 只在 X5 上跑，还没接，臂的部分先只打印。
 
 环境变量（和 caremate_hand2_kit docs/20 的写法一致）：
   MOCK_SERIAL   不设 = mock，只打印不碰串口；=0 走真串口（rh56_register_map.VERIFIED 之前只读，不发动作）
-  HAND1_PORT / HAND1_ID   手#1 串口（COM5、/dev/ttyUSB0…）和从站号，默认 1
-  HAND2_PORT / HAND2_ID   手#2，默认从站 2；两只手在同一条总线上就填同一个口
+  HAND1_PORT / HAND1_ID   手#1 串口（COM7、/dev/ttyUSB0…）和手的 ID，默认 1
+  HAND2_PORT / HAND2_ID   手#2，默认 ID 2（手出厂都是 1：各接各的串口时设 HAND2_ID=1）
 
 运行：python -m hand_controller.arm_service [--host 0.0.0.0] [--port 8013]
-     python -m hand_controller.arm_service --probe     只读：读两只手的状态寄存器就退出（上 24V 后先跑这个）
+     python -m hand_controller.arm_service --probe     只读：读两只手的实际角度（ANGLE_ACT）就退出（上 24V 后先跑这个）
 """
 import argparse
 import json
@@ -27,7 +27,7 @@ from urllib.parse import parse_qs, urlparse
 from config import utf8_console
 from hand_controller import rh56_register_map as RM
 from hand_controller.poses import JOINTS, POSES, RHYTHMS, label
-from hand_controller.rh56f2_driver import RH56F2, ModbusError
+from hand_controller.rh56f2_driver import RH56F2, HandError
 
 HISTORY = []   # 收下的指令（按到达顺序），/status 和回归测试看它
 
@@ -64,6 +64,11 @@ class HandWorker:
         with self._mu:
             self.epoch += 1
             self.wake.set()
+        if not self.driver.mock and RM.VERIFIED and self.driver.connect():
+            try:   # 真手：角度设置值写 -1，手指停在当前位置（手册：-1 = 该指不动作）
+                self.driver.hold()
+            except HandError as e:
+                print("[手#%d] 急停时没写进 hold：%s（拔 24V 是最后一道）" % (self.hand, e), flush=True)
 
     def interrupted(self):
         r = self.running
@@ -123,7 +128,7 @@ def _execute(pose, hand):
         if r.get("force") is not None:
             try:
                 w.driver.set_force(r["force"])
-            except ModbusError as e:   # 力度寄存器还没核对：照样做，开合度本身已经限着
+            except HandError as e:   # 力度没写进去：照样做，开合度本身已经限着
                 print("[手#%d] 力度上限没写进去：%s" % (hand, e), flush=True)
         end = time.monotonic() + r["max_seconds"]
         print("[手#%d] %s：节拍开始（最长 %d 秒）" % (hand, label(pose), r["max_seconds"]), flush=True)
@@ -191,14 +196,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def probe(out=print):
-    """只读自检：每只手读一次状态寄存器。返回是否都读到了。"""
+    """只读自检：每只手读一次实际角度 ANGLE_ACT（一条读指令，不写任何东西）。返回是否都读到了。"""
     good = True
     for h, w in hands().items():
         d = w.driver
-        head = "手#%d（%s，从站 %d）" % (h, "mock" if d.mock else d.port or "没配串口", d.slave)
+        head = "手#%d（%s，ID %d）" % (h, "mock" if d.mock else d.port or "没配串口", d.slave)
         try:
-            out("%s 状态寄存器 = %s" % (head, d.read_status()))
-        except ModbusError as e:
+            out("%s 实际角度（开合度 0 握紧~100 张开）= %s" % (head, d.read_angles()))
+        except HandError as e:
             good = False
             out("%s 读不到：%s" % (head, e))
     return good
@@ -209,14 +214,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8013)
-    ap.add_argument("--probe", action="store_true", help="只读两只手的状态寄存器就退出")
+    ap.add_argument("--probe", action="store_true", help="只读两只手的实际角度就退出")
     args = ap.parse_args()
     if args.probe:
         raise SystemExit(0 if probe() else 1)
     for h, w in hands().items():
         ok, why = w.ready()
         d = w.driver
-        print("手#%d：%s，从站 %d，%s" % (h, "mock" if d.mock else "串口 " + (d.port or "（没配）"), d.slave,
+        print("手#%d：%s，ID %d，%s" % (h, "mock" if d.mock else "串口 " + (d.port or "（没配）"), d.slave,
                                      "可以动" if ok else "不能动：" + why), flush=True)
     print("arm_service on http://%s:%d（%s）" % (args.host, args.port, "mock" if _mock_all() else "真机"), flush=True)
     ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
