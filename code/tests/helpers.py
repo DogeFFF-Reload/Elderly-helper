@@ -1,13 +1,15 @@
 """测试共用：可拨的假时钟、假执行端、建一条不落盘的总线。"""
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config  # noqa: E402
 
-# 2026-10-23 10:00 本地时间附近；只要是固定值即可
-T0 = 1792720800.0
+# 本机时区的 2026-10-23 10:00。按本机时区算，不写死时间戳：
+# 写死的话换到 UTC / 太平洋时区的机器上，"上午"会变成夜里，夜间相关的测试就挂了
+T0 = time.mktime((2026, 10, 23, 10, 0, 0, 0, 0, -1))
 
 
 class Clock:
