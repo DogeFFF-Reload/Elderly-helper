@@ -10,6 +10,9 @@ POSES = {
     "gentle_hold": {"label": "手#2 轻握安抚（限力）", "hand": 2},
     "sign_coming": {"label": "手#2 举牌“别怕，女儿马上到”", "hand": 2},
     "release": {"label": "手#2 松开", "hand": 2},
+    "rps_rock": {"label": "手#1 出：石头", "hand": 1},
+    "rps_scissors": {"label": "手#1 出：剪刀", "hand": 1},
+    "rps_paper": {"label": "手#1 出：布", "hand": 1},
 }
 
 # 手指操 13 拍：(口令, 手形)

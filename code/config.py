@@ -32,6 +32,9 @@ DEFAULTS = {
     "night_override": "auto",
     # 手指操每拍间隔（秒）
     "exercise_beat_seconds": 2.0,
+    # 猜拳：喊完"石头剪刀布"手#1 揭晓的时间、揭晓后等视觉回传手势的时间（秒）
+    "rps_reveal_delay": 3.5,
+    "rps_timeout": 6.0,
     "arm_url": "http://127.0.0.1:8013",
     # 台词通道：scripted（默认，零网络）/ llm（OpenAI 兼容接口，超时或出错自动回落 scripted）
     "llm_mode": "scripted",
@@ -60,6 +63,8 @@ LIMITS = {
     "night_start_hour": (0, 23),
     "night_end_hour": (0, 23),
     "exercise_beat_seconds": (0.5, 10),
+    "rps_reveal_delay": (1, 10),
+    "rps_timeout": (2, 30),
     "llm_timeout": (0.5, 30),
     "llm_cooldown": (0, 3600),
 }
