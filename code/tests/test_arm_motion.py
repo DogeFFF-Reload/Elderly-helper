@@ -218,6 +218,44 @@ class ShippedSkillsTest(unittest.TestCase):
             self.assertEqual(S.skill_moves(name, cfg)[-1], "rest", name)
 
 
+class SelftestFileTest(unittest.TestCase):
+    """arm_selftest.json：上电后、示教前在真臂上跑的小角度动作。"""
+
+    PATH = os.path.join(os.path.dirname(S.SKILLS_FILE), "arm_selftest.json")
+
+    def test_same_action_names_as_main_file(self):
+        self.assertEqual(S.skill_names(self.PATH), S.skill_names())
+
+    def test_every_point_small_and_taught(self):
+        for name, p in S.load_config("gripper", self.PATH)["points"].items():
+            self.assertTrue(p["taught"], name)
+            self.assertLessEqual(max(map(abs, p["q"])), math.radians(20) + 1e-3, "%s 离 rest 超过 20°" % name)
+
+    def test_slower_than_main_file_and_safe_in_any_order(self):
+        for effector in ("gripper", "hand1"):
+            cfg = S.load_config(effector, self.PATH)
+            self.assertLessEqual(cfg["speed"]["max_joint_vel"], S.load_config(effector)["speed"]["max_joint_vel"])
+            for a in cfg["skills"]:
+                end = S.check_skill(a, REST, cfg, require_taught=True)
+                for b in cfg["skills"]:
+                    S.check_skill(b, end, cfg, require_taught=True)
+
+    def test_canonical_format(self):
+        with open(self.PATH, encoding="utf-8") as f:
+            text = f.read()
+        self.assertEqual(dump_skills(json.loads(text)), text)
+
+    def test_real_arm_accepts_selftest_without_teaching(self):
+        b = MockArm(time_scale=0)
+        b.mock = False
+        w = arm_service.ArmWorker(b, effector="gripper", skills_path=self.PATH)
+        self.addCleanup(w.stop)
+        b.has_gripper = True
+        self.assertEqual(w.request("press_sos"), (200, ""))
+        self.assertTrue(w.wait_idle())
+        self.assertEqual(b.moves[-1][0], REST)
+
+
 # ---------- 示教文件 ----------
 
 class TeachFileTest(unittest.TestCase):

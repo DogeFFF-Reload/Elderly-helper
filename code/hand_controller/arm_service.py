@@ -16,6 +16,7 @@ caremate_hand2_kit 的写法也认（只做映射，不另起一套）：POST /p
 环境变量（手的写法和 caremate_hand2_kit docs/20 一致）：
   ARM_BACKEND   mock（默认）| panthera；真臂见 arm_backend 的说明
   ARM_EFFECTOR  gripper | hand1（不设自动选）
+  ARM_SKILLS_FILE  点位 / 动作文件，不设用 arm_skills.json；上电自检用 hand_controller/arm_selftest.json（小角度）
   MOCK_SERIAL   不设 = mock，只打印不碰串口；=0 走真串口（rh56_register_map.VERIFIED 之前只读，不发动作）
   HAND1_PORT / HAND1_ID   手#1 串口（COM7、/dev/ttyUSB0…）和手的 ID，默认 1
   HAND2_PORT / HAND2_ID   手#2，默认 ID 2（手出厂都是 1：各接各的串口时设 HAND2_ID=1）
@@ -42,7 +43,8 @@ from hand_controller.poses import JOINTS, POSES, RHYTHMS, SAFETY, label
 from hand_controller.rh56f2_driver import RH56F2, HandError
 
 HISTORY = []   # 收下的指令（按到达顺序），/status 和回归测试看它
-ARM_SKILLS = S.skill_names()   # hand=1 时这些动作归臂
+SKILLS_FILE = os.environ.get("ARM_SKILLS_FILE") or None   # 不设 = arm_skills.json；自检用 arm_selftest.json
+ARM_SKILLS = S.skill_names(SKILLS_FILE)   # hand=1 时这些动作归臂
 
 
 class HandWorker:
@@ -356,7 +358,7 @@ def arm():
     """臂的 worker，第一次用到时按环境变量建（import 时不碰 SDK）。"""
     with _ARM_MU:
         if not _ARM:
-            _ARM.append(ArmWorker(make_backend()))
+            _ARM.append(ArmWorker(make_backend(), skills_path=SKILLS_FILE))
         return _ARM[0]
 
 
