@@ -1,35 +1,48 @@
 """臂 + 双手执行服务（:8013）。和主脑的约定不变（README §10.8、§10.11）：
 
-POST /pose?name=press_sos&hand=1   收到就回 200，动作在这只手自己的线程里做；做不了回 4xx/503，error 写原因
-POST /stop                         软件急停：清掉排队、打断节拍；之后的 /pose 照常接收（主脑急停期间不会发）
-GET  /status                       在线 + 每只手的驱动状态 + 最近动作
+POST /pose?name=press_sos&hand=1   收到就回 200，动作在臂 / 这只手自己的线程里做；做不了回 4xx/503，error 写原因
+POST /stop                         软件急停：臂停在原地保持、双手停住，清掉排队、打断节拍；之后的 /pose 照常接收
+GET  /status                       在线 + 臂和每只手的状态 + 最近动作
 
+臂（Panthera-HT，arm_backend）：arm_skills.json 里有臂步骤的动作（home、deliver_medicine、press_sos、
+  sign_family_received）走臂的线程：先整条预检（关节限位、禁区、桌面、点位示教过没有），不过回 422/503；
+  一次做一个，保命动作打断正在做的普通动作、排着的普通动作作废；同一个动作正在做或排着回 409。
+  末端是 Panthera 夹爪还是手#1 由 ARM_EFFECTOR 定（不设：装了夹爪就用夹爪，否则手#1）。
 手：rh56f2_driver（手册 §2.2 的 EB 90 协议），动作 → 五指开合度查 poses.JOINTS / poses.RHYTHMS。
-臂（Panthera-HT）：SDK 只在 X5 上跑，还没接，臂的部分先只打印。
 
-环境变量（和 caremate_hand2_kit docs/20 的写法一致）：
+caremate_hand2_kit 的写法也认（只做映射，不另起一套）：POST /pose/<名字>?hand=、/press_sos、/handover_med、
+  /reset、/thumbs；kit 名字 comfort_rhythm、rock、fingers_3、hold_card…… 换成仓库的动作名，见 KIT_NAMES。
+
+环境变量（手的写法和 caremate_hand2_kit docs/20 一致）：
+  ARM_BACKEND   mock（默认）| panthera；真臂见 arm_backend 的说明
+  ARM_EFFECTOR  gripper | hand1（不设自动选）
   MOCK_SERIAL   不设 = mock，只打印不碰串口；=0 走真串口（rh56_register_map.VERIFIED 之前只读，不发动作）
   HAND1_PORT / HAND1_ID   手#1 串口（COM7、/dev/ttyUSB0…）和手的 ID，默认 1
   HAND2_PORT / HAND2_ID   手#2，默认 ID 2（手出厂都是 1：各接各的串口时设 HAND2_ID=1）
 
 运行：python -m hand_controller.arm_service [--host 0.0.0.0] [--port 8013]
-     python -m hand_controller.arm_service --probe     只读：读两只手的实际角度（ANGLE_ACT）就退出（上 24V 后先跑这个）
+     python -m hand_controller.arm_service --probe     只读：读两只手的实际角度、臂的关节角就退出（上电后先跑这个）
 """
 import argparse
 import json
 import os
 import queue
+import signal
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from config import utf8_console
+from hand_controller import arm_safety as S
 from hand_controller import rh56_register_map as RM
-from hand_controller.poses import JOINTS, POSES, RHYTHMS, label
+from hand_controller.arm_backend import ArmError, make_backend
+from hand_controller.arm_kinematics import tool_position
+from hand_controller.poses import JOINTS, POSES, RHYTHMS, SAFETY, label
 from hand_controller.rh56f2_driver import RH56F2, HandError
 
 HISTORY = []   # 收下的指令（按到达顺序），/status 和回归测试看它
+ARM_SKILLS = S.skill_names()   # hand=1 时这些动作归臂
 
 
 class HandWorker:
@@ -142,8 +155,238 @@ def _execute(pose, hand):
     print("[手#%d%s] %s" % (hand, " mock" if w.driver.mock else "", label(pose)), flush=True)
 
 
+class ArmWorker:
+    """臂一个线程，一次做一个技能（arm_skills.json 的步骤）。
+
+    排队规则：同名动作正在做或排着 → 409；保命动作（poses.SAFETY）来了，正在做的普通动作当场停住、
+    排着的普通动作作废；最多排 MAX_PENDING 个。每个动作收下前从"它开始时臂会在的位置"整条预检，
+    执行时每一段再按臂的实际位置查一遍（被打断过的臂不在点位上）。
+    """
+
+    MAX_PENDING = 2
+
+    def __init__(self, backend, effector=None, skills_path=None):
+        self.backend = backend
+        self._effector = effector or os.environ.get("ARM_EFFECTOR") or None
+        self.skills_path = skills_path
+        self.cfg = None
+        self.cv = threading.Condition()
+        self.pending = []        # [(epoch, 动作名)]
+        self.running = None
+        self.step = None         # 正在做的那一步，给 /status 看
+        self.abort = threading.Event()
+        self.epoch = 0
+        self.at = None           # 最近一次走到的点位名；被打断、刚开机 = None（下一段按靠近老人限速）
+        self.current = None
+        self.done = 0
+        self.aborted = 0
+        self.last_error = None
+        threading.Thread(target=self._run, daemon=True).start()
+
+    @property
+    def effector(self):
+        return self.cfg["effector"] if self.cfg else self._effector
+
+    def _setup(self):
+        if self.cfg is None:
+            eff = self._effector or ("gripper" if self.backend.has_gripper else "hand1")
+            if eff not in ("gripper", "hand1"):
+                raise ValueError("ARM_EFFECTOR 只能是 gripper 或 hand1，现在是 %r" % eff)
+            self.cfg = S.load_config(eff, self.skills_path)
+
+    def ready(self):
+        """(HTTP 码, 原因)。连得上、没锁定、末端（手#1）能动，才收臂的动作。"""
+        ok, why = self.backend.ready()
+        if not ok:
+            return 503, "臂：%s" % why
+        self._setup()
+        if self.effector == "hand1":
+            ok, why = hands()[1].ready()
+            if not ok:
+                return 503, "臂末端的手#1：%s" % why
+        return 200, ""
+
+    def request(self, name):
+        """收一个臂的动作：(HTTP 码, 原因)。"""
+        code, why = self.ready()
+        if code != 200:
+            return code, why
+        with self.cv:
+            if name == self.running or name in [n for _, n in self.pending]:
+                return 409, "臂已经在做「%s」" % label(name)
+            if name in SAFETY:
+                self.pending = [(e, n) for e, n in self.pending if n in SAFETY]
+                if self.running is not None and self.running not in SAFETY:
+                    self.abort.set()
+            if len(self.pending) >= self.MAX_PENDING:
+                return 409, "臂前面还排着 %d 个动作" % len(self.pending)
+            try:
+                S.check_skill(name, self._start_for_next(), self.cfg, require_taught=not self.backend.mock)
+            except S.SafetyError as e:
+                return 422, "「%s」没过安全预检：%s" % (label(name), e)
+            self.pending.append((self.epoch, name))
+            self.cv.notify()
+        return 200, ""
+
+    def _end_of(self, name, default):
+        moves = S.skill_moves(name, self.cfg)
+        return list(self.cfg["points"][moves[-1]]["q"]) if moves else default
+
+    def _start_for_next(self):
+        """新动作开始时臂大概在哪：排着的最后一个的终点 / 正在做的终点 / 现在的位置（空闲或正被打断）。"""
+        if self.pending:
+            return self._end_of(self.pending[-1][1], self.backend.joints())
+        if self.running is not None and not self.abort.is_set():
+            return self._end_of(self.running, self.backend.joints())
+        return self.backend.joints()
+
+    def stop(self):
+        """软件急停：作废排队，正在做的当场停住保持。"""
+        with self.cv:
+            self.epoch += 1
+            self.pending = []
+            if self.running is not None:
+                self.abort.set()
+
+    def busy(self):
+        with self.cv:
+            return self.running is not None or bool(self.pending)
+
+    def wait_idle(self, timeout=5.0):
+        end = time.monotonic() + timeout
+        while self.busy():
+            if time.monotonic() > end:
+                return False
+            time.sleep(0.01)
+        return True
+
+    def _run(self):
+        while True:
+            with self.cv:
+                while not self.pending:
+                    self.cv.wait()
+                epoch, name = self.pending.pop(0)
+                if epoch != self.epoch:
+                    continue
+                self.running, self.current = name, name
+                self.abort.clear()
+            ok = False
+            try:
+                ok = self._run_skill(name)
+                if ok:
+                    self.done += 1
+            except Exception as e:  # noqa: BLE001 一个动作出错不能弄死臂的线程
+                self.last_error = "%s：%s" % (name, e)
+                print("[臂] %s 没做成：%s" % (label(name), e), flush=True)
+            finally:
+                if not ok:
+                    self.aborted += 1
+                    self.at = None
+                    try:
+                        self.backend.hold()
+                    except Exception as e:  # noqa: BLE001
+                        print("[臂] 停住保持也没成功：%s（拍物理急停）" % e, flush=True)
+                with self.cv:
+                    self.running, self.step = None, None
+
+    def _run_skill(self, name):
+        """按步骤做；被打断返回 False。"""
+        cfg = self.cfg
+        for kind, arg in cfg["skills"][name]:
+            if self.abort.is_set():
+                return False
+            if kind == "move":
+                p = cfg["points"][arg]
+                q0 = self.backend.joints()
+                S.check_segment(q0, p["q"], cfg, arg)
+                slow = self.at is None or p.get("near_person") or cfg["points"][self.at].get("near_person")
+                secs = S.duration(q0, p["q"], cfg, slow)
+                self.step = "→ %s（%.1f 秒%s）" % (arg, secs, "，慢速" if slow else "")
+                print("[臂%s] %s %s" % (" mock" if self.backend.mock else "", label(name), self.step), flush=True)
+                if not self.backend.move(p["q"], secs, self.abort, p.get("torque_scale", 1.0)):
+                    return False
+                self.at = arg
+            elif kind == "grip":
+                self.step = "末端 %s" % arg
+                self._grip(name, arg)
+            elif kind == "wait":
+                self.step = "等 %s 秒" % arg
+                if self.backend.wait(float(arg), self.abort):
+                    return False
+            else:
+                raise ArmError("arm_skills.json 里不认识的步骤 %r" % kind)
+        return True
+
+    def _grip(self, name, how):
+        if self.effector == "gripper":
+            if how != "relax":
+                self.backend.grip(how == "close")
+            return
+        pose = {"open": "release", "relax": "home"}.get(how, name)
+        w = hands()[1]
+        w.submit(pose if pose in JOINTS else "release")
+        w.drain()
+
+    def holds_hand1(self):
+        """手#1 装在臂上、臂正忙：手#1 不接别的动作。"""
+        return self.effector == "hand1" and self.busy()
+
+    def status(self):
+        st = dict(self.backend.status(), effector=self.effector, busy=self.running is not None,
+                  current=self.current, step=self.step, queued=len(self.pending), at=self.at,
+                  done=self.done, aborted=self.aborted, last_error=self.last_error)
+        if self.cfg:
+            st["untaught"] = sorted(n for n, p in self.cfg["points"].items() if not p.get("taught"))
+        if st["connected"]:
+            try:
+                q = self.backend.joints()
+                st["joints_deg"] = S.deg(q)
+                if self.cfg:
+                    st["tool_m"] = [round(c, 3) for c in tool_position(q, self.cfg["tool_length"])]
+            except Exception as e:  # noqa: BLE001 读不到状态不影响回 /status
+                st["error"] = st.get("error") or "读不到关节角：%s" % e
+        return st
+
+
+_ARM = []
+_ARM_MU = threading.Lock()
+
+
+def arm():
+    """臂的 worker，第一次用到时按环境变量建（import 时不碰 SDK）。"""
+    with _ARM_MU:
+        if not _ARM:
+            _ARM.append(ArmWorker(make_backend()))
+        return _ARM[0]
+
+
+def use_arm(worker):
+    """换臂的 worker（测试用；以后换后端也走这里）。"""
+    with _ARM_MU:
+        _ARM[:] = [worker]
+    return worker
+
+
 def _mock_all():
-    return all(w.driver.mock for w in hands().values())
+    return arm().backend.mock and all(w.driver.mock for w in hands().values())
+
+
+# caremate_hand2_kit 的动作名 → 仓库动作名。只映射手的动作：kit 的 /pose/<名字> 本来只动手，
+# 映射完不能变成会动臂的动作（hold_card 在手#1 上 = 臂举牌，所以只认手#2）
+KIT_NAMES = {
+    "comfort_rhythm": "gentle_hold",
+    "rock": "rps_rock", "paper": "rps_paper", "scissors": "rps_scissors",
+    "fingers_1": "finger_count_1", "fingers_2": "finger_count_2", "fingers_3": "finger_count_3",
+    "fingers_4": "finger_count_4", "fingers_5": "finger_count_5",
+    "hold_card": "sign_coming",
+}
+# kit 的整条动作端点 → (仓库动作名, 手)
+KIT_ROUTES = {
+    "/press_sos": ("press_sos", 1),
+    "/handover_med": ("deliver_medicine", 1),
+    "/reset": ("home", 1),
+    "/thumbs": ("thumbs_up", 1),
+}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -158,45 +401,75 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if urlparse(self.path).path == "/status":
             return self._json(200, {"ok": True, "mock": _mock_all(), "verified": RM.VERIFIED,
+                                    "arm": arm().status(),
                                     "hands": {str(h): w.status() for h, w in hands().items()},
                                     "recent": HISTORY[-10:]})
         self._json(404, {"ok": False})
 
     def do_POST(self):
         url = urlparse(self.path)
+        q = parse_qs(url.query)
         if url.path == "/stop":
             for w in hands().values():
                 w.stop()
-            print("[执行端] 急停 /stop：清掉排队、打断节拍", flush=True)
+            arm().stop()
+            print("[执行端] 急停 /stop：臂停住保持、双手停住，清掉排队、打断节拍", flush=True)
             HISTORY.append({"ts": time.time(), "pose": "stop", "hand": 0})
             return self._json(200, {"ok": True, "stopped": True, "mock": _mock_all()})
-        if url.path != "/pose":
-            return self._json(404, {"ok": False})
-        q = parse_qs(url.query)
-        name = q.get("name", [""])[0]
+        if url.path == "/pose":
+            return self._pose(q.get("name", [""])[0], q.get("hand", ["1"])[0])
+        if url.path.startswith("/pose/"):          # kit：/pose/<名字>?hand=
+            kit = unquote(url.path[len("/pose/"):])
+            name = KIT_NAMES.get(kit, kit)
+            if name not in POSES:
+                return self._json(400, {"ok": False, "error": "unknown pose: " + kit})
+            hand = q.get("hand", [str(POSES[name]["hand"])])[0]
+            if hand == "1" and name in ARM_SKILLS:
+                return self._json(400, {"ok": False, "error": "/pose/<名字> 只做手的动作；「%s」会动臂，用 POST /pose?name=%s&hand=1"
+                                                              % (label(name), name)})
+            return self._pose(name, hand, alias_of=kit)
+        if url.path in KIT_ROUTES:
+            name, hand = KIT_ROUTES[url.path]
+            return self._pose(name, str(hand), alias_of=url.path)
+        self._json(404, {"ok": False})
+
+    def _pose(self, name, hand_text, alias_of=None):
         if name not in POSES:
             return self._json(400, {"ok": False, "error": "unknown pose: " + name})
         try:
-            hand = int(q.get("hand", ["1"])[0])
+            hand = int(hand_text)
         except ValueError:
             hand = 0
         if hand not in hands():
             return self._json(400, {"ok": False, "error": "hand 只能是 1 或 2"})
-        w = hands()[hand]
-        ok, why = w.ready()
-        if not ok:
-            return self._json(503, {"ok": False, "error": "手#%d：%s" % (hand, why)})
+        if hand == 1 and name in ARM_SKILLS:
+            a = arm()
+            code, why = a.request(name)
+            if code != 200:
+                return self._json(code, {"ok": False, "error": why})
+            mock = a.backend.mock
+        else:
+            if hand == 1 and arm().holds_hand1():
+                return self._json(409, {"ok": False, "error": "手#1 装在臂上，臂正在做「%s」" % label(arm().current)})
+            w = hands()[hand]
+            ok, why = w.ready()
+            if not ok:
+                return self._json(503, {"ok": False, "error": "手#%d：%s" % (hand, why)})
+            w.submit(name)
+            mock = w.driver.mock
         HISTORY.append({"ts": time.time(), "pose": name, "hand": hand})
         del HISTORY[:-200]
-        w.submit(name)
-        self._json(200, {"ok": True, "pose": name, "hand": hand, "mock": w.driver.mock})
+        body = {"ok": True, "pose": name, "hand": hand, "mock": mock}
+        if alias_of:
+            body["alias_of"] = alias_of
+        self._json(200, body)
 
     def log_message(self, *args):
         pass
 
 
 def probe(out=print):
-    """只读自检：每只手读一次实际角度 ANGLE_ACT（一条读指令，不写任何东西）。返回是否都读到了。"""
+    """只读自检：每只手读一次实际角度 ANGLE_ACT、臂读一次关节角（都不写任何东西）。返回是否都读到了。"""
     good = True
     for h, w in hands().items():
         d = w.driver
@@ -206,7 +479,33 @@ def probe(out=print):
         except HandError as e:
             good = False
             out("%s 读不到：%s" % (head, e))
+    b = arm().backend
+    ok, why = b.connect()
+    if not ok:
+        out("臂（%s）读不到：%s" % (b.name, why))
+        return False
+    q = b.joints()
+    out("臂（%s）关节角 = %s°，夹爪中心在 %s m" % (b.name, S.deg(q), [round(c, 3) for c in tool_position(q)]))
     return good
+
+
+def _shutdown():
+    """退出：臂停在原地，再转阻尼（之后进程一退，SDK 的失联保护也会让电机阻尼）。"""
+    a = arm()
+    a.stop()
+    a.wait_idle(3.0)
+    if a.backend.mock or not a.backend.status()["connected"]:
+        return
+    print("[臂] 退出：停住后转阻尼。不在 rest 位的话 J2/J3 会慢慢往下沉——关服务前先让臂回 home（操作台重置）",
+          flush=True)
+    try:
+        a.backend.brake()
+    except Exception as e:  # noqa: BLE001
+        print("[臂] 阻尼指令没发出去：%s（进程退出 0.5 秒后固件也会阻尼）" % e, flush=True)
+
+
+def _terminate(*_):
+    raise KeyboardInterrupt   # systemd stop 发 SIGTERM，和 Ctrl+C 走同一条退出路
 
 
 def main():
@@ -214,7 +513,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8013)
-    ap.add_argument("--probe", action="store_true", help="只读两只手的实际角度就退出")
+    ap.add_argument("--probe", action="store_true", help="只读两只手的实际角度、臂的关节角就退出")
     args = ap.parse_args()
     if args.probe:
         raise SystemExit(0 if probe() else 1)
@@ -223,8 +522,24 @@ def main():
         d = w.driver
         print("手#%d：%s，ID %d，%s" % (h, "mock" if d.mock else "串口 " + (d.port or "（没配）"), d.slave,
                                      "可以动" if ok else "不能动：" + why), flush=True)
+    a = arm()
+    code, why = a.ready()   # 真臂在这里连 SDK（要几秒），别等第一个动作来了才连，主脑 1.5 秒就算超时
+    print("臂：%s，末端 %s，%s" % (a.backend.name, a.effector or "未定", "可以动" if code == 200 else "不能动：" + why),
+          flush=True)
+    if code == 200 and not a.backend.mock:
+        untaught = a.status().get("untaught")
+        if untaught:
+            print("臂：这些点位还没示教，用到它们的动作会被拒绝：%s" % "、".join(untaught), flush=True)
+    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    signal.signal(signal.SIGTERM, _terminate)
     print("arm_service on http://%s:%d（%s）" % (args.host, args.port, "mock" if _mock_all() else "真机"), flush=True)
-    ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        _shutdown()
 
 
 if __name__ == "__main__":

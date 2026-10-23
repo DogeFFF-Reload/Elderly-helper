@@ -13,7 +13,11 @@ POSES = {
     "rps_rock": {"label": "手#1 出：石头", "hand": 1},
     "rps_scissors": {"label": "手#1 出：剪刀", "hand": 1},
     "rps_paper": {"label": "手#1 出：布", "hand": 1},
+    "thumbs_up": {"label": "比赞（手#2 验收用）", "hand": 2},
 }
+
+# 保命动作（和主脑 SAFETY_POSES 一致）：臂上来了保命动作，正在做的递药等直接打断、排着的普通动作作废
+SAFETY = ("press_sos", "gentle_hold", "sign_family_received", "sign_coming")
 
 # 手指操 13 拍：(口令, 手形)
 FINGER_MOVES = [
@@ -68,6 +72,7 @@ JOINTS = {
     "finger_fist": ROCK,
     "finger_open": PAPER,
     "finger_count_5": PAPER,
+    "thumbs_up": _j(95, 10, 10, 10, 10, 60),
 }
 for _n in range(1, 5):                                  # 伸出 n 根：食指起依次伸直，拇指收着
     JOINTS["finger_count_%d" % _n] = _j(10, *[90 if i < _n else 10 for i in range(4)], 50)
