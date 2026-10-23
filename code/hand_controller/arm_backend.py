@@ -158,16 +158,22 @@ class PantheraArm:
             return False, "电机层越界锁定（第 2 层限位）：对着零位标记把关节推回范围，再重启 arm_service"
         return True, ""
 
+    # SDK（Panthera_lib + hightorque_robot）没有线程锁：臂线程在走、HTTP 线程查 /status 读关节，
+    # 两边的"写发送缓存 + 发送"会交错。所有碰 SDK 的地方都拿 self._mu，一次只一个线程
+
     def joints(self):
-        r = self.robot
-        r.send_get_motor_state_cmd()
-        r.motor_send_cmd()
-        return [float(x) for x in r.get_current_pos()]
+        with self._mu:
+            r = self.robot
+            r.send_get_motor_state_cmd()
+            r.motor_send_cmd()
+            return [float(x) for x in r.get_current_pos()]
 
     def move(self, q, seconds, abort, torque_scale=1.0):
         r = self.robot
         max_tqu = [t * torque_scale for t in r.max_torque]
-        if r.moveJ(list(q), seconds, max_tqu=max_tqu, iswait=False) is False:
+        with self._mu:
+            accepted = r.moveJ(list(q), seconds, max_tqu=max_tqu, iswait=False)
+        if accepted is False:
             raise ArmError("SDK 拒绝了这次 moveJ（多半是关节限位，看 arm_service 窗口里 SDK 打印的警告）")
         t0 = time.monotonic()
         deadline = t0 + seconds + SETTLE
@@ -175,9 +181,10 @@ class PantheraArm:
         while time.monotonic() < deadline:
             if abort.wait(0.02):
                 return False
-            if getattr(r, "_hard_limit_tripped", False):
-                raise ArmError("电机层越界锁定，全部电机已阻尼")
-            reached, errors = r.check_position_reached(list(q), TOLERANCE)
+            with self._mu:
+                if getattr(r, "_hard_limit_tripped", False):
+                    raise ArmError("电机层越界锁定，全部电机已阻尼")
+                reached, errors = r.check_position_reached(list(q), TOLERANCE)
             self.last_errors = [float(e) for e in errors]
             if reached:
                 return True
@@ -197,22 +204,25 @@ class PantheraArm:
     def grip(self, close):
         if not self.has_gripper:
             raise ArmError("臂上没装夹爪（Follower.yaml gripper_installed: false）")
-        (self.robot.gripper_close if close else self.robot.gripper_open)()
+        with self._mu:
+            (self.robot.gripper_close if close else self.robot.gripper_open)()
 
     def hold(self):
         """停在当前位置。收拢时 J2/J3 可能读到 -0.04° 这样的小负值（编码器分辨率 0.036°），
         原样发出去会被 SDK 的第 1 层限位（下限正好 0）拒绝，所以先夹进限位；夹掉超过 HOLD_CLIP 才算真越界。"""
-        cur = self.joints()
-        lim = self.robot.joint_limits
-        target = [min(max(x, float(lo)), float(hi)) for x, lo, hi in zip(cur, lim["lower"], lim["upper"])]
-        off = max(abs(a - b) for a, b in zip(cur, target))
-        if off > HOLD_CLIP:
-            raise ArmError("当前位置超出关节限位 %.1f°，不能原地保持（看是不是越界锁定了）" % math.degrees(off))
-        if self.robot.Joint_Pos_Vel(target, [HOLD_VEL] * len(target)) is False:
-            raise ArmError("SDK 拒绝了停住保持指令")
+        with self._mu:
+            cur = self.joints()
+            lim = self.robot.joint_limits
+            target = [min(max(x, float(lo)), float(hi)) for x, lo, hi in zip(cur, lim["lower"], lim["upper"])]
+            off = max(abs(a - b) for a, b in zip(cur, target))
+            if off > HOLD_CLIP:
+                raise ArmError("当前位置超出关节限位 %.1f°，不能原地保持（看是不是越界锁定了）" % math.degrees(off))
+            if self.robot.Joint_Pos_Vel(target, [HOLD_VEL] * len(target)) is False:
+                raise ArmError("SDK 拒绝了停住保持指令")
 
     def brake(self):
-        self.robot.set_brake()
+        with self._mu:
+            self.robot.set_brake()
 
     def status(self):
         st = {"backend": "panthera", "mock": False, "connected": self.robot is not None,

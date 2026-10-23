@@ -713,6 +713,42 @@ class PantheraBackendTest(unittest.TestCase):
         with self.assertRaises(ArmError):
             b.hold()
 
+    def test_sdk_never_entered_from_two_threads(self):
+        """臂线程在走（轮询到位）、HTTP 线程在查 /status（读关节）：SDK 调用必须一个一个来。"""
+        b = self.backend(reach_after=15)
+        r = b.robot
+        state = {"inside": 0, "overlap": 0}
+
+        def guarded(fn):
+            def call(*a, **kw):
+                state["inside"] += 1
+                if state["inside"] > 1:
+                    state["overlap"] += 1
+                time.sleep(0.003)
+                try:
+                    return fn(*a, **kw)
+                finally:
+                    state["inside"] -= 1
+            return call
+
+        for name in ("send_get_motor_state_cmd", "motor_send_cmd", "get_current_pos", "moveJ",
+                     "check_position_reached", "Joint_Pos_Vel"):
+            setattr(r, name, guarded(getattr(r, name)))
+        stop = threading.Event()
+
+        def poll_status():
+            while not stop.is_set():
+                b.joints()
+        t = threading.Thread(target=poll_status)
+        t.start()
+        try:
+            self.assertTrue(b.move([0.1] * 6, 0.01, threading.Event()))
+            b.hold()
+        finally:
+            stop.set()
+            t.join()
+        self.assertEqual(state["overlap"], 0)
+
     def test_grip_and_brake(self):
         b = self.backend()
         b.grip(True)
