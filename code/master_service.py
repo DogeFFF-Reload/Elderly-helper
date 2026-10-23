@@ -272,6 +272,9 @@ class Bus:
         self.arm.on_result = self._arm_result
         self.arm.on_link = self._arm_link
         self.arm_down_noted = False
+        # 每只手最近一次收到的动作，给大屏的执行端动画用（手指操每拍是 quiet 动作，不进时间线，只能从这里看）。
+        # 重置演示不清：重置不会让臂动，真机停在哪就显示哪
+        self.hands = {"1": self._hand("home", "idle"), "2": self._hand("release", "idle")}
         if arm is None:
             self.arm.start_probing()
         self.clients = {}   # /api/events 的订阅者 → 最近一次来拉的时间（tts_player、asr_bridge…）
@@ -314,6 +317,10 @@ class Bus:
             return False
         hour = time.localtime(self.clock()).tm_hour
         return config.is_night(hour, self.cfg["night_start_hour"], self.cfg["night_end_hour"])
+
+    def _hand(self, pose, status):
+        """status：idle 开机 / sent 已发 / ok 执行端已回执 / offline、rejected、stale 没做成"""
+        return {"pose": pose, "label": pose_label(pose), "ts": self.clock(), "status": status}
 
     def _busy(self):
         """状态机当前占用的资源：保命链一启动，臂和手#1 就归状态机。"""
@@ -368,6 +375,7 @@ class Bus:
             elif kind == "event":
                 self.events.add(a["type"], a["text"], a.get("level", "info"), who=a.get("who", "system"))
             elif kind == "arm":
+                self.hands[str(a["hand"])] = self._hand(a["pose"], "sent")   # 先记再发：回执可能在 send 里同步回来
                 self.arm.send(a["pose"], a["hand"])
                 if not a.get("quiet"):
                     self.events.add("arm", pose_label(a["pose"]), who="arm", pose=a["pose"], hand=a["hand"])
@@ -380,6 +388,10 @@ class Bus:
     def _arm_result(self, pose, hand, ok, why, detail):
         """保命动作没做成 → 马上告诉演示员；其他动作只在刚开始失败时记一笔，免得手指操刷屏。
         type=system：操作台看得到、大屏不显示。通知家属走的是软件通道，不靠臂，照常送达。"""
+        with self.lock:
+            h = self.hands.get(str(hand))
+            if h and h["pose"] == pose and h["status"] == "sent":
+                h["status"] = "ok" if ok else why
         if ok:
             self.arm_down_noted = False
             return
@@ -833,6 +845,7 @@ class Bus:
                 "rps": self._rps_view(),
                 "skeleton": self.skeleton,
                 "arm": self.arm.status(),
+                "hands": {k: dict(v) for k, v in self.hands.items()},
                 "box": {"online": self._box_online(), "id": self.box_seen["id"] if self.box_seen else None},
                 "llm": self.llm.status(),
                 "last_say": self.last_say,

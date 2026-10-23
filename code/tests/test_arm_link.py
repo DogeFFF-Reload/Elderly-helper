@@ -154,6 +154,29 @@ class BusArmFeedbackTest(unittest.TestCase):
         bus, clock, arm = make_bus()
         self.assertIs(bus.snapshot()["arm"]["online"], True)
 
+    def test_hands_track_last_pose_for_screen(self):
+        # 大屏执行端动画的数据源：每只手最近一次动作 + 做没做成（手指操每拍是 quiet，不进时间线）
+        bus, clock, arm = make_bus()
+        hands = bus.snapshot()["hands"]
+        self.assertEqual((hands["1"]["pose"], hands["2"]["pose"]), ("home", "release"))
+        bus.voice("做个手指操吧")
+        clock.advance(8, bus)
+        h1 = bus.snapshot()["hands"]["1"]
+        self.assertTrue(h1["pose"].startswith("finger_"), h1)
+        self.assertEqual(h1["status"], "sent")
+        bus._arm_result(h1["pose"], 1, True, "", "")
+        self.assertEqual(bus.snapshot()["hands"]["1"]["status"], "ok")
+        bus.reset()
+        self.assertTrue(bus.snapshot()["hands"]["1"]["pose"].startswith("finger_"), "重置不让臂动，显示真机停在哪")
+
+    def test_hands_show_failure_status(self):
+        bus, clock, arm = make_bus(arm=DeadArm())
+        bus.fall("卧室")
+        clock.advance(6, bus)
+        h = bus.snapshot()["hands"]
+        self.assertEqual((h["1"]["pose"], h["1"]["status"]), ("press_sos", "offline"))
+        self.assertEqual((h["2"]["pose"], h["2"]["status"]), ("gentle_hold", "offline"))
+
     def test_end_to_end_with_real_arm_service(self):
         url, stop = start_arm()
         self.addCleanup(stop)
