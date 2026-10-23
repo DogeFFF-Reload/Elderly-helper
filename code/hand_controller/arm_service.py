@@ -1,6 +1,7 @@
 """臂 + 双手执行服务（mock，:8013）。真硬件实现由硬件同学替换 _execute，接口不变。
 
 POST /pose?name=press_sos&hand=1   执行动作（hand=2 驱动手#2）
+POST /stop                         软件急停：停止接收动作（mock 只记日志）
 GET  /status                       在线状态 + 最近动作
 
 运行：python -m hand_controller.arm_service [--port 8013]
@@ -38,6 +39,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         url = urlparse(self.path)
+        if url.path == "/stop":
+            print("[arm mock] 急停 /stop：臂和双手停止", flush=True)
+            HISTORY.append({"ts": time.time(), "pose": "stop", "hand": 0})
+            return self._json(200, {"ok": True, "stopped": True, "mock": True})
         if url.path != "/pose":
             return self._json(404, {"ok": False})
         q = parse_qs(url.query)
