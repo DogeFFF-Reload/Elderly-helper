@@ -13,6 +13,7 @@ import argparse
 import json
 import mimetypes
 import queue
+import random
 import threading
 import time
 import urllib.parse
@@ -27,6 +28,7 @@ from agent.health_tracker import HealthTracker
 from agent.llm_client import LLMClient
 from agent.supervisor import Supervisor
 from agent.voice_profile import StyleProfile
+from gesture import rps_engine
 from hand_controller.poses import FINGER_MOVES, label as pose_label
 from state_machine.guard_fsm import ASKING, GuardFSM
 from voice.text_normalize import is_filler, normalize
@@ -113,6 +115,8 @@ class Bus:
         self.supervisor = Supervisor(self.cfg["contacts"])
         self.arm = arm if arm is not None else ArmClient(self.cfg["arm_url"])
         self.night_mode = "auto"
+        self.rng = random.SystemRandom()
+        self.next_rps_id = 1
         self._reset_runtime()
         self.events.add("system", "系统启动（台词通道：%s）" % self.cfg["llm_mode"])
 
@@ -125,6 +129,8 @@ class Bus:
         self.skeleton = {"pose": "standing", "keypoints": None, "ts": self.clock()}
         self.last_say = None
         self.last_heard = None
+        self.rps = None
+        self.rps_last = None
 
     # ---------- 工具 ----------
 
@@ -276,8 +282,70 @@ class Bus:
         if name == "exercise_stop":
             return self._stop_exercise("老人喊停")
         if name == "rps":
-            return [_say("rps_booth")]
+            return self._rps_start()
         return [_say("chitchat")]
+
+    # ---------- 猜拳（陪）----------
+
+    def _rps_start(self):
+        if self.rps:
+            return []
+        rid = self.next_rps_id
+        self.next_rps_id += 1
+        now = self.clock()
+        # 机器人在看到老人手势之前就定好出什么，揭晓时手#1 才摆出来 —— 公平
+        self.rps = {"round": rid, "robot": self.rng.choice(rps_engine.MOVES), "revealed": False,
+                    "reveal_at": now + self.cfg["rps_reveal_delay"],
+                    "deadline": now + self.cfg["rps_reveal_delay"] + self.cfg["rps_timeout"]}
+        self.rps_last = None
+        self.teach_card = None
+        self.events.add("rps", "猜拳第 %d 局：等老人出手势" % rid, round=rid, phase="start",
+                        reveal_in=self.cfg["rps_reveal_delay"])
+        return [_say("rps_start")]
+
+    def _rps_reveal(self):
+        r = self.rps
+        if r and not r["revealed"]:
+            r["revealed"] = True
+            return [{"do": "arm", "pose": "rps_" + r["robot"], "hand": 1}]
+        return []
+
+    def rps_gesture(self, round_id, gesture):
+        """视觉（或操作台兜底按钮）回传老人的手势；判输赢由这里按 rps_engine.judge 做。"""
+        with self.lock:
+            r = self.rps
+            try:
+                same = round_id is None or int(round_id) == r["round"]
+            except (TypeError, ValueError):
+                same = False
+            if not r or not same:
+                return {"ok": False, "reason": "no such round"}
+            acts = self._rps_reveal()
+            robot, names = r["robot"], rps_engine.NAMES
+            self.rps = None
+            if gesture not in rps_engine.MOVES:
+                result = None
+                acts += [_ev("rps", "猜拳第 %d 局：没看清老人的手势（我出%s）" % (r["round"], names[robot]), "warn"),
+                         _say("rps_unclear")]
+            else:
+                result = rps_engine.judge(gesture, robot)
+                verdict = {"win": "老人赢", "lose": "机器人赢", "draw": "平局"}[result]
+                acts += [_ev("rps", "猜拳第 %d 局：老人出%s，我出%s → %s" % (r["round"], names[gesture], names[robot], verdict), "ok"),
+                         _say("rps_" + result, player=names[gesture], robot=names[robot])]
+            self.rps_last = {"round": r["round"], "robot": robot, "player": gesture if result else None,
+                             "result": result, "ts": self.clock()}
+            self._run(acts)
+            return {"ok": True, "result": result, "robot": robot}
+
+    def _rps_view(self):
+        r = self.rps
+        if r:
+            return {"round": r["round"], "phase": "revealed" if r["revealed"] else "countdown",
+                    "robot": r["robot"] if r["revealed"] else None,
+                    "reveal_in": max(0.0, round(r["reveal_at"] - self.clock(), 1))}
+        if self.rps_last:
+            return dict(self.rps_last, phase="done")
+        return None
 
     def _teach(self, text):
         r = self.guides.match(text)
@@ -311,6 +379,7 @@ class Bus:
                 self.exercise = None
                 acts.append(_ev("exercise", "手指操因跌倒事件中断"))
             self.teach_card = None
+            self.rps = None
             if self.skeleton["pose"] != "live":
                 self.skeleton = {"pose": "fallen", "keypoints": None, "ts": self.clock()}
             acts += self.fsm.fall_detected(room, self.is_night())
@@ -439,6 +508,14 @@ class Bus:
                              _say("exercise_beat", n=i + 1, move=move)]
             if self.teach_card and now - self.teach_card["ts"] > TEACH_CARD_SECONDS:
                 self.teach_card = None
+            r = self.rps
+            if r and now >= r["reveal_at"]:
+                acts += self._rps_reveal()
+            if r and now >= r["deadline"]:
+                self.rps = None
+                acts += [_ev("rps", "猜拳第 %d 局超时：视觉没有回传手势" % r["round"], "warn"), _say("rps_no_camera")]
+            if self.rps_last and now - self.rps_last["ts"] > 10:
+                self.rps_last = None
             if acts:
                 self._run(acts)
 
@@ -461,6 +538,7 @@ class Bus:
                 "notifications": self.notifications[-30:],
                 "teach": self.teach_card,
                 "exercise": {"active": ex is not None, "beat": ex["beat"] if ex else 0, "total": len(FINGER_MOVES)},
+                "rps": self._rps_view(),
                 "skeleton": self.skeleton,
                 "arm": {"online": self.arm.online},
                 "last_say": self.last_say,
@@ -560,6 +638,7 @@ def make_handler(bus):
                 "/api/night": lambda: bus.set_night(arg("mode", "auto")),
                 "/api/agent/propose": lambda: bus.agent_propose(arg("skill", "")),
                 "/api/reset": lambda: bus.reset(clear_data=str(arg("all", "0")) == "1"),
+                "/api/rps/gesture": lambda: bus.rps_gesture(arg("round"), arg("gesture")),
             }
             fn = routes.get(path)
             if fn is None:

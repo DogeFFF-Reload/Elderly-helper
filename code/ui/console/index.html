@@ -180,6 +180,12 @@
             <button class="b say" data-say="电视怎么换台">“电视怎么换台”</button>
             <button class="b say" data-say="电饭煲内胆怎么拆洗">“电饭煲内胆怎么拆洗”</button>
           </div></div>
+          <div class="group"><h4>✊ 猜拳（展台）</h4><div class="row">
+            <button class="b say" data-say="石头剪刀布">“石头剪刀布”</button>
+            <button class="b" data-rps="rock">老人出 ✊</button>
+            <button class="b" data-rps="scissors">老人出 ✌️</button>
+            <button class="b" data-rps="paper">老人出 🖐️</button>
+          </div><p>正常由 rps_bridge 看摄像头回传；摄像头不行时用后三个按钮代替</p></div>
           <div class="group"><h4>🏠 连</h4><div class="row">
             <button class="b say" data-say="给女儿留言：我今天挺好的">“给女儿留言：我今天挺好的”</button>
             <button class="b say" data-say="报平安">“报平安”</button>
@@ -239,12 +245,13 @@ const A = {
   button: (k) => run(() => Bus.post("/mock/button", { key: k }), "🟢 绿键"),
   propose: (s) => run(() => Bus.post("/api/agent/propose", { skill: s }), "🤖 agent 请求 " + s),
   pose: (p) => run(() => Bus.post("/api/skeleton", { pose: p }), "骨架：" + p),
+  rps: (g) => run(() => Bus.post("/api/rps/gesture", { round: S && S.rps && S.rps.round, gesture: g }), "✊ 老人出 " + g),
 };
 
 document.addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b) return;
-  for (const k of ["say", "fall", "ack", "night", "reset", "button", "propose", "pose"]) {
+  for (const k of ["say", "fall", "ack", "night", "reset", "button", "propose", "pose", "rps"]) {
     if (b.dataset[k] !== undefined) {
       if (k === "reset" && b.dataset.reset === "1" && !confirm("会删除健康记录和回声风格档案，确定？")) return;
       return A[k](b.dataset[k]);
@@ -289,6 +296,7 @@ function renderState(s) {
     ["120 确认窗", g.dial_pending ? UI.secs(g.dial_remaining) : "—", g.dial_pending ? "hot" : ""],
     ["血压待确认", hp ? hp.sys + "/" + hp.dia + " · " + UI.secs(hp.remaining) : "—", hp ? "amber" : ""],
     ["手指操", ex.active ? ex.beat + " / " + ex.total + " 拍" : "—", ""],
+    ["猜拳", s.rps ? "第 " + s.rps.round + " 局 · " + ({ countdown: "倒数 " + UI.secs(s.rps.reveal_in), revealed: "等手势", done: s.rps.result || "没看清" })[s.rps.phase] : "—", s.rps && s.rps.phase !== "done" ? "amber" : ""],
     ["演示参数", "日 " + s.params.ask_wait_day + "s · 夜 " + s.params.ask_wait_night + "s · 120 " + s.params.dial_confirm_window + "s", ""],
   ];
   $("state").innerHTML = cells.map(([k, v, c]) => `<div class="kv ${c}"><small>${k}</small><b>${UI.esc(v)}</b></div>`).join("");

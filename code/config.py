@@ -27,6 +27,9 @@ DEFAULTS = {
     "night_end_hour": 6,
     # 手指操每拍间隔（秒）
     "exercise_beat_seconds": 2.0,
+    # 猜拳：喊完"石头剪刀布"手#1 揭晓的时间、揭晓后等视觉回传手势的时间（秒）
+    "rps_reveal_delay": 3.5,
+    "rps_timeout": 6.0,
     "arm_url": "http://127.0.0.1:8013",
     "llm_mode": "scripted",
     # 家属端对老人的称呼
