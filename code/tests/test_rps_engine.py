@@ -117,6 +117,16 @@ class BusRoundTest(unittest.TestCase):
         self.assertIn("摄像头", said(self.bus)[-1])
         self.assertTrue(any("超时" in e["text"] for e in events(self.bus, "rps")))
 
+    def test_suspended_while_safety_chain_holds_arm(self):
+        self.bus.fall("卧室")
+        self.clock.advance(5.2, self.bus)
+        self.assertEqual(self.bus.fsm.state, "SOS")
+        before = list(self.arm.sent)
+        self.bus.voice("石头剪刀布")
+        self.assertIsNone(self.bus.rps, "保命链占着臂，猜拳要挂起")
+        self.clock.advance(6, self.bus)
+        self.assertEqual(self.arm.sent, before, "手#1 不能在举牌/按 SOS 时去出拳")
+
     def test_fall_cancels_round(self):
         self.bus.voice("石头剪刀布")
         self.bus.fall("客厅")

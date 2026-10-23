@@ -70,6 +70,27 @@ class HttpTest(unittest.TestCase):
         self.assertEqual({"state", "events", "last_id"}, set(d))
         self.assertEqual(d["events"][-1]["type"], "say")
 
+    def test_params_endpoint(self):
+        status, data = self.req("GET", "/api/params")
+        d = json.loads(data)
+        self.assertEqual(d["params"]["ask_wait_day"], 5.0)
+        self.assertEqual(d["limits"]["night_start_hour"], [0, 23])
+        r = self.post("/api/params", {"ask_wait_day": 7})
+        self.assertEqual(r["changed"], {"ask_wait_day": 7.0})
+        self.assertFalse(self.post("/api/params", {"llm_api_key": "sk-x"})["ok"])
+        self.post("/api/params", {"ask_wait_day": 5})
+
+    def test_box_protocol(self):
+        get = lambda: json.loads(self.req("GET", "/api/box?id=box1")[1])  # noqa: E731
+        self.assertEqual((get()["led"], get()["pattern"]), ("green", "breath"))
+        self.assertTrue(self.bus.snapshot()["box"]["online"])
+        self.post("/mock/fall", {"room": "卧室"})
+        self.assertEqual(get()["led"], "yellow")
+        self.post("/mock/button?key=ok", {})
+        self.assertEqual(get()["state"], "IDLE")
+        self.clock.advance(4)
+        self.assertFalse(self.bus.snapshot()["box"]["online"], "3 秒没轮询 = 离线")
+
     def test_family_endpoints(self):
         self.post("/api/family/message", {"contact": "daughter", "text": "妈，记得按时吃药哈"})
         self.assertTrue(self.post("/api/echo/authorize", {"contact": "daughter"})["ok"])

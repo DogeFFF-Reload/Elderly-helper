@@ -39,11 +39,18 @@ class FakeArm:
         return [p for p, _ in self.sent]
 
 
-def make_bus(data_dir=None, **overrides):
+def make_bus(data_dir=None, llm_transport=None, **overrides):
+    """llm_transport 给了就开 llm 通道（假接口：fn(messages, timeout) -> str）。
+    配置只用 DEFAULTS + overrides，不受本机 config.local.json / 环境变量影响。"""
     import master_service
+    from agent.llm_client import LLMClient
     clock = Clock()
     arm = FakeArm()
-    bus = master_service.Bus(config.load(overrides), data_dir=data_dir, clock=clock, arm=arm)
+    if llm_transport is not None:
+        overrides.setdefault("llm_mode", "llm")
+    cfg = config.load(overrides, use_local=False)
+    llm = LLMClient.from_config(cfg, transport=llm_transport) if llm_transport is not None else None
+    bus = master_service.Bus(cfg, data_dir=data_dir, clock=clock, arm=arm, llm=llm)
     return bus, clock, arm
 
 
