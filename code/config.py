@@ -40,6 +40,10 @@ DEFAULTS = {
     "llm_model": "",
     "llm_timeout": 3.0,          # 单句超时（秒），超时这句就用 scripted
     "llm_cooldown": 60.0,        # 连续失败后这么多秒内直接走 scripted，断网时不再每句干等
+    # 执行端（arm_service）：/pose 要在 arm_timeout 秒内回（收到就回，动作在执行端自己做完）；
+    # 排队超过 arm_stale 秒还没发出去的动作直接丢 —— 链路断了又恢复时，臂不补做一串过期动作（§5.2 断链保护）
+    "arm_timeout": 1.5,
+    "arm_stale": 5.0,
     # 家属端对老人的称呼
     "elder_title": "妈妈",
     "default_room": "卧室",
@@ -62,6 +66,8 @@ LIMITS = {
     "exercise_beat_seconds": (0.5, 10),
     "llm_timeout": (0.5, 30),
     "llm_cooldown": (0, 3600),
+    "arm_timeout": (0.2, 10),
+    "arm_stale": (1, 60),
 }
 TUNABLE = tuple(LIMITS)
 CHOICES = {

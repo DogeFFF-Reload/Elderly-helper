@@ -41,6 +41,8 @@ TESTS = {
     "test_config_params": ("software",),
     "test_demo_driver": ("software",),
     "test_merge_gate": ("software",),
+    "test_arm_link": ("software",),
+    "test_preflight": ("software",),
     "test_handover_chain": ("hardware",),
     "test_exercise": ("hardware",),
     "test_rps_engine": ("demo",),

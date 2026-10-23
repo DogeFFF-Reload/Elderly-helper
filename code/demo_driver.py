@@ -157,11 +157,12 @@ class HttpTarget:
     def state(self):
         return self._req("GET", "/api/state")
 
+    # client=demo_driver：别让节点自检把演示驱动当成喇叭那头的 tts_player
     def events(self, since):
-        return self._req("GET", "/api/events?since=%d" % since)["events"]
+        return self._req("GET", "/api/events?since=%d&client=demo_driver" % since)["events"]
 
     def last_id(self):
-        return self._req("GET", "/api/events?since=999999999")["last_id"]  # 只要编号，不拉事件
+        return self._req("GET", "/api/events?since=999999999&client=demo_driver")["last_id"]  # 只要编号，不拉事件
 
     def wait(self, seconds):
         time.sleep(seconds)
@@ -183,6 +184,9 @@ class _NullArm:
 
     def send(self, pose, hand):
         pass
+
+    def status(self):
+        return {"online": True, "url": "local"}
 
 
 class LocalTarget:

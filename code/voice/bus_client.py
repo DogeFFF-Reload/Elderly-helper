@@ -1,8 +1,13 @@
 """语音链路与总线之间的小工具：UTF-8 发送 + 订阅事件流。只用标准库。"""
 import json
+import os
+import sys
 import threading
 import time
 import urllib.request
+
+# 订阅时报上脚本名（tts_player / asr_bridge），主脑节点自检据此判断喇叭、麦克风那头在不在
+CLIENT = os.path.splitext(os.path.basename(sys.argv[0] or ""))[0] or "voice"
 
 
 def post_json(url, payload, timeout=3.0):
@@ -43,9 +48,9 @@ class EventFollower:
 
     def poll_once(self):
         if self.since is None:
-            self.since = get_json("%s/api/events?since=%d" % (self.server, 1 << 60))["last_id"]
+            self.since = get_json("%s/api/events?since=%d&client=%s" % (self.server, 1 << 60, CLIENT))["last_id"]
             return []
-        data = get_json("%s/api/events?since=%d" % (self.server, self.since))
+        data = get_json("%s/api/events?since=%d&client=%s" % (self.server, self.since, CLIENT))
         if data["last_id"] < self.since:
             self.since = data["last_id"]
             return []
