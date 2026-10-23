@@ -39,6 +39,14 @@ def check(n):
     else:
         add(WARN, "状态机", "正在 %s，上一段还没收尾" % bus["state"], "开演前在操作台点“重置”")
 
+    tz = n.get("tz")
+    if tz:
+        offset, expected = tz["offset"], tz["expected"]
+        if abs(offset - expected) >= 0.01:
+            add(WARN, "时区", "本机 UTC%+g，应为 UTC%+g：夜间模式和健康日报的日期会错" % (offset, expected),
+                "X5 上 sudo timedatectl set-timezone Asia/Shanghai 后重启主脑；"
+                "演示时夜间段用操作台“夜间模式”开关，不依赖钟点")
+
     arm = n["arm"]
     if arm.get("online") is False:
         add(FAIL, "执行端", "连不上 %s" % arm.get("url", ""),

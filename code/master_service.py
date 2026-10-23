@@ -811,6 +811,8 @@ class Bus:
             return {
                 "bus": {"uptime": round(now - self.started, 1), "state": self.fsm.state,
                         "events": self.events.next_id - 1, "night": self.is_night()},
+                "tz": {"offset": round(time.localtime(self.clock()).tm_gmtoff / 3600, 2),
+                       "expected": self.cfg["expected_utc_offset"]},
                 "arm": self.arm.status(),
                 "box": {"online": self._box_online(), "id": self.box_seen["id"] if self.box_seen else None,
                         "age": round(now - self.box_seen["ts"], 1) if self.box_seen else None},
