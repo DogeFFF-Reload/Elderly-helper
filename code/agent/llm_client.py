@@ -6,8 +6,9 @@ llm 通道的四道闸（§1.3 建议：超时自动回落 scripted，保证现�
      这类台词永远走 scripted。新加的台词键默认不进白名单。
   2. 超时：单句超过 llm_timeout 秒就用 scripted（整句计时，不是 socket 计时）。
   3. 冷却：网络/接口出错一次后 llm_cooldown 秒内直接 scripted，断网时不再每句干等。
-  4. 内容检查：可以省略，不能编——不许出现 scripted 版没有的数字、联系人称呼，
-     不许冒出"120/拨打/求助"这类 scripted 版没有的承诺；不许英文和符号（TTS 会念出来）。不过关就用 scripted。
+  4. 内容检查：可以省略，不能编——不许出现 scripted 版没有的数字（含"两片""三次"这类中文数量）、
+     联系人称呼或别名，不许冒出"120/拨打/求助/吃药"这类 scripted 版没有的承诺；
+     不许英文和符号（TTS 会念出来）。不过关就用 scripted。
 """
 import json
 import queue
@@ -26,16 +27,17 @@ LLM_KEYS = frozenset({
     "water_saved", "elder_ok_idle", "chitchat",
 })
 
-CLAIM_WORDS = ("120", "拨打", "急救", "救护车", "报警", "求助", "医生", "吃药", "诊断")
+CLAIM_WORDS = ("120", "拨打", "急救", "救护车", "报警", "求助", "医生", "吃药", "服用", "诊断")
 _NUM = re.compile(r"\d+")
+_CN_QTY = re.compile(r"[零一二两三四五六七八九十百千半几]+(?:片|粒|颗|次|杯|瓶|毫升|克|毫克|天|小时|分钟|岁|号)")
 _BAD = re.compile(r"[A-Za-z]{2,}|[/\\*#<>\[\]{}|`~@$^_=+]")
 
 SYSTEM_PROMPT = (
     "你是床边陪护机器人 CareMate 的说话润色器，听的人是独居老人。"
     "把给你的参考台词改写成更自然、温暖的一句中文口语。"
     "规则：只输出这一句话；不超过 {max_len} 个字；参考台词里的数字和称呼原样保留，"
-    "不要新增数字或别的称呼；不要承诺或声称做了参考台词里没有的事；"
-    "不要英文、符号、表情和引号以外的标点花样。"
+    "不要新增数字、数量或别的称呼；不要承诺或声称做了参考台词里没有的事；"
+    "不要英文、符号和表情。"
 )
 
 
@@ -65,7 +67,8 @@ class LLMClient:
     def from_config(cls, cfg, transport=None):
         return cls(cfg["llm_mode"], base_url=cfg["llm_base_url"], api_key=cfg["llm_api_key"],
                    model=cfg["llm_model"], timeout=cfg["llm_timeout"], cooldown=cfg["llm_cooldown"],
-                   keep_words=[c["name"] for c in cfg["contacts"]], transport=transport)
+                   keep_words=[w for c in cfg["contacts"] for w in [c["name"]] + c.get("aliases", [])],
+                   transport=transport)
 
     @property
     def enabled(self):
@@ -113,9 +116,10 @@ class LLMClient:
             return "太长"
         if _BAD.search(out):
             return "含英文或符号"
-        extra = set(_NUM.findall(out)) - set(_NUM.findall(scripted))
-        if extra:
-            return "多出了数字 %s" % "、".join(sorted(extra))
+        for pattern in (_NUM, _CN_QTY):
+            extra = set(pattern.findall(out)) - set(pattern.findall(scripted))
+            if extra:
+                return "多出了数字 %s" % "、".join(sorted(extra))
         for w in self.keep_words:
             if w in out and w not in scripted:
                 return "多出了称呼“%s”" % w

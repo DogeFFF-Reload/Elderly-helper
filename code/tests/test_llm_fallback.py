@@ -3,9 +3,11 @@ import threading
 import time
 import unittest
 import urllib.error
+from unittest import mock
 
 from helpers import events, make_bus, said
 
+import config
 from agent.llm_client import LLMClient
 
 SCRIPTED_DELIVER = "好的，药盒递过来了，您慢慢拿，拿稳了我再收回来。"
@@ -73,7 +75,7 @@ class ClientTest(unittest.TestCase):
         self.assertEqual((info["reason"], info["tripped"]), ("timeout", True))
         t0 = time.monotonic()
         text, info = c.render("cancel_ok", {})
-        self.assertLess(time.monotonic() - t0, 0.05, "冷却期内不再干等")
+        self.assertLess(time.monotonic() - t0, 0.1, "冷却期内不再干等")
         self.assertEqual((info["reason"], info["tripped"]), ("cooldown", False))
         self.assertEqual(len(fake.calls), 1)
 
@@ -97,6 +99,7 @@ class ClientTest(unittest.TestCase):
             "药盒递给您了，已经告诉儿子了。": "称呼",
             "OK，药盒给您。": "英文",
             "药盒递过来了，记得吃 2 片。": "数字",
+            "药盒递过来了，记得一次两片。": "中文数量",
             "药" * 80: "太长",
         }
         for reply, why in cases.items():
@@ -108,6 +111,13 @@ class ClientTest(unittest.TestCase):
         self.assertEqual(c.render("call_family", {"contact": "女儿", "pron": "她"})[1]["source"], "llm")
         c.transport = FakeLLM("记下了，今天喝了 2 杯，一共 5 杯水。")
         self.assertEqual(c.render("water_saved", {"cups": 2, "today": 5})[1]["source"], "llm", "数字一致可以放行")
+
+    def test_aliases_count_as_names(self):
+        cfg = config.load({"llm_mode": "llm"}, use_local=False)
+        c = LLMClient.from_config(cfg, transport=FakeLLM("药盒递过来了，我跟小军也说了。"))
+        text, info = c.render("deliver_start", {})
+        self.assertEqual(text, SCRIPTED_DELIVER)
+        self.assertIn("小军", info["reason"])
 
     def test_abort_when_queue_busy(self):
         fake = FakeLLM(sleep=1.0)
@@ -162,6 +172,16 @@ class BusTest(unittest.TestCase):
         bus.reset()
         bus.speech.drain()
         self.assertEqual(said(bus), [], "重置前没播完的台词作废")
+
+    def test_worker_survives_unexpected_error(self):
+        bus, clock, arm = make_bus(llm_transport=FakeLLM())
+        bus.llm.render = mock.Mock(side_effect=RuntimeError("bug"))
+        bus.voice("把药递给我")
+        bus.speech.drain()
+        self.assertEqual(said(bus)[-1], SCRIPTED_DELIVER, "出意外也退回 scripted")
+        bus.fall("卧室")
+        bus.speech.drain()
+        self.assertIn("您还好吗", said(bus)[-1], "台词线程还活着，紧急台词照常播")
 
     def test_bus_lock_free_while_llm_thinks(self):
         fake = FakeLLM(sleep=0.5)

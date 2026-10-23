@@ -30,6 +30,11 @@ def git(*args, cwd=None, check=True):
     return r
 
 
+def names_z(output):
+    """解析 git -z 输出：中文、空格文件名都原样保留（默认输出会把中文转成八进制并加引号）。"""
+    return [p for p in output.split("\0") if p]
+
+
 def review_paths(paths, branch_role):
     """返回 (errors, warnings, rows)。rows = [(path, 负责角色或 None)]。"""
     errors, warnings, rows = [], [], []
@@ -54,7 +59,7 @@ def trial_merge(root, base, branch, run_tests=True):
         r = git("-c", "user.name=merge_gate", "-c", "user.email=merge_gate@local",
                 "merge", "--no-commit", "--no-ff", branch, cwd=tmp, check=False)
         if r.returncode != 0:
-            conflicted = git("diff", "--name-only", "--diff-filter=U", cwd=tmp, check=False).stdout.split()
+            conflicted = names_z(git("diff", "--name-only", "-z", "--diff-filter=U", cwd=tmp, check=False).stdout)
             if not conflicted:
                 return False, ["合并失败：" + (r.stderr or r.stdout).strip()]
             notes.append("合并冲突 %d 个文件：" % len(conflicted))
@@ -94,8 +99,13 @@ def main(argv=None):
         if git("rev-parse", "--verify", "--quiet", ref + "^{commit}", cwd=root, check=False).returncode != 0:
             print("找不到分支或提交：%s（先 git fetch？）" % ref)
             return 2
+    remote = git("rev-parse", "--verify", "--quiet", "origin/%s^{commit}" % args.base, cwd=root, check=False)
+    local = git("rev-parse", args.base + "^{commit}", cwd=root).stdout.strip()
+    if remote.returncode == 0 and remote.stdout.strip() != local:
+        print("⚠ 本地 %s 和 origin/%s 不一致（GitHub 上合过 PR？），试合并基于本地版本；先 git pull 更稳\n"
+              % (args.base, args.base))
 
-    paths = git("diff", "--name-only", "%s...%s" % (args.base, args.branch), cwd=root).stdout.split()
+    paths = names_z(git("diff", "--name-only", "-z", "%s...%s" % (args.base, args.branch), cwd=root).stdout)
     role = owners.role_of_branch(args.branch)
     print("分支 %s（%s）→ %s：改动 %d 个文件" % (args.branch, owners.ROLES.get(role, "角色未知"), args.base, len(paths)))
     if not paths:
@@ -118,7 +128,8 @@ def main(argv=None):
     if errors or not ok:
         print("不能合并：先解决上面的 ✗。")
         return 1
-    print("可以合并：git switch %s && git merge --no-ff %s" % (args.base, args.branch))
+    # 分两行打印：Windows PowerShell 5.1 不支持 &&
+    print("可以合并，依次执行：\n  git switch %s\n  git merge --no-ff %s" % (args.base, args.branch))
     return 0
 
 

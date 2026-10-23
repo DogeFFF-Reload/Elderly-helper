@@ -161,7 +161,7 @@ class HttpTarget:
         return self._req("GET", "/api/events?since=%d" % since)["events"]
 
     def last_id(self):
-        return self._req("GET", "/api/events?since=0")["last_id"]
+        return self._req("GET", "/api/events?since=999999999")["last_id"]  # 只要编号，不拉事件
 
     def wait(self, seconds):
         time.sleep(seconds)
@@ -248,7 +248,11 @@ def main(argv=None):
             print("连不上 %s —— 先另开终端 python -m master_service" % args.server)
             return 2
     driver = Driver(target, pause=args.pause)
-    ok = driver.run(names, reset=not args.no_reset)
+    try:
+        ok = driver.run(names, reset=not args.no_reset)
+    except (urllib.error.URLError, OSError) as e:
+        print("\n和主脑的连接断了：%s —— 检查 master_service 是否还在跑" % e)
+        return 2
     print()
     if ok:
         print("演示全流程通过（%s）" % " → ".join(names))

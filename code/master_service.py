@@ -129,14 +129,19 @@ class SpeechQueue:
         while True:
             gen, key, params, text = self.q.get()
             info = None
-            if text is None and gen == self.gen:
-                text, info = self.bus.llm.render(key, params, abort=lambda: not self.q.empty())
-            with self.bus.lock:
-                if gen == self.gen:
-                    self.bus._speak(text)
-                    if info:
-                        self.bus._note_llm(info)
-            self.q.task_done()
+            try:
+                if text is None and gen == self.gen:
+                    try:
+                        text, info = self.bus.llm.render(key, params, abort=lambda: not self.q.empty())
+                    except Exception:  # noqa: BLE001 台词线程不能死，否则之后连 SOS 台词都播不出来
+                        text = self.bus.llm.scripted(key, **params)
+                with self.bus.lock:
+                    if gen == self.gen:
+                        self.bus._speak(text)
+                        if info:
+                            self.bus._note_llm(info)
+            finally:
+                self.q.task_done()
 
 
 def _say(key, **params):

@@ -19,7 +19,8 @@ class LoadTest(unittest.TestCase):
         for bad in ({"ask_wait_day": 0}, {"night_start_hour": 24}, {"llm_mode": "gpt"},
                     {"night_override": "maybe"},
                     {"contacts": [{"id": "a", "name": "女儿", "pron": "她"}, {"id": "a", "name": "儿子", "pron": "他"}]},
-                    {"contacts": []}):
+                    {"contacts": []},
+                    {"contacts": [{"name": "女儿", "pron": "她"}]}):
             with self.assertRaises(config.ConfigError, msg=str(bad)):
                 config.load(bad, use_local=False)
 

@@ -14,7 +14,7 @@
 
 ```powershell
 cd code
-python tests/run_all.py                  # 回归，必须 ALL PASS（当前 14 套 112 条）
+python tests/run_all.py                  # 回归，必须 ALL PASS（当前 14 套 115 条）
 python -m master_service                 # 主脑 :8000（含三块屏）
 python -m demo_driver --pause            # 按 §3 主线一段一段走演示（另开终端，见 §10）
 python -m hand_controller.arm_service    # 臂+双手 mock :8013（另开终端，可不开）
@@ -166,7 +166,8 @@ API key 只走环境变量：`$env:CAREMATE_LLM_API_KEY = "..."`。接口按 Ope
 - **白名单**：只有 `LLM_KEYS` 里的台词（递药、留言、报平安、闲聊……）交给 LLM 润色。保命链、120、健康复述、教学步骤**永远 scripted**；新加的台词键默认不进白名单。
 - **超时**：单句超过 `llm_timeout`（3 秒）就用 scripted 版。计时按整句算，不按 socket 算，服务器一个字一个字慢慢回也会被掐断。
 - **冷却**：网络或接口出错一次，之后 `llm_cooldown`（60 秒）内直接走 scripted，断网时不会每句都干等 3 秒。
-- **内容检查**：可以省略，不能编。不许出现 scripted 版没有的数字、联系人称呼，也不许冒出"120 / 拨打 / 求助 / 医生"这类承诺；不许英文和符号（TTS 会照念）。不过关就用 scripted。
+- **内容检查**：可以省略，不能编。不许出现 scripted 版没有的数字（包括"两片""三次"这类中文数量）、联系人称呼或别名（"小芳""小军"），也不许冒出"120 / 拨打 / 求助 / 医生 / 吃药"这类承诺；不许英文和符号（TTS 会照念）。不过关就用 scripted。
+- **台词线程不会死**：生成台词时出任何意外都退回 scripted 版，线程继续跑，后面的 SOS 台词照常播。
 - **不占锁**：llm 模式下台词在单独线程里生成，状态机 tick、跌倒处理都不用等它。后面有台词在排队（比如跌倒询问）就不等 LLM，当前这句直接用 scripted，播放顺序不乱。
 - 回落时操作台日志会出现"LLM 超时 → 回落 scripted"（大屏不显示）；`/api/state` 的 `llm` 字段里有计数和最近一次错误。
 

@@ -22,8 +22,8 @@ def main(argv=None):
     only = sys.argv[1:] if argv is None else argv
     suite = unittest.defaultTestLoader.discover(HERE, pattern="test_*.py", top_level_dir=HERE)
     if only:
-        suite = unittest.TestSuite(t for t in _iter(suite) if any(k in t.id().split(".")[0] for k in only))
-    names = sorted({t.id().split(".")[0] for t in _iter(suite)})  # run() 之后 suite 会被清空，先取名
+        suite = unittest.TestSuite(t for t in _iter(suite) if any(k in _suite(t) for k in only))
+    names = sorted({_suite(t) for t in _iter(suite)})  # run() 之后 suite 会被清空，先取名
     if not names:
         print("没有匹配 %s 的测试套" % " ".join(only))
         return 1
@@ -31,7 +31,7 @@ def main(argv=None):
     print()
     broken = []
     for n in names:
-        failed = any(c.id().startswith(n + ".") for c, _ in result.failures + result.errors)
+        failed = any(_suite(c) == n for c, _ in result.failures + result.errors)
         who = owners.names(owners.TESTS.get(n, ())) or "未登记"
         print("  %-28s %-4s  %s" % (n, "FAIL" if failed else "ok", who))
         if failed:
@@ -51,6 +51,12 @@ def main(argv=None):
     for n, who in broken:
         print("  找%s：%s" % (who, n))
     return 1
+
+
+def _suite(test):
+    """测试所属的套名。文件导入失败时 unittest 给的 id 是 unittest.loader._FailedTest.<模块名>，取模块名。"""
+    parts = test.id().split(".")
+    return parts[-1] if parts[0] == "unittest" else parts[0]
 
 
 def _iter(suite):

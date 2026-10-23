@@ -104,7 +104,8 @@ def validate(cfg):
         errors.append("contacts 至少要有一位联系人（第一位是首要联系人）")
     else:
         ids = [c.get("id") for c in contacts if isinstance(c, dict)]
-        if len(ids) != len(contacts) or not all(isinstance(c.get("name"), str) and c.get("pron") for c in contacts):
+        if len(ids) != len(contacts) or not all(ids) or \
+                not all(isinstance(c.get("name"), str) and c.get("pron") for c in contacts):
             errors.append("contacts 每项都要有 id / name / pron")
         elif len(set(ids)) != len(ids):
             errors.append("contacts 的 id 重复：%s" % ", ".join(ids))

@@ -46,6 +46,11 @@ class ReviewTest(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
         self.assertIn("软件", warnings[0])
 
+    def test_names_z_keeps_chinese_and_spaces(self):
+        out = "code/master_service.py\0Panthera-HT快速使用指南A5.pdf\0docs/a b.md\0"
+        self.assertEqual(merge_gate.names_z(out),
+                         ["code/master_service.py", "Panthera-HT快速使用指南A5.pdf", "docs/a b.md"])
+
     def test_unknown_branch_name(self):
         errors, warnings, _ = merge_gate.review_paths(["code/master_service.py"], None)
         self.assertEqual(len(errors), 1)
