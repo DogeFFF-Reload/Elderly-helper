@@ -17,7 +17,7 @@ from unittest import mock
 from helpers import events, make_bus
 
 from hand_controller import arm_safety as S
-from hand_controller import arm_service
+from hand_controller import arm_selftest, arm_service
 from hand_controller.arm_backend import REST, ArmError, MockArm, PantheraArm, make_backend
 from hand_controller.arm_kinematics import GRIPPER_TCP, body_points, tool_position
 from hand_controller.arm_teach import dump_skills, save_point
@@ -570,6 +570,7 @@ class FakeRobot:
 
     motor_count = 6
     max_torque = [21.0, 36.0, 36.0, 21.0, 10.0, 10.0]
+    joint_limits = {"lower": list(S.JOINT_LOWER), "upper": list(S.JOINT_UPPER)}
 
     def __init__(self, reach_after=2, accept=True, errors=None):
         self.has_gripper = True
@@ -604,7 +605,11 @@ class FakeRobot:
         return all(e <= tolerance for e in errors), errors
 
     def Joint_Pos_Vel(self, pos, vel, max_tqu=None, iswait=False):
+        """和 SDK 一样：目标超出第 1 层限位就拒绝（返回 False），什么都不发。"""
+        if any(not lo <= x <= hi for x, lo, hi in zip(pos, self.joint_limits["lower"], self.joint_limits["upper"])):
+            return False
         self.calls.append(("hold", list(pos), list(vel)))
+        return True
 
     def set_brake(self):
         self.calls.append("brake")
@@ -686,6 +691,27 @@ class PantheraBackendTest(unittest.TestCase):
         b.robot.pos = [0.3] * 6
         b.hold()
         self.assertEqual(b.robot.calls[-1][:2], ("hold", [0.3] * 6))
+
+    def test_hold_at_rest_with_slightly_negative_reading(self):
+        """收拢时 J2 读到 -0.04°：夹到 0 再保持，不能被 SDK 当越界拒掉（那样 /stop 就没停住）。"""
+        b = self.backend()
+        b.robot.pos = [0.0, math.radians(-0.04), 0.0005, 0.0, 0.0, 0.0]
+        b.hold()
+        self.assertEqual(b.robot.calls[-1][:2], ("hold", [0.0, 0.0, 0.0005, 0.0, 0.0, 0.0]))
+
+    def test_hold_refuses_real_limit_violation(self):
+        b = self.backend()
+        b.robot.pos = [0.0, math.radians(-3), 0.0, 0.0, 0.0, 0.0]
+        with self.assertRaises(ArmError) as cm:
+            b.hold()
+        self.assertIn("超出关节限位", str(cm.exception))
+        self.assertFalse([c for c in b.robot.calls if c[0] == "hold"])
+
+    def test_hold_rejected_by_sdk_is_an_error(self):
+        b = self.backend()
+        b.robot.Joint_Pos_Vel = lambda pos, vel, max_tqu=None, iswait=False: False
+        with self.assertRaises(ArmError):
+            b.hold()
 
     def test_grip_and_brake(self):
         b = self.backend()
@@ -846,6 +872,36 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(self.mock.moves[-1][0], REST)
         code, body = call(self.url, "/thumbs")
         self.assertEqual((code, body["pose"]), (200, "thumbs_up"))
+
+    # ---- 真臂自检脚本（这里用 mock 臂按真实节奏的 1/10 跑） ----
+
+    def selftest_worker(self, skills_path):
+        self.mock = MockArm(time_scale=0.1, has_gripper=True)
+        self.arm = arm_service.use_arm(arm_service.ArmWorker(self.mock, effector="gripper", skills_path=skills_path))
+        self.assertEqual(self.arm.ready()[0], 200)   # arm_service 起来时就会 ready() 一次
+
+    def test_selftest_driver_runs_through(self):
+        self.selftest_worker(SelftestFileTest.PATH)
+        lines, prompts = [], []
+        self.assertTrue(arm_selftest.run(self.url, confirm=prompts.append, out=lines.append, poll=0.01,
+                                         allow_mock=True, timeout=10))
+        self.assertEqual(len(prompts), 5, "每次动臂前都要等人确认")
+        self.assertIn("自检通过", "\n".join(lines))
+        self.assertEqual((self.arm.aborted, self.arm.at), (1, "rest"), "第 4 步急停一次，最后回 rest")
+        self.assertEqual(self.mock.grips, [False, True, False])
+
+    def test_selftest_refuses_without_selftest_file(self):
+        self.selftest_worker(None)
+        with self.assertRaises(arm_selftest.SelftestError) as cm:
+            arm_selftest.run(self.url, confirm=lambda m: None, out=lambda s: None, allow_mock=True)
+        self.assertIn("ARM_SKILLS_FILE", str(cm.exception))
+        self.assertEqual(self.mock.moves, [])
+
+    def test_selftest_refuses_mock_arm_by_default(self):
+        self.selftest_worker(SelftestFileTest.PATH)
+        with self.assertRaises(arm_selftest.SelftestError) as cm:
+            arm_selftest.run(self.url, confirm=lambda m: None, out=lambda s: None)
+        self.assertIn("ARM_BACKEND=panthera", str(cm.exception))
 
     # ---- 和主脑端到端 ----
 

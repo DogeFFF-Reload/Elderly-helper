@@ -41,6 +41,7 @@ STILL_RAD = 0.004      # 约 0.2°
 STILL_SECONDS = 0.4
 SETTLE = 3.0         # 规定时长之后再等这么久还没到位、也没停稳在 SAG_TOLERANCE 内 = 被挡住了
 HOLD_VEL = 0.2       # hold 时每个关节的速度上限（rad/s）：目标就是当前位置，只为把运动刹住
+HOLD_CLIP = 0.0175   # 约 1°：当前位置超出限位不到这么多，夹进限位再保持；更多 = 真越界
 
 
 class ArmError(Exception):
@@ -199,8 +200,16 @@ class PantheraArm:
         (self.robot.gripper_close if close else self.robot.gripper_open)()
 
     def hold(self):
+        """停在当前位置。收拢时 J2/J3 可能读到 -0.04° 这样的小负值（编码器分辨率 0.036°），
+        原样发出去会被 SDK 的第 1 层限位（下限正好 0）拒绝，所以先夹进限位；夹掉超过 HOLD_CLIP 才算真越界。"""
         cur = self.joints()
-        self.robot.Joint_Pos_Vel(cur, [HOLD_VEL] * len(cur))
+        lim = self.robot.joint_limits
+        target = [min(max(x, float(lo)), float(hi)) for x, lo, hi in zip(cur, lim["lower"], lim["upper"])]
+        off = max(abs(a - b) for a, b in zip(cur, target))
+        if off > HOLD_CLIP:
+            raise ArmError("当前位置超出关节限位 %.1f°，不能原地保持（看是不是越界锁定了）" % math.degrees(off))
+        if self.robot.Joint_Pos_Vel(target, [HOLD_VEL] * len(target)) is False:
+            raise ArmError("SDK 拒绝了停住保持指令")
 
     def brake(self):
         self.robot.set_brake()

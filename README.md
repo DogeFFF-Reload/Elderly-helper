@@ -375,7 +375,7 @@ CareMate 联调自检 · http://127.0.0.1:8000
 2. 量现场：床、药盒托盘、SOS 键、老人头的位置，改 `arm_skills.json` 的 `keep_out`、`floor_z`；末端是手#1 的话量 `tool_length.hand1`。
 3. 示教（两人：一人扶臂，一人敲键盘，手边是物理急停）：先停 `arm_service`，`python -m hand_controller.arm_teach`，依次记 `above_tray`、`pick_med`、`handover`、`above_sos`、`sos_press`、`show_sign`。拷回笔记本提交，跑 `python tests/run_all.py arm`：哪个动作从 rest 出发会扫进禁区、扫到桌面，这一步就报出来。
 4. 起服务：`ARM_BACKEND=panthera ARM_EFFECTOR=gripper python -m hand_controller.arm_service --host 0.0.0.0`（末端 2026-10-24 定为夹爪；`panthera_venv` 里已有 `pyserial`，接真手也能用）。开机打印"臂：panthera，末端 …，可以动"，没示教的点位会列出来。
-5. 先 `--probe` 只读一次关节角。还没示教时先跑**自检**：`ARM_SKILLS_FILE=hand_controller/arm_selftest.json` 起服务，动作名一样、点位都是离 rest 很近的小角度（抬 20°、左右转 15°），依次发 `home` → `press_sos`（中途发一次 `/stop`，看停住保持）→ `deliver_medicine`（夹爪开合）→ Ctrl+C（看退出时回 rest）。验的是执行端这条路，不是演示动作。
+5. 先 `--probe` 只读一次关节角（2026-10-24 夜里在真臂上跑过：7 个电机全在线，含夹爪）。还没示教时先跑**自检**（一人守急停）：`ARM_SKILLS_FILE=hand_controller/arm_selftest.json` 起服务（动作名一样、点位都是离 rest 很近的小角度：抬 20°、左右转 15°），再跑 `python -m hand_controller.arm_selftest --server http://192.168.127.10:8013`：回 rest → 抬起停住 → 左转到一半发 `/stop` 看停住保持 → 从半路回 rest → 夹爪开合的递药流程，每步动之前等回车，最后汇总各关节到位偏差；然后在服务窗口 Ctrl+C，看退出时回 rest。验的是执行端这条路，不是演示动作。
 6. 示教完换回正式文件，从最稳的开始：`home` → `press_sos` → `sign_family_received` → `deliver_medicine`，每次有人守急停。
 
 **还没做 / 没验证的**

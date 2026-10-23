@@ -23,7 +23,7 @@ import time
 
 from config import utf8_console
 from hand_controller import arm_safety as S
-from hand_controller.arm_backend import REST, PantheraArm
+from hand_controller.arm_backend import REST, ArmError, PantheraArm
 from hand_controller.arm_kinematics import tool_position
 
 TAU_LIMIT = (15.0, 30.0, 30.0, 15.0, 5.0, 5.0)   # 重力补偿力矩限幅，照 SDK 的 2_gravity_compensation_control.py
