@@ -129,7 +129,11 @@ def main():
                 print("记下 %s = %s°" % (cmd, S.deg(q)))
     except KeyboardInterrupt:
         pass
-    arm.hold()
+    try:
+        arm.hold()
+    except ArmError as e:
+        print("没能在当前位置保持：%s。扶住臂，拍急停" % e)
+        return
     print("已在当前位置保持。慢慢回 rest？[y/N] ", end="", flush=True)
     try:
         back = lines.get(timeout=60).lower() == "y"   # stdin 归读线程，这里不能再 input()
