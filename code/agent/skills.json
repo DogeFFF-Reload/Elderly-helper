@@ -9,7 +9,8 @@
     "finger_exercise": {"desc": "手指操 13 拍", "uses": ["arm"]},
     "teach_device": {"desc": "家电教学（步骤只来自 guides.json）"},
     "echo_chat": {"desc": "回声代聊（需家属授权）"},
-    "request_dial": {"desc": "请求拨 120（只开确认窗，拨不拨由状态机定）"}
+    "request_dial": {"desc": "请求拨 120（只开确认窗，拨不拨由状态机定）"},
+    "rock_paper_scissors": {"desc": "猜拳（手#1 出拳）", "uses": ["arm"]}
   },
   "fsm_only": ["press_sos", "dial_120", "gentle_hold", "notify_emergency"]
 }
