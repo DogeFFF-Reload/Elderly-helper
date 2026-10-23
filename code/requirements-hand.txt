@@ -1,0 +1,2 @@
+# 执行端接真手才需要（MOCK_SERIAL=0）；mock 模式纯标准库
+pyserial>=3.5

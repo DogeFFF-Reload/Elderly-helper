@@ -507,14 +507,14 @@ const armPoseOf = (pose) => ARM_POSES[pose] || (/^(finger_|rps_)/.test(pose) ? A
 const OPEN = [0, 0, 0, 0, 0], FIST = [1, 1, 1, 1, 1], HOLD = [.7, .7, .7, .7, .7];
 const SHAPES = {
   home: [.25, .2, .2, .25, .3], release: OPEN, deliver_medicine: [.6, .55, .55, .55, .55],
-  sign_family_received: HOLD, sign_coming: HOLD, press_sos: [.9, 0, 1, 1, 1], gentle_hold: [.5, .5, .5, .5, .5],
+  sign_family_received: HOLD, sign_coming: HOLD, press_sos: [.7, .7, .7, .7, .7], gentle_hold: [.5, .5, .5, .5, .5],
   rps_rock: FIST, rps_scissors: [1, 0, 0, 1, 1], rps_paper: OPEN, finger_fist: FIST, finger_open: OPEN,
   finger_count_1: [1, 0, 1, 1, 1], finger_count_2: [1, 0, 0, 1, 1], finger_count_3: [1, 0, 0, 0, 1],
   finger_count_4: [1, 0, 0, 0, 0], finger_count_5: OPEN,
 };
 const SHAPE_TEXT = {
   home: "放松", release: "张开", deliver_medicine: "握住药盒", sign_family_received: "握住举牌", sign_coming: "握住举牌",
-  press_sos: "伸食指按键", gentle_hold: "轻握 · 限力", rps_rock: "石头", rps_scissors: "剪刀", rps_paper: "布",
+  press_sos: "半握拳用指节按", gentle_hold: "轻握 · 限力", rps_rock: "石头", rps_scissors: "剪刀", rps_paper: "布",
   finger_fist: "握拳", finger_open: "张开",
 };
 ["食指", "中指", "无名指", "小指"].forEach((f, i) => {

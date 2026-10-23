@@ -32,7 +32,9 @@ PIP=("$ROOT/.venv/bin/python" -m pip install -i "$PIP_INDEX")
 "${PIP[@]}" --upgrade pip
 case "$ROLE" in
   a) "${PIP[@]}" -r "$ROOT/code/requirements-vision.txt" ;;
-  b) # 执行端目前只用标准库；RS485 实装后在这里加 pyserial
+  b) # 执行端接真手要 pyserial；蓝盒在 /dev/ttyUSB*，当前用户要进 dialout 组才打得开（重新登录生效）
+     "${PIP[@]}" -r "$ROOT/code/requirements-hand.txt"
+     sudo usermod -aG dialout "$USER"
      if [ "${WITH_ASR:-0}" = 1 ]; then "${PIP[@]}" -r "$ROOT/code/requirements-voice.txt"; fi ;;
 esac
 

@@ -23,6 +23,7 @@ PATHS = {
     "code/ui/": "captain",
     "code/voice/": "captain",
     "code/requirements-voice.txt": "captain",
+    "code/requirements-hand.txt": "hardware",
     "code/agent/health_tracker.py": "captain",
     "code/agent/voice_profile.py": "captain",
     "code/agent/guides.json": "captain",
