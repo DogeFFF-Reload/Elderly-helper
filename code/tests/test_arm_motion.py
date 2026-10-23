@@ -715,7 +715,7 @@ class PantheraBackendTest(unittest.TestCase):
 
     def test_sdk_never_entered_from_two_threads(self):
         """臂线程在走（轮询到位）、HTTP 线程在查 /status（读关节）：SDK 调用必须一个一个来。"""
-        b = self.backend(reach_after=15)
+        b = self.backend(reach_after=5)
         r = b.robot
         state = {"inside": 0, "overlap": 0}
 
@@ -736,9 +736,10 @@ class PantheraBackendTest(unittest.TestCase):
             setattr(r, name, guarded(getattr(r, name)))
         stop = threading.Event()
 
-        def poll_status():
+        def poll_status():   # 比主脑（每 2 秒一次）密得多，但每次之间歇一下，不至于把锁抢光
             while not stop.is_set():
                 b.joints()
+                time.sleep(0.002)
         t = threading.Thread(target=poll_status)
         t.start()
         try:
