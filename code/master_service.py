@@ -5,6 +5,7 @@
   POST /mock/fall?room=客厅                跌倒事件（视觉桥同格式）
   POST /mock/button?key=ok                床头盒绿键"我没事"
   GET  /api/box?id=box1                   床头盒轮询：灯色 + 心跳（协议草案，见 README）
+  GET  /api/nodes                         节点自检：执行端 / 床头盒 / 视觉 / 喇叭 / 麦克风 / LLM（tools/preflight 用）
   GET/POST /api/params                    演示参数查看 / 运行中调整
   GET  /ui/monitor | /ui/family | /ui/console
 
@@ -18,6 +19,7 @@ import random
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -38,6 +40,11 @@ UI_DIR = config.CODE_DIR / "ui"
 MAX_EVENTS = 500
 TEACH_CARD_SECONDS = 45.0
 BOX_TIMEOUT = 3.0
+VISION_TIMEOUT = 3.0   # 视觉约 5 次/秒推骨架，3 秒没来算离线
+ARM_PROBE_EVERY = 2.0
+
+# 保命链里的臂/手动作：没做成要马上告诉演示员，不能让时间线上只写着"已按下"
+SAFETY_POSES = ("press_sos", "gentle_hold", "sign_family_received", "sign_coming")
 
 # 意图 → 技能：老人提的每个请求都先过 supervisor（白名单 + 资源锁）
 # 猜拳规则归主脑（谁赢由确定性代码判）；视觉只负责认出老人出了什么，按这三个字符串回传
@@ -97,26 +104,106 @@ class EventLog:
 
 
 class ArmClient:
-    """把动作排队发给 arm_service（:8013）；连不上只记 offline，不阻塞总线。"""
+    """把动作排队发给 arm_service（:8013），不阻塞总线。
 
-    def __init__(self, base_url):
+    - 每条动作做没做成都回调 on_result(pose, hand, ok, why, detail)，why = offline / rejected / stale
+    - 在线状态一变就回调 on_link(online)；start_probing() 后每 ARM_PROBE_EVERY 秒 GET /status，开演前就知道执行端在不在
+    - 排队超过 stale 秒还没发出去的动作直接丢：链路断了又恢复时，臂不补做一串过期动作（§5.2 断链保护）
+    - 不重发：超时的请求可能已经到了执行端，重发 press_sos 等于按两下
+    """
+
+    def __init__(self, base_url, timeout=1.5, stale=5.0, clock=time.monotonic):
         self.base = base_url.rstrip("/")
+        self.timeout = timeout
+        self.stale = stale
+        self.clock = clock
+        self.on_result = None
+        self.on_link = None
         self.online = None
+        self.last_ok = None       # 执行端最近一次有回应的时间
+        self.last_error = None
+        self.counts = {"done": 0, "failed": 0, "dropped": 0}
+        self._mu = threading.Lock()
         self.q = queue.Queue()
         threading.Thread(target=self._worker, daemon=True).start()
 
+    def start_probing(self):
+        """回调挂好之后再开始探测，否则第一次"连上 / 连不上"会漏记。"""
+        threading.Thread(target=self._prober, daemon=True).start()
+        return self
+
     def send(self, pose, hand):
-        self.q.put((pose, hand))
+        self.q.put((self.clock(), pose, hand))
+
+    def drain(self):
+        self.q.join()
+
+    def probe(self):
+        return self._call("GET", "/status")[0]
+
+    def status(self):
+        ago = None if self.last_ok is None else round(self.clock() - self.last_ok, 1)
+        return dict(self.counts, online=self.online, url=self.base, ok_ago=ago, last_error=self.last_error)
+
+    def _call(self, method, path):
+        """返回 (ok, why, detail)。HTTP 错误码 = 执行端在线但拒绝（多半是动作表里没有这个 pose）。"""
+        req = urllib.request.Request(self.base + path, data=b"" if method == "POST" else None, method=method)
+        try:
+            urllib.request.urlopen(req, timeout=self.timeout).read()
+        except urllib.error.HTTPError as e:
+            self._link(True)
+            return False, "rejected", _http_error_text(e)
+        except Exception as e:  # noqa: BLE001 连不上、超时、对端断开都算离线
+            self._link(False)
+            return False, "offline", str(getattr(e, "reason", e))
+        self._link(True)
+        return True, "", ""
+
+    def _link(self, online):
+        with self._mu:
+            if online:
+                self.last_ok = self.clock()
+            changed = online != self.online
+            self.online = online
+        if changed and self.on_link:
+            _safe_call(self.on_link, online)
 
     def _worker(self):
         while True:
-            pose, hand = self.q.get()
-            url = "%s/pose?name=%s&hand=%d" % (self.base, urllib.parse.quote(pose), hand)
+            queued, pose, hand = self.q.get()
             try:
-                urllib.request.urlopen(urllib.request.Request(url, data=b"", method="POST"), timeout=1.5).read()
-                self.online = True
-            except Exception:
-                self.online = False
+                waited = self.clock() - queued
+                if waited > self.stale:
+                    ok, why, detail = False, "stale", "排队 %.1f 秒" % waited
+                    self.counts["dropped"] += 1
+                else:
+                    ok, why, detail = self._call("POST", "/pose?name=%s&hand=%d" % (urllib.parse.quote(pose), hand))
+                    self.counts["done" if ok else "failed"] += 1
+                if not ok:
+                    self.last_error = "%s：%s %s" % (pose, why, detail)
+                if self.on_result:
+                    _safe_call(self.on_result, pose, hand, ok, why, detail)
+            finally:
+                self.q.task_done()
+
+    def _prober(self):
+        while True:
+            self.probe()
+            time.sleep(ARM_PROBE_EVERY)
+
+
+def _http_error_text(e):
+    try:
+        return json.loads(e.read().decode("utf-8")).get("error") or "HTTP %d" % e.code
+    except Exception:  # noqa: BLE001
+        return "HTTP %d" % e.code
+
+
+def _safe_call(fn, *args):
+    try:
+        fn(*args)
+    except Exception:  # noqa: BLE001 回调出错不能弄死发送线程，否则之后连 SOS 都发不出去
+        pass
 
 
 class SpeechQueue:
@@ -180,7 +267,15 @@ class Bus:
         self.llm = llm or LLMClient.from_config(self.cfg)
         self.speech = SpeechQueue(self) if self.llm.enabled else None
         self.supervisor = Supervisor(self.cfg["contacts"])
-        self.arm = arm if arm is not None else ArmClient(self.cfg["arm_url"])
+        self.arm = arm if arm is not None else ArmClient(
+            self.cfg["arm_url"], self.cfg["arm_timeout"], self.cfg["arm_stale"])
+        self.arm.on_result = self._arm_result
+        self.arm.on_link = self._arm_link
+        self.arm_down_noted = False
+        if arm is None:
+            self.arm.start_probing()
+        self.clients = {}   # /api/events 的订阅者 → 最近一次来拉的时间（tts_player、asr_bridge…）
+        self.started = clock()
         self.night_mode = self.cfg["night_override"]
         self.box_seen = None
         self.rng = random.SystemRandom()
@@ -279,6 +374,34 @@ class Bus:
             elif kind == "notify":
                 self._notify(a["contact"], a["kind"], a["text"])
             # "dial" 已由状态机配套的 event 记录；真实拨号接口待定
+
+    # ---------- 执行端回执（ArmClient 的线程里调） ----------
+
+    def _arm_result(self, pose, hand, ok, why, detail):
+        """保命动作没做成 → 马上告诉演示员；其他动作只在刚开始失败时记一笔，免得手指操刷屏。
+        type=system：操作台看得到、大屏不显示。通知家属走的是软件通道，不靠臂，照常送达。"""
+        if ok:
+            self.arm_down_noted = False
+            return
+        reason = {"offline": "执行端连不上", "rejected": "执行端拒绝：%s" % detail,
+                  "stale": "%s没发出去，按断链保护丢弃" % detail}.get(why, why)
+        with self.lock:
+            if pose in SAFETY_POSES:
+                self.events.add("system", "保命动作没做成：%s；%s。通知家属走软件通道，照常送达；现场可切 Plan B" % (
+                    pose_label(pose), reason), "danger", pose=pose, hand=hand, why=why)
+            elif not self.arm_down_noted:
+                self.arm_down_noted = True
+                self.events.add("system", "臂/手动作没做成：%s；%s。恢复之前后面的失败只计数，不再逐条记" % (
+                    pose_label(pose), reason), "warn", pose=pose, hand=hand, why=why)
+
+    def _arm_link(self, online):
+        with self.lock:
+            url = self.cfg["arm_url"]
+            if online:
+                self.events.add("system", "执行端已连上（%s）" % url, "ok")
+            else:
+                self.events.add("system", "执行端连不上（%s）：臂/手动作只记录不执行，保命链照常走软件通道" % url,
+                                "warn" if self.fsm.state == IDLE else "danger")
 
     def _blocked(self, what, reason, line_key, **params):
         return [_ev("blocked", "越权拦截：%s（%s）" % (what, reason), "warn"), _say(line_key, **params)]
@@ -580,6 +703,8 @@ class Bus:
             self.health.confirm_window = self.cfg["health_confirm_window"]
             self.llm.timeout = self.cfg["llm_timeout"]
             self.llm.cooldown = self.cfg["llm_cooldown"]
+            self.arm.timeout = self.cfg["arm_timeout"]
+            self.arm.stale = self.cfg["arm_stale"]
             if changed:
                 self.events.add("system", "演示参数调整：" + "，".join(
                     "%s %g→%g" % (k, before[k], v) for k, v in changed.items()))
@@ -653,6 +778,39 @@ class Bus:
             return {"ok": True, "state": g["state"], "led": led, "pattern": pattern,
                     "night": self.is_night(), "remaining": g["remaining"], "dial_pending": g["dial_pending"]}
 
+    def _box_online(self):
+        return bool(self.box_seen and self.clock() - self.box_seen["ts"] < BOX_TIMEOUT)
+
+    # ---------- 节点自检（tools/preflight 用） ----------
+
+    def saw_client(self, name):
+        """/api/events 的订阅者报到（voice/bus_client 带 client=脚本名）：据此判断喇叭、麦克风那头在不在。"""
+        with self.lock:
+            self.clients[name] = self.clock()
+
+    def nodes(self):
+        """只报事实，怎么修由 tools/preflight 给提示。"""
+        with self.lock:
+            now = self.clock()
+            sk = self.skeleton
+            live = sk["pose"] == "live"
+            heard = self.last_heard
+            watched = config.TUNABLE + ("night_override",)
+            return {
+                "bus": {"uptime": round(now - self.started, 1), "state": self.fsm.state,
+                        "events": self.events.next_id - 1, "night": self.is_night()},
+                "arm": self.arm.status(),
+                "box": {"online": self._box_online(), "id": self.box_seen["id"] if self.box_seen else None,
+                        "age": round(now - self.box_seen["ts"], 1) if self.box_seen else None},
+                "vision": {"online": live and now - sk["ts"] < VISION_TIMEOUT,
+                           "age": round(now - sk["ts"], 1) if live else None},
+                "clients": {k: round(now - t, 1) for k, t in self.clients.items()},
+                "heard": {"text": heard["text"], "age": round(now - heard["ts"], 1)} if heard else None,
+                "llm": self.llm.status(),
+                "params_changed": {k: [self.cfg[k], config.DEFAULTS[k]] for k in watched
+                                   if self.cfg[k] != config.DEFAULTS[k]},
+            }
+
     # ---------- 输出 ----------
 
     def snapshot(self):
@@ -674,9 +832,8 @@ class Bus:
                 "exercise": {"active": ex is not None, "beat": ex["beat"] if ex else 0, "total": len(FINGER_MOVES)},
                 "rps": self._rps_view(),
                 "skeleton": self.skeleton,
-                "arm": {"online": self.arm.online},
-                "box": {"online": bool(self.box_seen and self.clock() - self.box_seen["ts"] < BOX_TIMEOUT),
-                        "id": self.box_seen["id"] if self.box_seen else None},
+                "arm": self.arm.status(),
+                "box": {"online": self._box_online(), "id": self.box_seen["id"] if self.box_seen else None},
                 "llm": self.llm.status(),
                 "last_say": self.last_say,
                 "last_heard": self.last_heard,
@@ -767,6 +924,7 @@ def make_handler(bus):
             if path == "/api/poll":
                 return self._json(bus.poll(int(q.get("since", ["0"])[0])))
             if path == "/api/events":
+                bus.saw_client(q.get("client", [""])[0] or "未标名@" + self.client_address[0])
                 with bus.lock:
                     return self._json({"events": bus.events.since(int(q.get("since", ["0"])[0])),
                                        "last_id": bus.events.next_id - 1})
@@ -780,6 +938,8 @@ def make_handler(bus):
             if path == "/api/params":
                 with bus.lock:
                     return self._json({"params": bus.params(), "limits": config.LIMITS})
+            if path == "/api/nodes":
+                return self._json(bus.nodes())
             if path.startswith("/ui/"):
                 return self._static(path)
             self._json({"ok": False, "error": "not found"}, 404)

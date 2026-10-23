@@ -14,12 +14,13 @@
 
 ```powershell
 cd code
-python tests/run_all.py                  # 回归，必须 ALL PASS（当前 14 套 115 条）
+python tests/run_all.py                  # 回归，必须 ALL PASS（当前 19 套 167 条）
 python -m master_service                 # 主脑 :8000（含三块屏）
 python -m demo_driver --pause            # 按 §3 主线一段一段走演示（另开终端，见 §10）
 python -m hand_controller.arm_service    # 臂+双手 mock :8013（另开终端，可不开）
 python -m voice.tts_player               # AI 台词 → 喇叭（另开终端）
 python -m voice.asr_bridge --backend stdin   # 键盘当麦克风（另开终端）
+python -m tools.preflight                # 联调自检：各节点在不在、坏了去哪修（见 §10.9）
 ```
 
 | 屏 | 地址 | 给谁看 |
@@ -114,6 +115,7 @@ python -m voice.asr_bridge --device 1
 | 家属端 → 主脑 | `/api/family/ack`、`/api/family/message`、`/api/echo/authorize`、`/api/echo/revoke` |
 | 操作台 → 主脑 | `/api/night {"mode": "auto|on|off"}`、`/api/reset {"all": "0|1"}`、`/api/agent/propose`、`GET/POST /api/params` |
 | 床头盒 ↔ 主脑 | `GET /api/box?id=box1`（灯色 + 心跳，草案，见 §10） |
+| 节点自检 | `GET /api/nodes`（`tools/preflight` 用，见 §10.9） |
 
 演示参数都在 `code/config.py`，可用 `config.local.json`、环境变量（如 `CAREMATE_ASK_WAIT_DAY=30`）或运行中 `/api/params` 覆盖，见 §10。
 
@@ -124,7 +126,7 @@ python -m voice.asr_bridge --device 1
 | `ui/`、`voice/`、`agent/health_tracker.py`、`agent/voice_profile.py`、`agent/guides.json`、`agent/device_helper.py`、`agent/lines.json` | **交互端** | 用这里的 |
 | `master_service.py`、`state_machine/`、`agent/intent.py`、`agent/supervisor.py`、`agent/skills.json`、`agent/llm_client.py`、`config.py`、`demo_driver.py`、`tests/`、`tools/` | **软件** | 用这里的（§10）；软件同学若另有正式版，用 `tools/merge_gate.py` 对照合并 |
 | `hand_controller/` | 硬件 | stand-in；`poses.py` 的 `label` 会显示在大屏时间线上 |
-| `vision/`、`gesture/`、`deploy/` | 演示 | 已实现（见 §11）；猜拳的主脑一侧（`/api/rps/gesture`、判输赢）在软件分支 `software/rps-hook` |
+| `vision/`、`gesture/`、`deploy/` | 演示 | 已实现（见 §11）；猜拳的主脑一侧（`/api/rps/gesture`、判输赢）归软件，见 §10.7 |
 
 归属的机器可读版在 `code/tools/owners.py`，`run_all` 和 `merge_gate` 都按它判断"找谁"。
 
@@ -140,6 +142,7 @@ python -m voice.asr_bridge --device 1
 - 【全队】会场噪音下 Vosk 小模型的识别率需要实测；不够用的话换 `vosk-model-cn-0.22`（大模型）或 sherpa-onnx，桥的接口不变。
 - 【演示】`fall_bridge --camera` 还没在真人画面上实拍调参（见 §11.3）；大屏已能画视觉推来的实时骨架。
 - 【硬件 × 软件】床头盒协议是软件这边出的草案（§10.6），等硬件同学确认或改。
+- 【全队】只有**两块 X5**（v2.5 §1.2 按三块写的）。建议映射见 §10.9：X5-A 视觉，X5-B 主脑 + 屏 + 语音 + 执行端。要硬件同学确认 X5-B 的 USB 口够接 RS485、麦克风、喇叭；演示同学 `deploy/` 里按 a/b/c 三块写的脚本暂时可以在 X5-B 上把 b、c 各跑一次（§11.5），之后再合并成两块的版本。
 
 ## 10. 软件模块（主脑与安全内核）
 
@@ -152,7 +155,7 @@ python -m voice.asr_bridge --device 1
 | ③ | `demo_driver` 加健康步与手指操 | ✅ §3 主线（血压 → 递药 → 夜间摔倒）+ 手指操，每步检查结果、计时 | `demo_driver.py` |
 | ④ | 维护 `run_all`，负责合并 | ✅ `run_all` 每套标负责人；`merge_gate` 做归属检查 + 试合并 + 回归 | `tests/run_all.py`、`tools/` |
 
-另外顺手修了一处安全内核漏洞（§10.4），并起草了床头盒协议（§10.6）。
+另外顺手修了一处安全内核漏洞（§10.4），并起草了床头盒协议（§10.6）。Day1 联调前又补了执行端回执与断链保护（§10.8）、联调自检（§10.9）。
 
 ### 10.2 llm 通道
 
@@ -228,11 +231,69 @@ python -m demo_driver --local           # 不连服务，假时钟几秒跑完
 - `rps_reveal_delay`（默认 3.5 秒）、`rps_timeout`（默认 6 秒）进了 `LIMITS`，可经 `/api/params` 调
 - 顺带改了别人的文件：`lines.json`（队长，6 句猜拳台词）、`poses.py`（硬件，3 个出拳动作）、两块屏的猜拳卡片和兜底按钮（队长）
 
-### 10.8 回归与合并
+### 10.8 执行端链路（保命动作告警 + 断链保护）
 
+原来总线把动作发给 :8013 就不管了：执行端没开、USB-RS485 松了，时间线上照样写"臂+手#1 按下 SOS 键"，演示员看不出来。现在：
+
+- **保命动作没做成，马上告警**：按 SOS、轻握、两块举牌，任一没做成，操作台日志出一条红色"保命动作没做成：…；执行端连不上。通知家属走软件通道，照常送达；现场可切 Plan B"。大屏不显示（type=system）。
+- **其他动作**（递药、手指操）失败只在刚开始失败时记一条，13 拍手指操不会刷屏。
+- **在线探测**：总线每 2 秒 `GET :8013/status`，开演前就知道执行端在不在（操作台"执行端"灯），掉线、恢复各记一条。
+- **分清"连不上"和"被拒绝"**：执行端回了 4xx/5xx（多半是动作名在 `poses.py` 里没有）算在线但拒绝，日志里带执行端给的原因。
+- **断链保护（§5.2 的总线一侧）**：排队超过 `arm_stale`（5 秒）还没发出去的动作直接丢，链路恢复时臂不会补做一串过期动作。**不重发**：超时的请求可能已经到了执行端，重发 press_sos 等于按两下。
+- `arm_timeout`（1.5 秒）、`arm_stale` 是配置项，也能经 `/api/params` 现场调。
+
+**和硬件同学的约定**：`POST /pose` 收到就回 200，动作在执行端自己做，别等做完才回，否则超过 `arm_timeout` 会被当成离线；做不了的动作回 4xx，在 JSON 的 `error` 里写原因，总线原样显示；`GET /status` 保持可用，总线靠它探测在线。现在的 mock 已经是这样。
+
+### 10.9 联调自检（`tools/preflight`）
+
+Day1 联调最耗时间的是找"哪一台没起来"。一条命令看全：
+
+```powershell
+python -m tools.preflight                                     # 本机主脑
+python -m tools.preflight --server http://192.168.1.20:8000   # 在任意一台机器上查 X5-B
+python -m tools.preflight --wait 60                           # 等到没有 ❌ 或超时（开机后 / 开演前）
+```
+
+```text
+CareMate 联调自检 · http://127.0.0.1:8000
+  ✅ 状态机    空闲
+  ❌ 执行端    连不上 http://127.0.0.1:8013
+               → X5-B 上 bash deploy/start.sh arm（笔记本：python -m hand_controller.arm_service）；…
+  ✅ 喇叭      tts_player 在接收台词
+  ⚠️ 视觉      还没收到过骨架
+               → X5-A 上 bash deploy/start.sh vision；Plan B：fall_bridge --video 预录视频，或操作台“触发摔倒”
+  …
+还不能开演：先修 执行端
+```
+
+| 项目 | 怎么判断 | 不在时 |
+|---|---|---|
+| 执行端 | 总线探测 `:8013/status` | ❌（Plan B：手走 mock + 大屏动画） |
+| 喇叭 | `tts_player` 在拉台词事件 | ❌（兜底：大屏"大屏播报"） |
+| 麦克风 | `asr_bridge` 在拉事件，或听到过老人说话 | ⚠️（兜底：操作台输入框） |
+| 视觉 | 3 秒内收到过骨架 | ⚠️（Plan B：预录视频、操作台"触发摔倒"） |
+| 床头盒 | 3 秒内有心跳 | ⚠️（兜底：操作台绿键） |
+| LLM | 模式、最近一次错误 | ⚠️（会自动回落 scripted） |
+| 状态机、演示参数 | 不在空闲；参数和默认值不同 | ⚠️（彩排时改了忘了改回来） |
+
+- 没有 ❌ 退出码 0，有 ❌ 为 1，连不上主脑为 2，可以写进开机脚本。数据来自 `GET /api/nodes`，自检本身不触发任何动作。
+- 语音工具订阅事件时带上 `client=脚本名`（`voice/bus_client.py` 改了一行），自检靠它认出喇叭、麦克风那头；没更新的旧版显示为"未标名"。
+
+**部署按两块 X5**（建议，等硬件同学确认）：
+
+| 节点 | 跑什么 | 接什么 |
+|---|---|---|
+| X5-A | 视觉：`fall_bridge --camera`、猜拳 `rps_bridge` | 摄像头 |
+| X5-B | 主脑 :8000 + 三块屏 + `tts_player` / `asr_bridge` + 执行端 `arm_service` :8013 | 显示器、喇叭、麦克风、USB-RS485（双手） |
+
+执行端和主脑放同一块：保命链"主脑 → 执行端"走本机回环，不经过 Wi-Fi，`arm_url` 用默认的 `http://127.0.0.1:8013`。视觉跨板走 Wi-Fi/网线，断了还有操作台"触发摔倒"兜底。
+
+### 10.10 回归与合并
+
+- 联调这批新增 2 套：`test_arm_link`（回执、告警、断链保护、探测，外加真 `arm_service` 端到端）、`test_preflight`（`/api/nodes` 和自检判定）。
 - 新增 4 套：`test_llm_fallback`（回落、冷却、内容检查、不占锁、紧急插队）、`test_config_params`、`test_demo_driver`、`test_merge_gate`。另外 `test_agent_supervisor` 补了资源锁，`test_bus_http` 补了 `/api/params` 和 `/api/box`。
 - 测试只读 `config.py` 默认值，不受本机 `config.local.json` 和环境变量影响（`config.load(use_local=False)`）。
-- `python tests/run_all.py fsm help` 可以只跑几套；结果表里每套标了负责人，还会列出"缺"的套（如 `test_rps_engine` 等演示同学提交）。
+- `python tests/run_all.py fsm help` 可以只跑几套；结果表里每套标了负责人，还会列出负责人还没提交的"缺"的套。
 
 合并流程（§7.3 协作规则 3）：
 
@@ -241,7 +302,7 @@ python -m demo_driver --local           # 不连服务，假时钟几秒跑完
 3. 全部通过后，按它打印的命令人工合并
 4. Day2 12:00 前打 tag 冻结：`git tag demo-final`
 
-本次软件模块唯一碰到别人的文件：`agent/lines.json`（队长）加了一句 `skill_busy` 台词，供资源锁挂起时口播。
+软件模块碰到别人的文件：`agent/lines.json`（队长）加了一句 `skill_busy` 台词，供资源锁挂起时口播；联调这批改了 `voice/bus_client.py`（队长）一行，订阅事件时报上脚本名。
 
 ## 11. 视觉模块（演示）
 
@@ -299,6 +360,8 @@ python -m vision.rps_bridge --camera                       # 猜拳（展台）�
 现场跌倒判定不稳时，从上往下换：`--camera` → `--video 预录视频` → `--keypoints 预录骨架` → `--synthetic fall` → 操作台"触发摔倒"按钮。后三种不依赖摄像头和光照。
 
 ### 11.5 三块 X5（§1.2 部署映射）
+
+> **实际只有两块 X5**（映射见 §10.9）：X5-B 上 `setup_x5.sh`、`install_services.sh` 的 `b` 和 `c` 各跑一次，`x5.env` 里 `ARM_HOST=127.0.0.1`。按脚本逻辑可行，还没在实机上验证。
 
 ```bash
 cp deploy/x5.env.example deploy/x5.env      # 改 MASTER_HOST / ARM_HOST / CAMERA_INDEX

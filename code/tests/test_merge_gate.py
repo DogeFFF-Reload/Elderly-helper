@@ -16,6 +16,8 @@ class OwnersTest(unittest.TestCase):
             "code/ui/monitor/index.html": "captain",
             "code/hand_controller/rh56_register_map.py": "hardware",
             "code/vision/fall_bridge.py": "demo",
+            "code/requirements-vision.txt": "demo",
+            "deploy/start.sh": "demo",
             "code/tests/test_voice_profile.py": "captain",
             "code/tests/test_exercise.py": "hardware",
             "code/tests/helpers.py": "software",
@@ -28,6 +30,8 @@ class OwnersTest(unittest.TestCase):
         self.assertEqual(owners.role_of_branch("captain/interaction"), "captain")
         self.assertEqual(owners.role_of_branch("demo/vision"), "demo")
         self.assertIsNone(owners.role_of_branch("feature-x"))
+        self.assertEqual(owners.role_of_branch("origin/software/rps-hook"), "software", "远程分支去掉远程名")
+        self.assertIsNone(owners.role_of_branch("origin/feature-x"))
 
 
 class ReviewTest(unittest.TestCase):

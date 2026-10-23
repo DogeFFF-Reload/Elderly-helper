@@ -38,14 +38,18 @@ class FakeArm:
     def poses(self):
         return [p for p, _ in self.sent]
 
+    def status(self):
+        return {"online": self.online, "url": "fake"}
 
-def make_bus(data_dir=None, llm_transport=None, **overrides):
+
+def make_bus(data_dir=None, llm_transport=None, arm=None, **overrides):
     """llm_transport 给了就开 llm 通道（假接口：fn(messages, timeout) -> str）。
+    arm 不给就用 FakeArm（全部成功、只记录）。
     配置只用 DEFAULTS + overrides，不受本机 config.local.json / 环境变量影响。"""
     import master_service
     from agent.llm_client import LLMClient
     clock = Clock()
-    arm = FakeArm()
+    arm = arm if arm is not None else FakeArm()
     if llm_transport is not None:
         overrides.setdefault("llm_mode", "llm")
     cfg = config.load(overrides, use_local=False)
