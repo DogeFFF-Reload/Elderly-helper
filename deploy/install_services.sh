@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 开机自启：bash deploy/install_services.sh a|b|c
+# 开机自启：bash deploy/install_services.sh a|b
+#   a = X5-A 视觉   b = X5-B 主脑 + 大屏 + 语音 + 执行端
 #   不需要声卡/屏幕的（vision / master / arm）→ systemd 系统服务：开机就起，挂了 2 秒后自动重启
 #   要用喇叭、麦克风、屏幕的（tts / asr / kiosk）→ 桌面登录后自启（~/.config/autostart），
 #   因为系统服务拿不到登录用户的音频和显示
@@ -7,7 +8,11 @@
 set -euo pipefail
 
 ROLE="${1:-}"
-case "$ROLE" in a|b|c) ;; *) echo "用法：$0 a|b|c" >&2; exit 2 ;; esac
+if [ "$ROLE" = c ]; then
+  echo "提示：只有两块 X5，执行端已并进 b（X5-B），按 b 装" >&2
+  ROLE=b
+fi
+case "$ROLE" in a|b) ;; *) echo "用法：$0 a|b" >&2; exit 2 ;; esac
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_USER="${SUDO_USER:-$USER}"
 [ -f "$ROOT/deploy/x5.env" ] || { echo "先运行 bash deploy/setup_x5.sh $ROLE" >&2; exit 1; }
@@ -51,10 +56,10 @@ EOF
 case "$ROLE" in
   a) unit vision ;;
   b)
+    unit arm      # 执行端和主脑同一块：主脑 → 执行端走本机回环，不经过 Wi-Fi
     unit master
     autostart tts
     autostart kiosk
     if [ "${WITH_ASR:-0}" = 1 ]; then autostart asr; fi ;;
-  c) unit arm ;;
 esac
 echo "完成。重启后自动运行；现在手动看状态：systemctl status 'caremate-*'"

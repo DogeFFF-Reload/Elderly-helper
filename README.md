@@ -142,7 +142,7 @@ python -m voice.asr_bridge --device 1
 - 【全队】会场噪音下 Vosk 小模型的识别率需要实测；不够用的话换 `vosk-model-cn-0.22`（大模型）或 sherpa-onnx，桥的接口不变。
 - 【演示】`fall_bridge --camera` 还没在真人画面上实拍调参（见 §11.3）；大屏已能画视觉推来的实时骨架。
 - 【硬件 × 软件】床头盒协议是软件这边出的草案（§10.6），等硬件同学确认或改。
-- 【全队】只有**两块 X5**（v2.5 §1.2 按三块写的）。建议映射见 §10.9：X5-A 视觉，X5-B 主脑 + 屏 + 语音 + 执行端。要硬件同学确认 X5-B 的 USB 口够接 RS485、麦克风、喇叭；演示同学 `deploy/` 里按 a/b/c 三块写的脚本暂时可以在 X5-B 上把 b、c 各跑一次（§11.5），之后再合并成两块的版本。
+- 【全队】只有**两块 X5**（v2.5 §1.2 按三块写的）。建议映射见 §10.9：X5-A 视觉，X5-B 主脑 + 屏 + 语音 + 执行端。要硬件同学确认 X5-B 的 USB 口够接 RS485、麦克风、喇叭；演示同学 `deploy/` 里的脚本已改成两块的版本（`a` / `b`，执行端并进 `b`，见 §11.5）。
 
 ## 10. 软件模块（主脑与安全内核）
 
@@ -313,7 +313,7 @@ CareMate 联调自检 · http://127.0.0.1:8000
 | ① | 笔记本跑通 `--camera`，依赖写进 README | ✅ 姿态/手部模型已在 mediapipe 1.1.1 官方测试图上实测（站立人像躯干 2°、旋转 90° 后 89°、张开的手判为"布"）；**摄像头取帧（cv2）还没在本机实拍过**，见 11.3 | `vision/fall_bridge.py`、`vision/pose_backends.py` |
 | ② | 用真实画面调 `fall_rules`，降低误报漏报 | ✅ 规则改成看时间（见 11.2），9 个合成场景 × 多种帧率/抖动 0 误判；配套调参窗口、录制、离线评估工具 | `gesture/fall_rules.py`、`vision/preview.py`、`vision/eval_falls.py` |
 | ③ | `--video` + 预录跌倒视频（Plan B） | ✅ `--video` 按真实时间播放；另有 `--keypoints`（回放录下的骨架，不需要摄像头和模型）和 `--synthetic fall`（内置合成跌倒） | `vision/fall_bridge.py`、`vision/synth.py` |
-| ④ | 3 块 X5 装环境、写开机脚本 | ✅ 装环境、systemd 开机自启、桌面登录后自启（喇叭/大屏）；还没在 X5 实机上跑过 | `deploy/` |
+| ④ | 2 块 X5 装环境、写开机脚本 | ✅ 装环境、systemd 开机自启、桌面登录后自启（喇叭/大屏）；还没在 X5 实机上跑过 | `deploy/` |
 | — | 猜拳手势识别 | ✅ 视觉只认手势（分类 + 多帧投票）并回传；一局流程和判输赢在主脑，由软件分支 `software/rps-hook` 提供 | `gesture/rps_engine.py`、`vision/rps_bridge.py` |
 
 回归：`python tests/run_all.py` 合并 main 后 16 套 132 条（视觉新增 `test_fall_detector`，`test_rps_engine` 改为只测视觉一侧；`test_fall_detector` 的负责人登记在 `software/rps-hook` 里）。本分支只改视觉文件，`master_service.py` 等软件文件一行没动。
@@ -359,17 +359,21 @@ python -m vision.rps_bridge --camera                       # 猜拳（展台）�
 
 现场跌倒判定不稳时，从上往下换：`--camera` → `--video 预录视频` → `--keypoints 预录骨架` → `--synthetic fall` → 操作台"触发摔倒"按钮。后三种不依赖摄像头和光照。
 
-### 11.5 三块 X5（§1.2 部署映射）
+### 11.5 两块 X5（部署映射见 §10.9）
 
-> **实际只有两块 X5**（映射见 §10.9）：X5-B 上 `setup_x5.sh`、`install_services.sh` 的 `b` 和 `c` 各跑一次，`x5.env` 里 `ARM_HOST=127.0.0.1`。按脚本逻辑可行，还没在实机上验证。
+| 板 | 角色参数 | 开机自启 | 接什么 |
+|---|---|---|---|
+| X5-A | `a` | `vision`（猜拳 `rps` 在展台手动起） | USB 摄像头 |
+| X5-B | `b` | `master` :8000、`arm` :8013、`tts`、`kiosk`（大屏），`WITH_ASR=1` 时加 `asr` | 显示器、喇叭、麦克风、USB-RS485（双手） |
 
 ```bash
-cp deploy/x5.env.example deploy/x5.env      # 改 MASTER_HOST / ARM_HOST / CAMERA_INDEX
-bash deploy/setup_x5.sh a                    # a=视觉 b=主脑+大屏+语音 c=执行端：装 apt 包、建 .venv、跑回归自检
+cp deploy/x5.env.example deploy/x5.env      # 两块都改 MASTER_HOST（X5-B 的地址）；X5-A 再看 CAMERA_INDEX
+bash deploy/setup_x5.sh a                    # a=视觉 b=主脑+大屏+语音+执行端：装 apt 包、建 .venv、跑回归自检
 bash deploy/install_services.sh a            # 开机自启
 bash deploy/start.sh vision                  # 手动起单个服务调试：vision|rps|master|tts|asr|arm|kiosk
 ```
 
+- 执行端和主脑在同一块 X5-B，`ARM_HOST` 保持 `127.0.0.1`：保命链"主脑 → 执行端"走本机回环，不经过 Wi-Fi。旧的 `c` 参数还认，会提示后按 `b` 装。
 - 不需要声卡/屏幕的（vision / master / arm）装成 systemd 服务，开机就起、挂了 2 秒自动重启；日志 `journalctl -u caremate-vision -f`。
 - 要用喇叭/麦克风/屏幕的（tts / asr / 大屏浏览器 kiosk）装成桌面登录后自启，因为系统服务拿不到登录用户的音频和显示。
 - mediapipe 有 Linux aarch64 轮子，X5（Ubuntu 22.04）可以直接 pip 装；X5 若连不上 Google，从笔记本拷 `code/vision/models/` 过去。

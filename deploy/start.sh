@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 启动单个服务（systemd、桌面自启、手动调试都用它）：
 #   bash deploy/start.sh vision|rps|master|tts|asr|arm|kiosk
+#   X5-A：vision、rps   X5-B：master、arm、tts、asr、kiosk
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
