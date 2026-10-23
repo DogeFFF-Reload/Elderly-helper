@@ -48,6 +48,7 @@ TESTS = {
     "test_preflight": ("software",),
     "test_handover_chain": ("hardware",),
     "test_exercise": ("hardware",),
+    "test_hand_driver": ("hardware",),
     "test_rps_engine": ("demo",),
     "test_fall_detector": ("demo",),
     "test_rps_hook": ("software",),
