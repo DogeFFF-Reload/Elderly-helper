@@ -124,7 +124,7 @@ python -m voice.asr_bridge --device 1
 | `ui/`、`voice/`、`agent/health_tracker.py`、`agent/voice_profile.py`、`agent/guides.json`、`agent/device_helper.py`、`agent/lines.json` | **交互端** | 用这里的 |
 | `master_service.py`、`state_machine/`、`agent/intent.py`、`agent/supervisor.py`、`agent/skills.json`、`agent/llm_client.py`、`config.py`、`demo_driver.py`、`tests/`、`tools/` | **软件** | 用这里的（§10）；软件同学若另有正式版，用 `tools/merge_gate.py` 对照合并 |
 | `hand_controller/` | 硬件 | stand-in；`poses.py` 的 `label` 会显示在大屏时间线上 |
-| `vision/`、`gesture/`、`deploy/` | 演示 | 已实现（见 §11）；`master_service.py` 为猜拳加了 `/api/rps/gesture`，需软件同学合入 |
+| `vision/`、`gesture/`、`deploy/` | 演示 | 已实现（见 §11）；猜拳的主脑一侧（`/api/rps/gesture`、判输赢）在软件分支 `software/rps-hook` |
 
 归属的机器可读版在 `code/tools/owners.py`，`run_all` 和 `merge_gate` 都按它判断"找谁"。
 
@@ -242,9 +242,9 @@ python -m demo_driver --local           # 不连服务，假时钟几秒跑完
 | ② | 用真实画面调 `fall_rules`，降低误报漏报 | ✅ 规则改成看时间（见 11.2），9 个合成场景 × 多种帧率/抖动 0 误判；配套调参窗口、录制、离线评估工具 | `gesture/fall_rules.py`、`vision/preview.py`、`vision/eval_falls.py` |
 | ③ | `--video` + 预录跌倒视频（Plan B） | ✅ `--video` 按真实时间播放；另有 `--keypoints`（回放录下的骨架，不需要摄像头和模型）和 `--synthetic fall`（内置合成跌倒） | `vision/fall_bridge.py`、`vision/synth.py` |
 | ④ | 3 块 X5 装环境、写开机脚本 | ✅ 装环境、systemd 开机自启、桌面登录后自启（喇叭/大屏）；还没在 X5 实机上跑过 | `deploy/` |
-| — | 猜拳手势识别 | ✅ 机器人先出、揭晓后才显示，输赢由总线判；摄像头不行时操作台有手动按钮 | `gesture/rps_engine.py`、`vision/rps_bridge.py` |
+| — | 猜拳手势识别 | ✅ 视觉只认手势（分类 + 多帧投票）并回传；一局流程和判输赢在主脑，由软件分支 `software/rps-hook` 提供 | `gesture/rps_engine.py`、`vision/rps_bridge.py` |
 
-回归：`python tests/run_all.py` 合并 main 后 16 套 139 条（视觉新增 `test_fall_detector`、`test_rps_engine`，已登记到 `tools/owners.py`）。
+回归：`python tests/run_all.py` 合并 main 后 16 套 132 条（视觉新增 `test_fall_detector`，`test_rps_engine` 改为只测视觉一侧；`test_fall_detector` 的负责人登记在 `software/rps-hook` 里）。本分支只改视觉文件，`master_service.py` 等软件文件一行没动。
 
 ### 11.1 跑起来
 
@@ -304,6 +304,4 @@ bash deploy/start.sh vision                  # 手动起单个服务调试：vis
 
 ### 11.6 猜拳一局怎么走
 
-猜拳登记为用到臂的技能（`skills.json` 的 `rock_paper_scissors`，`uses: ["arm"]`），保命链进行中会被资源锁挂起，手#1 不会在举牌时去出拳。
-
-老人说"石头剪刀布" → 总线**先定好机器人出什么**（大屏、操作台都看不到）→ 约 3.5 秒后手#1 揭晓 → `rps_bridge` 在揭晓前后约 2 秒内逐帧识别、多帧投票 → `POST /api/rps/gesture` → 总线判输赢、播报。没看清就说"再来一局"，6 秒没回传就提示到展台玩。手势识别按"指尖到手腕的距离"判断手指伸直，和手怎么转、离多远、画面比例都无关。
+视觉这边只做一件事：在揭晓前后约 2 秒内逐帧识别老人的手势、多帧投票，回传 `POST /api/rps/gesture {"round": n, "gesture": "rock"|"scissors"|"paper"|null}`。一局怎么走、机器人出什么、谁赢，都在主脑一侧（`software/rps-hook`，README §10.7）。手势识别按"指尖到手腕的距离"判断手指伸直，和手怎么转、离多远、画面比例都无关。

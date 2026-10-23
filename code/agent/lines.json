@@ -32,12 +32,7 @@
   "exercise_beat": "第{n}拍，{move}。",
   "exercise_done": "做完啦，手指都活动开了！",
   "exercise_stop": "好，那先歇会儿。",
-  "rps_start": "好呀！看我的手——石头、剪刀、布！",
-  "rps_win": "您出{player}，我出{robot}——您赢啦！",
-  "rps_lose": "您出{player}，我出{robot}——我赢啦！再来一局？",
-  "rps_draw": "我们都出了{player}，平局！再来？",
-  "rps_unclear": "我没看清您的手势，手举高一点对着摄像头，咱们再来一局？",
-  "rps_no_camera": "我这边没看到您的手势，可能摄像头没开。到展台那边我们再玩。",
+  "rps_booth": "猜拳要用摄像头看您的手势，我们到展台那边玩。",
 
   "teach_steps": "{device}{task}，一共 {n} 步：{steps}。",
   "teach_unknown_task": "这个我还没学过，不敢乱教。{device}我会教：{tasks}。要不要问问女儿？",

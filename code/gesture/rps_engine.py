@@ -1,4 +1,6 @@
-"""猜拳：手部关键点 → 石头/剪刀/布，判输赢，多帧投票。纯标准库。
+"""猜拳的视觉一侧：手部关键点 → 石头/剪刀/布，多帧投票。纯标准库。
+
+输赢不在这里判：主脑先定好机器人出什么，收到回传的手势后由 master_service.rps_judge 判（确定性内核）。
 
 输入是 MediaPipe Hands 的 21 个点（[x, y] 或 [x, y, z]，归一化坐标）：
 0 手腕；食指 5/6/8（根、中节、指尖）；中指 9/10/12；无名指 13/14/16；小指 17/18/20。
@@ -9,7 +11,6 @@ import math
 
 MOVES = ("rock", "scissors", "paper")
 NAMES = {"rock": "石头", "scissors": "剪刀", "paper": "布"}
-BEATS = {"rock": "scissors", "scissors": "paper", "paper": "rock"}
 
 WRIST = 0
 FINGERS = {"index": (6, 8), "middle": (10, 12), "ring": (14, 16), "pinky": (18, 20)}  # (中节, 指尖)
@@ -49,10 +50,3 @@ def vote(labels, min_count=3, min_share=0.6):
         return None
     best, count = collections.Counter(seen).most_common(1)[0]
     return best if count / len(seen) >= min_share else None
-
-
-def judge(player, robot):
-    """站在老人角度：'win' / 'lose' / 'draw'。"""
-    if player == robot:
-        return "draw"
-    return "win" if BEATS[player] == robot else "lose"
