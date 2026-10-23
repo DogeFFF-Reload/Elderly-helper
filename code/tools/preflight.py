@@ -39,6 +39,10 @@ def check(n):
     else:
         add(WARN, "状态机", "正在 %s，上一段还没收尾" % bus["state"], "开演前在操作台点“重置”")
 
+    if n.get("estop"):
+        add(FAIL, "急停", "软件急停未解除：臂和双手不会动",
+            "确认现场安全后在操作台点“解除急停”，或 POST /api/estop {\"on\": false}")
+
     tz = n.get("tz")
     if tz:
         offset, expected = tz["offset"], tz["expected"]
