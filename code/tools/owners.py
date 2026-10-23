@@ -18,6 +18,8 @@ PATHS = {
     "firmware/": "hardware",
     "code/vision/": "demo",
     "code/gesture/": "demo",
+    "code/requirements-vision.txt": "demo",
+    "deploy/": "demo",
     "code/ui/": "captain",
     "code/voice/": "captain",
     "code/requirements-voice.txt": "captain",
@@ -71,9 +73,12 @@ def owner_of(path):
 
 
 def role_of_branch(branch):
-    """分支按 角色/主题 命名：captain/interaction、demo/vision、software/core、hardware/rh56。"""
-    head = branch.split("/", 1)[0]
-    return head if head in ROLES else None
+    """分支按 角色/主题 命名：captain/interaction、demo/vision、software/core、hardware/rh56。
+    远程分支（origin/demo/vision）先去掉远程名再认。"""
+    parts = branch.split("/")
+    if len(parts) > 2 and parts[0] not in ROLES and parts[1] in ROLES:
+        parts = parts[1:]
+    return parts[0] if parts[0] in ROLES else None
 
 
 def names(roles):
