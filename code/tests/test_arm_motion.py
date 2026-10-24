@@ -761,10 +761,15 @@ class PantheraBackendTest(unittest.TestCase):
             b.grip(True)
 
     def test_missing_sdk_reports_why(self):
+        """sys.modules 里放 None：不管这台机器（比如 X5）能不能从别的路径 import 到 SDK，
+        这条测试都不会真的构造 Panthera()、碰串口。"""
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, True)
         b = PantheraArm(scripts_dir=tmp)
         self.addCleanup(lambda: tmp in sys.path and sys.path.remove(tmp))
+        blocked = mock.patch.dict(sys.modules, {"Panthera_lib": None})
+        blocked.start()
+        self.addCleanup(blocked.stop)
         ok, why = b.connect()
         self.assertFalse(ok)
         self.assertIn("连不上臂", why)
