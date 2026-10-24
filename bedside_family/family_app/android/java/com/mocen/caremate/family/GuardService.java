@@ -97,6 +97,14 @@ public class GuardService extends Service {
     private String pickBase() {
         if (!Cfg.CLOUD_BASE.isEmpty() && ok(Cfg.CLOUD_BASE + "/alarms")) return Cfg.CLOUD_BASE;
         if (ok(Cfg.LAN_BASE + "/alarms")) return Cfg.LAN_BASE;
+        String saved = getSharedPreferences("alarm", 0).getString("base", "");
+        if (!saved.isEmpty() && ok(saved + "/alarms")) return saved;
+        // v1.5 自愈:静态/记住的都失联 → 全段扫描找回(App 关着时也能跟上换网段)
+        String hit = MainActivity.subnetScan();
+        if (hit != null) {
+            getSharedPreferences("alarm", 0).edit().putString("base", hit).apply();
+            return hit;
+        }
         return null;
     }
 

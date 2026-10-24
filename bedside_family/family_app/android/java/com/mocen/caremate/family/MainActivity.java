@@ -309,12 +309,90 @@ public class MainActivity extends Activity {
             String pick = null;
             if (!Cfg.CLOUD_BASE.isEmpty() && ok200(Cfg.CLOUD_BASE + "/messages")) pick = Cfg.CLOUD_BASE;
             if (pick == null && ok200(Cfg.LAN_BASE + "/messages")) pick = Cfg.LAN_BASE;
+            if (pick == null) {                          // v1.5 链级自愈:板子换网段/换 IP 也能找回来
+                String hit = discoverBase();
+                if (hit != null) pick = hit;
+            }
             final String f = pick;
             ui.post(() -> {
                 if (f != null) { base = f; connState.setText("已连接老人床头 · Mocen"); }
                 else connState.setText("没找到床头设备(和床头连同一个网络再打开)");
             });
         }).start();
+    }
+
+    /** v1.5 网络自愈:静态地址连不上时,扫本机每个网段(/24)的 8013 端口,
+     *  命中 /status 即为床头;找到后存 prefs,本轮直接可用(热点换网段不再断链)。 */
+    static String remembered = null;                     // 进程级缓存,避免每轮全扫
+
+    private static String scanCache() { return remembered; }
+
+    private String discoverBase() {
+        String saved = getSharedPreferences("alarm", 0).getString("base", "");
+        if (!saved.isEmpty() && ok200(saved + "/messages")) { remembered = saved; return saved; }
+        String hit = subnetScan();
+        if (hit != null) {
+            remembered = hit;
+            getSharedPreferences("alarm", 0).edit().putString("base", hit).apply();
+        }
+        return hit;
+    }
+
+    /** 枚举本机所有 IPv4(去环回/本地链路)→ 并行扫各自 /24 的 8013:/status。 */
+    static volatile long lastScan = 0;                   // 扫描冷却:别每轮轮询都全扫
+
+    static String subnetScan() {
+        long now = System.currentTimeMillis();
+        if (now - lastScan < 20000) return null;         // 20s 冷却
+        lastScan = now;
+        java.util.Set<String> nets = new java.util.LinkedHashSet<>();
+        try {
+            java.util.Enumeration<java.net.NetworkInterface> ifs =
+                    java.net.NetworkInterface.getNetworkInterfaces();
+            while (ifs.hasMoreElements()) {
+                java.net.NetworkInterface ni = ifs.nextElement();
+                if (!ni.isUp() || ni.isLoopback()) continue;
+                java.util.Enumeration<java.net.InetAddress> ads = ni.getInetAddresses();
+                while (ads.hasMoreElements()) {
+                    java.net.InetAddress a = ads.nextElement();
+                    if (!a.isLoopbackAddress() && a instanceof java.net.Inet4Address
+                            && !a.isLinkLocalAddress()) {
+                        byte[] ip = a.getAddress();
+                        nets.add((ip[0] & 0xFF) + "." + (ip[1] & 0xFF) + "." + (ip[2] & 0xFF) + ".");
+                    }
+                }
+            }
+        } catch (Exception e) { /* 没有任何网段:扫不了 */ }
+        if (nets.isEmpty()) return null;
+        List<String> bases = new ArrayList<>();
+        for (String n : nets)
+            for (int i = 1; i <= 254; i++) bases.add("http://" + n + i + ":8013");
+        // 命中即返回(短路):并行 24 线程,单目标 350ms 超时,/24 最坏 ~4s
+        java.util.concurrent.atomic.AtomicReference<String> found =
+                new java.util.concurrent.atomic.AtomicReference<>(null);
+        java.util.concurrent.ExecutorService pool =
+                java.util.concurrent.Executors.newFixedThreadPool(24);
+        List<java.util.concurrent.Future<?>> fs = new ArrayList<>();
+        for (final String b : bases) {
+            fs.add(pool.submit(() -> {
+                if (found.get() != null) return;
+                try {
+                    HttpURLConnection c = (HttpURLConnection) new URL(b + "/status").openConnection();
+                    c.setConnectTimeout(350); c.setReadTimeout(350);
+                    java.io.InputStream is = c.getInputStream();
+                    byte[] bb = new byte[64];
+                    int n = is.read(bb); is.close(); c.disconnect();
+                    if (n > 0 && new String(bb, 0, n, "UTF-8").contains("backend")) {
+                        found.compareAndSet(null, b);
+                    }
+                } catch (Exception e) { /* 不在线,继续 */ }
+            }));
+        }
+        for (java.util.concurrent.Future<?> f : fs) {
+            try { f.get(); } catch (Exception e) {}
+        }
+        pool.shutdownNow();
+        return found.get();
     }
 
     private boolean ok200(String u) {
@@ -495,7 +573,41 @@ public class MainActivity extends Activity {
                 if (fire != null) fireAlarm(fire);
             });
         } catch (Exception e) {
-            // 连不上:静默(下轮再试);若正拉响也先不关(可能网络抖)
+            // 连不上:静默 + v1.5 自愈(换网段/IP 后自动找回,找回则立即再拉一轮)
+            if (alarming) return;                       // 正拉响也先不关(可能网络抖)
+            String hit = (remembered != null) ? remembered : "";
+            if (!hit.isEmpty() && ok200(hit + "/alarms")) { base = hit; return; }
+            String n = subnetScan();
+            if (n != null) {
+                remembered = n;
+                getSharedPreferences("alarm", 0).edit().putString("base", n).apply();
+                base = n;
+                try {
+                    HttpURLConnection c2 = (HttpURLConnection)
+                            new java.net.URL(base + "/alarms").openConnection();
+                    c2.setConnectTimeout(2500); c2.setReadTimeout(2500);
+                    String j2 = readAll(c2.getInputStream()); c2.disconnect();
+                    JSONArray arr2 = new JSONObject(j2).getJSONArray("alarms");
+                    List<Alarm> na2 = new ArrayList<>();
+                    for (int i = 0; i < arr2.length(); i++) {
+                        JSONObject o = arr2.getJSONObject(i);
+                        Alarm a = new Alarm();
+                        a.id = o.optString("id"); a.time = o.optString("time");
+                        a.src = o.optString("src"); a.acked = o.optBoolean("acked");
+                        na2.add(a);
+                    }
+                    String fire2 = null;
+                    for (Alarm a : na2) if (!a.acked) { fire2 = a.id; break; }
+                    final Alarm fire = (fire2 != null && mayFire &&
+                            !alarming && !fire2.equals(lastAckFired)) ? find(na2, fire2) : null;
+                    ui.post(() -> {
+                        alarms.clear(); alarms.addAll(na2);
+                        fillList();
+                        if (fire != null) fireAlarm(fire);
+                        connState.setText("已连接老人床头 · Mocen(自动找回)");
+                    });
+                } catch (Exception e2) { /* 找到了但拉取失败:下轮再试 */ }
+            }
         }
     }
 
