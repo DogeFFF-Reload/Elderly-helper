@@ -164,9 +164,10 @@ def opencv_source(capture_arg, estimator, realtime, fps_cap=0.0, log=print):
 
 # ---------- 主循环 ----------
 
-def run(source, detector, poster, room, recorder=None, preview=None, log=print, quality=None):
+def run(source, detector, poster, room, recorder=None, preview=None, log=print, quality=None, alarms=None):
     """跑完一个输入源；返回触发的报警列表。"""
-    alarms, seen, frames, t_report = [], 0, 0, 0.0
+    alarms = [] if alarms is None else alarms
+    seen, frames, t_report = 0, 0, 0.0
     quality = quality if quality is not None else InputQuality(log=log)
     try:
         for t, kp, frame, aspect in source:

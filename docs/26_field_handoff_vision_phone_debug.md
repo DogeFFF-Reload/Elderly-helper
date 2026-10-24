@@ -67,7 +67,7 @@ python -m vision.rehearsal --keypoints "data/phone_pose/批次/keypoints.jsonl"
    地址、端口和凭据替换为 App 实际显示的值。也可在当前终端用 `PHONE_USERNAME` / `PHONE_PASSWORD` 提供凭据。此入口不向主程序发送任何事件。
 
 4. 先确认身体关键点稳定、正常站立/走动/坐下没有明显异常。按 `q` 或 Ctrl+C 停止，记录会保留。当前不要求额外进行完整多轮采集。
-5. 把新保存的骨架用第 3 节命令回放，连同结果 ZIP 和现象说明交给软件队友。真正启用实时上报及真实设备联动，需另行完成现场验收。
+5. 把新保存的骨架用第 3 节命令回放，连同结果 ZIP 和现象说明交给软件队友。实时输入接独立模拟主程序见第 10 节；连接现场主程序和真实设备仍需另行验收。
 
 公开静态图片与合成动作不能替代真实场景验收。不要使用旧文档的能量阈值公式直接宣布跌倒识别有效。
 
@@ -91,11 +91,11 @@ python -m vision.rehearsal --keypoints "data/phone_pose/批次/keypoints.jsonl"
 - 将来由硬件队友确认真实机械臂、机械手、电源、急停和现场动作。
 - 执行端始终使用仓库 `code/hand_controller/arm_service.py`，不用 kit 自带版本。
 - 视觉只处理画面、坐标和主程序接口，不直接调用执行端或改串口/寄存器。
-- 手机实时上报尚未开放；本次成果是观察记录与隔离的模拟联调，不代表真机闭环完成。
+- 手机可显式选择向独立本机模拟主程序实时传骨架；默认观察入口仍不发送。现场主程序与真实执行端的闭环尚未验收。
 
 ## 7. 给队友的简短说明
 
-> 当前采用第三轮固定机位的正常活动数据继续开发，暂不要求补测。iPhone MJPEG 已接入人体姿态规则；默认入口只在本地观察并保存骨架。新增 `python -m vision.rehearsal` 可无设备验证骨架到主程序的完整模拟流程，也能回放以后保存的手机骨架。合成数据检查通过不能当真人跌倒识别准确率。真实手机姿态效果、实时上报和真实设备联动仍待现场验收。请使用仓库执行端，不使用 kit 的 arm_service。
+> 当前采用第三轮固定机位的正常活动数据继续开发，暂不要求补测。iPhone MJPEG 已接入人体姿态规则；默认入口只在本地观察并保存骨架。`vision.rehearsal` 可无设备复现，`vision.integrated_demo` 可回放或显式选择实时输入，完整模拟血压、递药、求助、家属确认和手指操。合成数据检查通过不能当真人跌倒识别准确率。真实手机姿态效果和真实设备联动仍待现场验收。请使用仓库执行端，不使用 kit 的 arm_service。
 
 ## 8. 电脑摄像头大屏观察
 
@@ -114,3 +114,25 @@ python -m vision.rehearsal --keypoints "data/phone_pose/批次/keypoints.jsonl"
 默认2倍速展示，判定仍按原始时间。F 切换全屏，Q 关闭。演示完成后窗口和本机大屏/家属端保留最多10分钟，地址在本次 `live_status.json` 中。结果在 `code/data/integrated_demo/批次/`，HTML 和同名 ZIP 可直接交接。
 
 无窗口后台检查可在 `code/` 运行 `python -m vision.integrated_demo --headless --keypoints "data/pc_pose/批次/keypoints.jsonl"`。原始坐标保留，实际回放的活动片段另存 `visual_replay.jsonl`。操作者确认单独存放并绑定坐标文件哈希；不会仅因倒计时结束或文件名包含 fall 就认定动作真值。
+
+## 10. 实时摄像头接完整模拟流程（本轮已实现，实机运行待验收）
+
+本轮开发没有打开任何摄像头或真实硬件。以下入口供具备设备条件并准备好测试时使用，现在不需要执行。
+
+电脑摄像头：双击根目录 `START_LIVE_VISION_DEMO.bat`。原来的 `START_FULL_VISION_DEMO.bat` 仍是已保存骨架回放。
+
+iPhone：在 `code/` 目录使用项目环境，凭据沿用 `PHONE_USERNAME` / `PHONE_PASSWORD`：
+
+```powershell
+..\.venv\Scripts\python.exe -m vision.integrated_demo --phone-stream "http://<App显示的完整地址>:8081/" --duration 60
+```
+
+程序先演示血压确认、模拟递药，再打开所选输入观察60秒。此时固定镜头，让肩部和髋部入镜，做普通活动；不用做跌倒。窗口显示实时画面、骨架、输入状态和主程序状态。结束后关闭输入，继续有明确标注的合成倒地、取消、模拟求助、家属确认和手指操。Q 随时关闭并保存，F 切换全屏。全程没有语音播放，提示在电脑屏幕上。
+
+实时骨架只送到本程序新建的 `127.0.0.1` 随机端口主程序；执行端是内存中的记录器，不创建机械臂、机械手或外部通知客户端。它不会接入已运行的现场主程序。实时段按真实接收时间运行，不受脚本回放速度影响。
+
+断流、输入错误、没有可用躯干骨架或观察段产生疑似事件时，结果标为未通过并保留部分数据，不继续后面的合成救援脚本。输入中出现的疑似事件已进入独立模拟主程序；报告保留其回执。观察段通过只说明这段输入可用且未产生疑似事件，不表示误报率或识别准确率。
+
+结果保存在 `code/data/integrated_demo/<批次>/`：`live_keypoints.jsonl` 是实时坐标，`report.json` / `report.html` 是结果，同名 ZIP 可交接。不会保存影像、手机地址或凭据；报告记录输入种类、是否打开、完成状态和错误类型。
+
+X5 配置用 `PHONE_STREAM_URL`、`PHONE_USERNAME`、`PHONE_PASSWORD`、`PHONE_DURATION`、`PHONE_FPS`。`bash deploy/start.sh phone` 只观察；`phone-demo` 运行无窗口的独立完整模拟流程。删除旧 `PHONE_URL` / `PHONE_ARGS`，不再使用能量阈值38或 `--arm 1`。

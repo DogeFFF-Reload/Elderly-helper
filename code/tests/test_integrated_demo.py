@@ -109,6 +109,104 @@ class IntegratedDemoTest(unittest.TestCase):
         self.assertTrue(report["interrupted"])
         self.assertTrue((self.root/"output"/"report.json").is_file())
 
+    def live_source(self, name="sit", *, fail=False):
+        class SimulatedInput:
+            kind = "pc_camera"
+            source_name = "synthetic:live_transport_test"
+            duration, fps = 60, 10
+            open_attempted = opened = closed = False
+
+            def __enter__(self):
+                self.open_attempted = self.opened = True
+                return self
+
+            def __iter__(self):
+                for t, kp in synth.build(name):
+                    yield t, kp, "memory-only-frame", 4/3
+                    if fail and t >= .5:
+                        raise ConnectionError("http://private_user:private_secret@invalid/")
+
+            def __exit__(self, *_exc):
+                self.closed = True
+        return SimulatedInput()
+
+    def test_live_coordinates_enter_full_mock_workflow_and_are_archived(self):
+        live = self.live_source()
+        report = self.run_demo(live_input=live)
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(len(report["checks"]), 10)
+        self.assertEqual(report["visual_inputs"][0]["kind"], "live")
+        self.assertTrue(report["visual_inputs"][0]["completed"])
+        self.assertFalse(report["normal_confirmed"])
+        self.assertTrue(live.closed)
+        self.assertTrue((self.root/"output"/"live_keypoints.jsonl").is_file())
+        import zipfile
+        with zipfile.ZipFile(self.root/"output.zip") as archive:
+            self.assertIn("live_keypoints.jsonl", archive.namelist())
+
+    def test_live_disconnect_saves_partial_coordinates_and_redacts_error(self):
+        live = self.live_source(fail=True)
+        report = self.run_demo(live_input=live)
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["error"], "ConnectionError")
+        self.assertTrue(live.closed)
+        self.assertGreater(report["visual_inputs"][0]["input_quality"]["frames"], 0)
+        self.assertEqual(report["visual_inputs"][0]["input_quality"]["state"], "input_error")
+        self.assertEqual(len(report["visual_inputs"]), 1)
+        self.assertNotIn("press_sos", [a["pose"] for a in report["mock_actions"]])
+        for path in (self.root/"output").glob("*.json"):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("private_secret", text)
+            self.assertNotIn("private_user", text)
+
+    def test_live_suspected_event_is_preserved_and_stops_scripted_rescue(self):
+        live = self.live_source("fall")
+        report = self.run_demo(live_input=live)
+        self.assertFalse(report["ok"])
+        self.assertFalse(report["checks"]["normal_keeps_idle"])
+        self.assertEqual(len(report["visual_inputs"]), 1)
+        self.assertEqual(len(report["visual_inputs"][0]["events"]), 1)
+        self.assertEqual(len(report["visual_inputs"][0]["receipts"]), 1)
+        self.assertTrue(live.closed)
+
+    def test_live_no_person_does_not_pass_or_continue_synthetic_rescue(self):
+        live = self.live_source()
+        live.__class__.__iter__ = lambda self: iter([(i/10, None, None, 4/3) for i in range(10)])
+        report = self.run_demo(live_input=live)
+        self.assertFalse(report["ok"])
+        self.assertFalse(report["checks"]["visual_input_usable"])
+        self.assertEqual(len(report["visual_inputs"]), 1)
+        self.assertEqual(report["final_state"], "IDLE")
+
+    def test_live_view_closed_during_capture_closes_input_and_keeps_partial_report(self):
+        class ClosedDuringInput:
+            def show(self, target):
+                return target.frame is None
+        live = self.live_source()
+        report = self.run_demo(live_input=live, viewer=ClosedDuringInput())
+        self.assertFalse(report["ok"])
+        self.assertTrue(report["interrupted"])
+        self.assertTrue(live.closed)
+        self.assertGreater(report["visual_inputs"][0]["input_quality"]["frames"], 0)
+
+    def test_live_frames_are_not_paced_twice(self):
+        live = self.live_source()
+        with demo.MockMaster() as master:
+            target = demo.DemoTarget(master, viewer=type("View", (), {"show": lambda *a: True})())
+            result = {}
+            with patch.object(demo.time, "sleep", side_effect=AssertionError("Live input already paced")):
+                demo.play_live(target, live, self.root, result)
+        self.assertTrue(result["completed"])
+        self.assertTrue(live.closed)
+
+    def test_cli_rejects_conflicting_inputs_and_invalid_live_limits_without_opening(self):
+        for args in (["--camera", "--keypoints", "x"], ["--camera", "--normal-confirmed"],
+                     ["--camera", "-1"], ["--camera", "--duration", "nan"],
+                     ["--camera", "--fps-cap", "0"], ["--camera", "--duration", "601"]):
+            with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()), \
+                    patch.dict(sys.modules, {"cv2": None, "mediapipe": None}), self.assertRaises(SystemExit):
+                demo.main(args)
+
 
 if __name__=="__main__":
     unittest.main()

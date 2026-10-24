@@ -32,6 +32,13 @@ class _CaptureHandler(BaseHTTPRequestHandler):
 
 
 class PhoneWatchTest(unittest.TestCase):
+    def test_impossible_legacy_threshold_is_rejected_before_camera_access(self):
+        with patch.object(sys, "argv", ["phone_fall_watch", "--phone", "http://invalid/", "--thresh", "38", "--arm", "1"]), \
+                patch.object(watch, "PhoneFrameSource", side_effect=AssertionError("No camera access")), \
+                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as stopped:
+            watch.main()
+        self.assertEqual(stopped.exception.code, 2)
+
     def test_static_frame_has_no_motion(self):
         frame = Image.new("L", (watch.W, watch.H), 80)
         energy, cy, rows = watch.energy_profile(frame, frame.copy())

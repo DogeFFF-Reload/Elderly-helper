@@ -112,8 +112,8 @@ def main():
 
     if Image is None or ImageChops is None:
         print("缺 pillow：pip install pillow 后再跑"); sys.exit(1)
-    if not math.isfinite(a.thresh) or a.thresh < 0 or a.thresh > 100:
-        ap.error("--thresh 必须在 0 到 100 之间")
+    if not math.isfinite(a.thresh) or a.thresh < 0 or a.thresh > 255 / 12:
+        ap.error("--thresh 必须在 0 到 21.25 之间；旧阈值38不可能触发，此能量工具不能代替姿态检测")
     if a.cooldown < 0 or a.conn < 1 or not math.isfinite(a.interval) or a.interval <= 0:
         ap.error("--cooldown 必须非负；--conn 和 --interval 必须为正数")
     if a.frames < 0:

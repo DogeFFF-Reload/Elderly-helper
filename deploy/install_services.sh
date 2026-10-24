@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 开机自启：bash deploy/install_services.sh a|b
-#   a = X5-A 视觉 / 手机保底哨兵   b = X5-B 主脑 + 大屏 + 语音 + 执行端
+#   a = X5-A USB 视觉 / 手机本地姿态观察（二选一）   b = X5-B 主脑 + 大屏 + 语音 + 执行端
 #   不需要声卡/屏幕的（vision / master / arm）→ systemd 系统服务：开机就起，挂了 2 秒后自动重启
 #   要用喇叭、麦克风、屏幕的（tts / asr / kiosk）→ 桌面登录后自启（~/.config/autostart），
 #   因为系统服务拿不到登录用户的音频和显示
@@ -55,8 +55,16 @@ EOF
 
 case "$ROLE" in
   a)
-    unit vision
-    if [ -n "${PHONE_URL:-}" ]; then unit phone; fi ;;
+    if [ -n "${PHONE_URL:-}${PHONE_ARGS:-}" ]; then
+      echo "检测到旧手机配置：删除 PHONE_URL / PHONE_ARGS，改填 PHONE_STREAM_URL（完整 MJPEG 地址）。尚未安装服务。" >&2
+      exit 1
+    fi
+    if [ -n "${PHONE_STREAM_URL:-}" ]; then
+      unit phone
+      echo "手机模式仅做本地姿态观察，不向现场主程序上报。迁移已有安装时由现场队友检查并停止旧 caremate-vision 服务。"
+    else
+      unit vision
+    fi ;;
   b)
     unit arm      # 执行端和主脑同一块：主脑 → 执行端走本机回环，不经过 Wi-Fi
     unit master
