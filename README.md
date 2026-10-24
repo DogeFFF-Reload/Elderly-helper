@@ -14,7 +14,7 @@
 
 ```powershell
 cd code
-python tests/run_all.py                  # 回归，必须 ALL PASS（当前 23 套 209 条）
+python tests/run_all.py                  # 回归，必须 ALL PASS（当前 23 套 216 条）
 python -m master_service                 # 主脑 :8000（含三块屏）
 python -m demo_driver --pause            # 按 §3 主线一段一段走演示（另开终端，见 §10）
 python -m hand_controller.arm_service    # 臂+双手 mock :8013（另开终端，可不开）
@@ -430,7 +430,7 @@ python code/camera/phone_fall_watch.py --stream-url http://<手机主机名>.loc
 python code/camera/phone_calibrate.py --stream-url http://<手机主机名>.local:8081/ --username admin --password admin --open-output
 ```
 
-电脑打开音量，听到中文提示后进入画面。每段先给 **10 秒准备**，听到“开始”再做动作，听到“这一段结束”即可休息；全程不需要回电脑按键。每轮顺序固定，自动重复 **3 轮**：
+提示音从**电脑当前的声音输出设备**播放。程序先试音：到做动作的位置确认能听清，再回电脑按一次回车，才会连接手机并开始正式采集。每段先给 **10 秒准备**，听到“开始”再做动作，听到“这一段结束”即可休息；正式采集过程中不需要回电脑按键。每轮顺序固定，自动重复 **3 轮**：
 
 | 顺序 | 动作 | 每轮采样时长 |
 |---|---|---|
@@ -438,7 +438,15 @@ python code/camera/phone_calibrate.py --stream-url http://<手机主机名>.loca
 | 2 | 在画面内正常来回走动 | 20 秒 |
 | 3 | 用稳固椅子缓慢坐下再站起，按舒适节奏重复 | 20 秒 |
 
-9 段采样共 3 分钟，准备共 1.5 分钟，加语音约 **6–8 分钟**。不需要实际摔倒或做危险动作。若没有听到首句语音提示，先不要开始动作；程序能检查语音调用是否成功，但不能判断喇叭是否静音。语音组件不可用会结束并报告错误；也可让同伴看电脑报时，使用 `--no-voice`。
+9 段采样共 3 分钟，准备共 1.5 分钟，加语音约 **6–8 分钟**。不需要实际摔倒或做危险动作。程序能检查语音调用是否成功，但不能判断你是否听清。听不清时在确认步骤按 Ctrl+C，摄像头不会启动，也不会产生一包看似完成的采集数据。语音组件不可用会结束并报告错误；也可让同伴看电脑报时，使用 `--no-voice`。
+
+可以先单独试音，不需要摄像头地址，也不连接手机：
+
+```powershell
+python code/camera/phone_calibrate.py --sound-check
+```
+
+语音离线合成为内存音频后再放大播放；合成音量明确设置为 100，`--voice-gain` 默认 3，范围 1–8，响亮部分做软限幅以免数值溢出。较小声时可试 `--sound-check --voice-gain 6`；正式采集时使用同样的 `--voice-gain 6` 参数。它只调整本程序音频，不修改 Windows 总音量或混音器。若电脑最大音量仍不够，请给电脑连接耳机或音箱，或让同伴看屏幕报时，确认听清后再采集。
 
 结束后自动打开结果文件夹（`--open-output`），把新生成的 ZIP 发回分析即可。默认路径是 `code/data/phone_calibration/日期时间_随机码.zip`（不入 Git），旁边目录留有原文件：
 

@@ -1,5 +1,6 @@
 """Timed phone collection: loopback synthetic MJPEG only, no real devices/audio."""
 import base64
+import array
 import contextlib
 import csv
 import io
@@ -10,6 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
+import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 import zipfile
@@ -25,6 +27,90 @@ def jpeg(level):
     buffer = io.BytesIO()
     Image.new("RGB", (96, 64), (level, level, level)).save(buffer, format="JPEG")
     return buffer.getvalue()
+
+
+def wav_bytes(values=(0, 50, -50, 1000, -1000, 30000, -30000), width=2):
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as target:
+        target.setnchannels(1)
+        target.setsampwidth(width)
+        target.setframerate(22050)
+        target.writeframes(array.array("h", values).tobytes())
+    return buffer.getvalue()
+
+
+class SpeechVolumeTest(unittest.TestCase):
+    def test_gain_boosts_quiet_audio_preserving_wave_format_without_overflow(self):
+        original = wav_bytes()
+        louder = calibration.amplify_wave(original, 3)
+        with wave.open(io.BytesIO(original)) as a, wave.open(io.BytesIO(louder)) as b:
+            self.assertEqual(a.getparams(), b.getparams())
+            before = array.array("h", a.readframes(a.getnframes()))
+            after = array.array("h", b.readframes(b.getnframes()))
+        self.assertEqual(after[0], 0)
+        self.assertGreater(after[1], 2 * before[1])
+        self.assertLess(after[2], 2 * before[2])
+        self.assertGreater(after[3], 2 * before[3])
+        self.assertTrue(all(-32767 <= n <= 32767 for n in after))
+        self.assertGreater(after[5], 0)
+        self.assertLess(after[6], 0)
+
+    def test_unit_gain_preserves_original_samples_and_unsupported_format_fails(self):
+        original = wav_bytes()
+        with wave.open(io.BytesIO(original)) as a, \
+                wave.open(io.BytesIO(calibration.amplify_wave(original, 1))) as b:
+            self.assertEqual(a.readframes(a.getnframes()), b.readframes(b.getnframes()))
+        with self.assertRaises(calibration.CollectionError):
+            calibration.amplify_wave(wav_bytes(width=1), 3)
+
+    def test_sound_check_needs_no_camera_and_plays_once(self):
+        with patch.object(calibration, "WindowsSpeaker") as factory, \
+                patch.object(calibration, "PhoneFrameSource") as source, \
+                patch.object(calibration, "collect") as collect, \
+                patch("builtins.input") as confirm, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(calibration.main(["--sound-check"]), 0)
+        factory.assert_called_once_with(gain=3)
+        factory.return_value.assert_called_once_with(calibration.SOUND_CHECK_TEXT)
+        source.assert_not_called()
+        collect.assert_not_called()
+        confirm.assert_not_called()
+
+    def test_cancel_after_sound_check_never_opens_camera(self):
+        with patch.object(calibration, "WindowsSpeaker"), \
+                patch.object(calibration, "PhoneFrameSource") as source, \
+                patch.object(calibration, "collect") as collect, \
+                patch("builtins.input", side_effect=KeyboardInterrupt), contextlib.redirect_stdout(io.StringIO()):
+            result = calibration.main(["--stream-url", "http://127.0.0.1:1/"])
+        self.assertEqual(result, 130)
+        source.assert_not_called()
+        collect.assert_not_called()
+
+    def test_confirmed_sound_check_passes_same_speaker_into_collection(self):
+        with patch.object(calibration, "WindowsSpeaker") as factory, \
+                patch.object(calibration, "PhoneFrameSource") as source, \
+                patch.object(calibration, "collect", return_value=(Path("unused.zip"), {"status": "complete"})) as collect, \
+                patch("builtins.input", return_value=""), contextlib.redirect_stdout(io.StringIO()):
+            result = calibration.main(["--stream-url", "http://127.0.0.1:1/", "--voice-gain", "4"])
+        self.assertEqual(result, 0)
+        factory.assert_called_once_with(gain=4)
+        source.assert_called_once()
+        self.assertIs(collect.call_args.kwargs["speaker"], factory.return_value)
+
+    def test_sound_check_failure_never_opens_camera(self):
+        with patch.object(calibration, "WindowsSpeaker") as factory, \
+                patch.object(calibration, "PhoneFrameSource") as source, \
+                patch("builtins.input") as confirm, contextlib.redirect_stdout(io.StringIO()):
+            factory.return_value.side_effect = calibration.CollectionError("播放失败")
+            self.assertEqual(calibration.main(["--sound-check"]), 1)
+        source.assert_not_called()
+        confirm.assert_not_called()
+
+    def test_invalid_gain_and_incompatible_modes_rejected_without_audio(self):
+        for flags in (("--voice-gain", "nan"), ("--voice-gain", "9"), ("--voice-gain", "0"), ("--no-voice",)):
+            with self.subTest(flags=flags), contextlib.redirect_stderr(io.StringIO()), \
+                    patch.object(calibration, "WindowsSpeaker") as speaker, self.assertRaises(SystemExit):
+                calibration.main(["--sound-check", *flags])
+            speaker.assert_not_called()
 
 
 class PacedCamera(BaseHTTPRequestHandler):
@@ -125,8 +211,9 @@ class CalibrationStatisticsTest(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows speech launcher")
     def test_speech_passes_text_as_data_without_real_audio(self):
         text = "中文提示；`任意文本`\n$()"
-        with patch.object(calibration.subprocess, "run") as run:
+        with patch.object(calibration.subprocess, "run") as run, patch.object(calibration, "play_wave") as play:
             run.return_value.returncode = 0
+            run.return_value.stdout = base64.b64encode(wav_bytes())
             calibration.WindowsSpeaker()(text)
         args, kwargs = run.call_args
         self.assertEqual(kwargs["input"], text.encode("utf-8"))
@@ -135,7 +222,10 @@ class CalibrationStatisticsTest(unittest.TestCase):
         self.assertNotIn(text, script)
         self.assertIn("[Console]::In.ReadToEnd()", script)
         self.assertIn("zh-*", script)
+        self.assertIn("$speaker.Volume = 100", script)
+        self.assertIn("$speaker.SetOutputToWaveStream", script)
         self.assertFalse(kwargs.get("shell", False))
+        play.assert_called_once()
 
 
 class CalibrationCollectionTest(unittest.TestCase):

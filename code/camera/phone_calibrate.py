@@ -6,9 +6,11 @@ Run once, follow spoken prompts, then share the generated numeric-data ZIP.
 Stage labels are scheduled instructions, NOT verified observations or falls.
 """
 import argparse
+import array
 import base64
 import csv
 from datetime import datetime, timezone
+import io
 import json
 import math
 import os
@@ -20,6 +22,7 @@ import threading
 import time
 import urllib.error
 import uuid
+import wave
 import zipfile
 
 if __package__:
@@ -39,6 +42,7 @@ FIELDS = (
     "frame_age_s", "delta_s", "baseline", "energy", "centroid_y",
 )
 DEFAULT_OUTPUT = Path(__file__).resolve().parents[1] / "data" / "phone_calibration"
+SOUND_CHECK_TEXT = "这是电脑提示音测试。请到做动作的位置听一听。开始。站立不动。结束，可以休息。"
 
 
 def utc_now():
@@ -49,9 +53,45 @@ class CollectionError(Exception):
     """User-facing, credential-free error."""
 
 
+def amplify_wave(wav_bytes, gain):
+    """Boost quiet PCM16 speech, with a soft limiter to avoid integer clipping."""
+    with wave.open(io.BytesIO(wav_bytes), "rb") as source:
+        params = source.getparams()
+        if params.sampwidth != 2 or params.comptype != "NONE":
+            raise CollectionError("语音格式不受支持，需要16位 PCM 音频。")
+        samples = array.array("h", source.readframes(params.nframes))
+    if sys.byteorder != "little":
+        samples.byteswap()
+    if gain != 1:
+        for index, value in enumerate(samples):
+            scaled = abs(value / 32768.0) * gain
+            limited = scaled if scaled <= 0.8 else 0.8 + 0.2 * math.tanh((scaled - 0.8) / 0.2)
+            samples[index] = int(math.copysign(min(32767, limited * 32767), value))
+    if sys.byteorder != "little":
+        samples.byteswap()
+    result = io.BytesIO()
+    with wave.open(result, "wb") as target:
+        target.setparams(params)
+        target.writeframes(samples.tobytes())
+    return result.getvalue()
+
+
+def play_wave(wav_bytes):
+    """Only invoked by the user's speech command; tests replace this function."""
+    try:
+        import winsound
+        winsound.PlaySound(wav_bytes, winsound.SND_MEMORY | winsound.SND_NODEFAULT)
+    except (ImportError, RuntimeError):
+        raise CollectionError("电脑声音播放失败，请检查当前声音输出设备。") from None
+
+
 class WindowsSpeaker:
-    """Offline Chinese speech; text is stdin data, never executable shell text."""
-    def __call__(self, text):
+    """Offline Chinese speech rendered to memory, amplified, then played on PC."""
+    def __init__(self, gain=3.0):
+        self.gain = gain
+
+    def synthesize(self, text):
+        """Produce a WAV in memory without playing audio or opening a camera."""
         if os.name != "nt":
             raise CollectionError("当前系统不支持自动中文语音；请找同伴看屏幕提示，使用 --no-voice。")
         script = """
@@ -59,12 +99,17 @@ $ErrorActionPreference = 'Stop'
 [Console]::InputEncoding = New-Object System.Text.UTF8Encoding
 Add-Type -AssemblyName System.Speech
 $speaker = New-Object System.Speech.Synthesis.SpeechSynthesizer
+$buffer = New-Object System.IO.MemoryStream
 try {
     $voice = $speaker.GetInstalledVoices() | Where-Object { $_.Enabled -and $_.VoiceInfo.Culture.Name -like 'zh-*' } | Select-Object -First 1
     if ($null -eq $voice) { throw 'No Chinese voice installed' }
     $speaker.SelectVoice($voice.VoiceInfo.Name)
+    $speaker.Volume = 100
+    $speaker.SetOutputToWaveStream($buffer)
     $speaker.Speak([Console]::In.ReadToEnd())
-} finally { $speaker.Dispose() }
+    $speaker.SetOutputToNull()
+    [Console]::Out.Write([Convert]::ToBase64String($buffer.ToArray()))
+} finally { $speaker.Dispose(); $buffer.Dispose() }
 """
         executable = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
         try:
@@ -77,7 +122,23 @@ try {
         except (OSError, subprocess.TimeoutExpired):
             raise CollectionError("中文语音启动失败。可请同伴看屏幕提示，并加 --no-voice 重试。") from None
         if result.returncode:
-            raise CollectionError("未能播放中文语音。请检查 Windows 中文语音；或请同伴看提示，加 --no-voice 重试。")
+            raise CollectionError("中文语音合成失败。请检查 Windows 中文语音；或请同伴看提示，加 --no-voice 重试。")
+        try:
+            return base64.b64decode(result.stdout.strip(), validate=True)
+        except ValueError:
+            raise CollectionError("中文语音合成没有返回有效音频，请检查 Windows 中文语音组件。") from None
+
+    def __call__(self, text):
+        try:
+            sound = amplify_wave(self.synthesize(text), self.gain)
+        except (wave.Error, EOFError):
+            raise CollectionError("中文语音合成返回的音频无效。") from None
+        play_wave(sound)
+
+
+def sound_check(speaker):
+    print("正在从电脑播放试音。请在做动作的位置确认是否听清；本次试音不连接手机。", flush=True)
+    speaker(SOUND_CHECK_TEXT)
 
 
 class LatestFrame:
@@ -227,7 +288,8 @@ def collect(source, *, output=DEFAULT_OUTPUT, rounds=3, duration=20.0, prep=10.0
         "status": "running", "message": "正在采集", "labels": "scheduled_normal_activity_only",
         "settings": {"rounds": rounds, "duration_s": duration, "prep_s": prep,
                      "sample_interval_s": interval, "frame_timeout_s": frame_timeout,
-                     "source_type": "mjpeg" if source.mjpeg else "snapshot", "voice": speaker is not None},
+                     "source_type": "mjpeg" if source.mjpeg else "snapshot", "voice": speaker is not None,
+                     "voice_gain": getattr(speaker, "gain", None)},
         "metric": {"name": "mean_absolute_grayscale_difference_divided_by_12", "range": [0, 21.25],
                    "size": [48, 32], "centroid": "motion_not_person", "p95": "linear_interpolation"},
         "phases": [{"round": r, "stage": key, "name": name, "status": "not_started"}
@@ -348,7 +410,7 @@ def main(argv=None):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     parser = argparse.ArgumentParser(description=__doc__)
-    source_args = parser.add_mutually_exclusive_group(required=True)
+    source_args = parser.add_mutually_exclusive_group()
     source_args.add_argument("--stream-url", help="完整 HTTP MJPEG 地址，iPhone 不附加 /shot.jpg")
     source_args.add_argument("--phone", help="安卓 IP Webcam 基址，自动附加 /shot.jpg")
     parser.add_argument("--username", default=os.environ.get("PHONE_USERNAME"))
@@ -360,9 +422,17 @@ def main(argv=None):
     parser.add_argument("--frame-timeout", type=float, default=3)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--no-voice", action="store_true", help="关闭语音；请同伴看屏幕提示报时")
+    parser.add_argument("--voice-gain", type=float, default=3, help="语音增益1到8，默认3；仅作用于本程序")
+    parser.add_argument("--sound-check", action="store_true", help="只试音，结束即退出；不连接手机、不采集数据")
     parser.add_argument("--open-output", action="store_true", help="完成后在 Windows 打开结果文件夹")
     args = parser.parse_args(argv)
-    if Image is None:
+    if not math.isfinite(args.voice_gain) or not 1 <= args.voice_gain <= 8:
+        parser.error("--voice-gain 必须在1到8之间")
+    if args.sound_check and args.no_voice:
+        parser.error("--sound-check 不能与 --no-voice 同时使用")
+    if not args.sound_check and not (args.stream_url or args.phone):
+        parser.error("正式采集需要 --stream-url 或 --phone；只试音请使用 --sound-check")
+    if Image is None and not args.sound_check:
         parser.error("缺少 Pillow，请运行 python -m pip install pillow")
     values = (args.duration, args.prep, args.interval, args.frame_timeout)
     if not all(math.isfinite(value) for value in values):
@@ -371,6 +441,20 @@ def main(argv=None):
         parser.error("轮数、采样间隔和超时必须为正数，准备时间不得为负数")
     if args.duration < 3 * args.interval:
         parser.error("每段时间至少为采样间隔的三倍")
+    speaker = None if args.no_voice else WindowsSpeaker(gain=args.voice_gain)
+    try:
+        if speaker:
+            sound_check(speaker)
+            if args.sound_check:
+                print("试音结束。听清后再运行正式采集命令；如果仍小声，可改用电脑连接的耳机或音箱。")
+                return 0
+            input("听清后回电脑按回车，开始正式采集。听不清请按 Ctrl+C 停止：")
+    except CollectionError as exc:
+        print(str(exc))
+        return 1
+    except (KeyboardInterrupt, EOFError):
+        print("\n已取消，尚未启动摄像头或采集数据。")
+        return 130
     url = args.stream_url or args.phone.rstrip("/") + "/shot.jpg"
     try:
         source = PhoneFrameSource(url, mjpeg=bool(args.stream_url), username=args.username, password=args.password)
@@ -379,7 +463,7 @@ def main(argv=None):
     print("仅采集手机画面的数值；不发送报警，不连接主脑或机械手。Ctrl+C 可停止并保存部分数据。")
     archive, summary = collect(source, output=args.output, rounds=args.rounds, duration=args.duration,
                                prep=args.prep, interval=args.interval, frame_timeout=args.frame_timeout,
-                               speaker=None if args.no_voice else WindowsSpeaker())
+                               speaker=speaker)
     if args.open_output and os.name == "nt":
         try:
             os.startfile(str(archive.parent))
