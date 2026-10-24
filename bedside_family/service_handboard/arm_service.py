@@ -853,10 +853,14 @@ def _ensure_app_cert():
     return None
 
 
-# ---------- 跌倒警报(v5.6):跌倒检测端 POST /fall_alarm → 家属 app 拉 /alarms ----------
+# ---------- 跌倒警报(v5.7):跌倒检测端 POST /fall_alarm → 家属 app 拉 /alarms ----------
 # 检测端接入(一行):POST http://10.153.47.252:8013/fall_alarm
-#   body 可选 JSON {"kind":"fall","src":"cam-A","conf":0.9}(没有 body 也收)
+#   body 可选 JSON {"kind":"fall","src":"cam-A","conf":0.9,"event_id":"e123"}
+#     event_id: 网络重试/多路重发同号 → 只响一次(命中返回旧条目 dedup:true,不建新警报)
+#   无扰测试:POST {"dry":true}  → 只回执校验,不建警报,手机不响
+#   健康检查:GET  /fall_alarm   → ok+版本+用法,不动任何数据
 # 家属 app:GET /alarms(列 50 条,新在前);POST /alarms/ack {"id":..} 确认
+SVC_VER = "5.7"
 AL_DIR = os.environ.get("APP_ALARM_DIR", "/root/caremate/alarms")
 ALARMS_JSON = os.path.join(AL_DIR, "alarms.json")
 _alarm_lock = threading.Lock()
@@ -872,13 +876,16 @@ def alarms_load():
         pass
 
 
-def alarm_new(kind="fall", src="", conf=None):
-    """记录一条警报;返回带 id 的 dict。"""
+def alarm_new(kind="fall", src="", conf=None, eid=""):
+    """记录一条警报;返回带 id 的 dict。id 带毫秒后缀,同秒不撞号。"""
     import time as _t
-    now = _t.localtime()
-    aid = "al_" + _t.strftime("%Y%m%d_%H%M%S", now)
+    t = _t.time()
+    now = _t.localtime(t)
+    aid = "al_" + _t.strftime("%Y%m%d_%H%M%S", now) + "_%03d" % int((t - int(t)) * 1000)
     a = {"id": aid, "time": _t.strftime("%Y-%m-%d %H:%M:%S", now),
          "kind": kind, "acked": False}
+    if eid:
+        a["event_id"] = str(eid)[:64]
     if src:
         a["src"] = str(src)[:40]
     if conf is not None:
@@ -897,6 +904,21 @@ def alarm_new(kind="fall", src="", conf=None):
             _log("alarm", "persist fail %s" % e)
         _log("alarm", "FALL %s src=%s" % (aid, src))
     return a
+
+
+def alarm_incoming(kind, src, conf, eid=""):
+    """检测端上报入口(v5.7):同 event_id 去重 —— 命中只回旧条目,不重响。"""
+    if eid:
+        with _alarm_lock:
+            for a in _alarm_mem:
+                if a.get("event_id") == eid:
+                    r = {"ok": True, "dedup": True}
+                    r.update(a)
+                    _log("alarm", "DEDUP %s eid=%s(重试不重响)" % (a["id"], eid))
+                    return r
+    r = {"ok": True, "dedup": False}
+    r.update(alarm_new(kind, src, conf, eid))
+    return r
 
 
 def alarms_ack(aid):
@@ -1019,8 +1041,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send_bytes(data, "audio/wav")
         elif p == "/alarms":                            # 家属端:警报列表(新在前)
             self._send({"ok": True, "alarms": _alarm_mem[:50]})
-        elif p == "/fall_alarm":                        # 检测端连通性(GET 即回 ok)
-            self._send({"ok": True, "note": "POST here on fall detected"})
+        elif p == "/fall_alarm":                        # 检测端健康检查(GET 不建警报)
+            self._send({"ok": True, "service": "arm_service", "ver": SVC_VER,
+                        "note": "POST here on fall detected",
+                        "usage": {"body": {"kind": "fall", "src": "cam-A",
+                                           "conf": 0.9, "event_id": "唯一事件号(重试去重)"}},
+                        "dry_test": 'POST {"dry":true} → 只回执不响铃',
+                        "dedup": "同 event_id 网络重试只响一次"})
         else:
             self._send({"error": "use POST"}, 404)
 
@@ -1059,19 +1086,26 @@ class Handler(BaseHTTPRequestHandler):
                 ln = int(self.headers.get("Content-Length", 0) or 0)
                 data = self.rfile.read(ln) if ln else b""
                 self._send(family_message(data))
-            elif self.path == "/fall_alarm":                    # 跌倒警报上报(v5.6)
+            elif self.path == "/fall_alarm":                    # 跌倒警报上报(v5.7)
                 ln = int(self.headers.get("Content-Length", 0) or 0)
                 raw = self.rfile.read(ln) if ln else b""
-                kind, src, conf = "fall", "", None
+                kind, src, conf, eid, dry = "fall", "", None, "", False
                 if raw:
                     try:
                         j = json.loads(raw.decode("utf-8", "replace"))
                         kind = str(j.get("kind", "fall"))[:20]
                         src = str(j.get("src", ""))[:40]
                         conf = j.get("conf")
+                        eid = str(j.get("event_id") or j.get("eid") or "")[:64]
+                        dry = bool(j.get("dry"))
                     except Exception:
                         src = "@raw%d" % ln      # 非法 body 也当警报收
-                self._send({"ok": True, **alarm_new(kind, src, conf)})
+                if dry:                              # 无扰自检:不建警报,手机不响
+                    self._send({"ok": True, "dry": True, "ver": SVC_VER,
+                                "echo": {"kind": kind, "src": src, "conf": conf,
+                                         "event_id": eid}})
+                    return
+                self._send(alarm_incoming(kind, src, conf, eid))
             elif self.path == "/alarms/ack":                    # app 确认警报
                 ln = int(self.headers.get("Content-Length", 0) or 0)
                 raw = self.rfile.read(ln) if ln else b""
@@ -1101,8 +1135,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     alarms_load()                                   # 恢复历史警报(若磁盘有)
-    _log("boot", "arm_service mock=%s backend=%s dual=%s alarms=%d"
-         % (_hand1.status()["mock"], ARM_BACKEND, DUAL_HAND, len(_alarm_mem)))
+    _log("boot", "arm_service v%s mock=%s backend=%s dual=%s alarms=%d"
+         % (SVC_VER, _hand1.status()["mock"], ARM_BACKEND, DUAL_HAND, len(_alarm_mem)))
     if FAMILY_PULL_URL:
         threading.Thread(target=_family_pull_loop, daemon=True).start()
     srv = ThreadingHTTPServer(("0.0.0.0", SERVICE_PORT), Handler)
