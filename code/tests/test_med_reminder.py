@@ -1,7 +1,8 @@
 """用药提醒闭环：开关、手动/定时提醒、递药打卡、漏服通知、保命链隔离、配置与意图。"""
+import time
 import unittest
 
-from helpers import events, make_bus, said
+from helpers import T0, events, make_bus, said
 
 import config
 import master_service
@@ -37,6 +38,12 @@ def med_lines(bus):
     return {med_line(bus, key) for key in MED_KEYS}
 
 
+def wall_hhmm(ts):
+    """ts 在北京时间（默认 expected_utc_offset）的钟点。定时按北京时间走、不跟本机时区，
+    T0 是本机 10:00，所以定时的钟点要从 T0 换算，不能直接写 "10:00"。"""
+    return time.strftime("%H:%M", time.gmtime(ts + config.DEFAULTS["expected_utc_offset"] * 3600))
+
+
 class MedReminderDefaultOffTest(unittest.TestCase):
     def test_default_off_refuses_remind_and_stays_silent(self):
         bus, clock, arm = make_bus()
@@ -45,8 +52,8 @@ class MedReminderDefaultOffTest(unittest.TestCase):
         self.assertIn("没开", r["error"])
         self.assertFalse(med_snapshot(bus)["enabled"])
 
-        # 跨过默认的 20:00（T0 是 10:00），关闭状态不应有任何用药事件或台词
-        clock.advance(11 * 3600, bus, step=600)
+        # 推进 13 小时，不管本机时区一定跨过默认的 08:00 / 20:00 之一；关闭状态不应有任何用药事件或台词
+        clock.advance(13 * 3600, bus, step=600)
         self.assertEqual(events(bus, "med"), [])
         self.assertEqual(med_notifications(bus), [])
         self.assertFalse(set(said(bus)) & med_lines(bus))
@@ -170,11 +177,12 @@ class MedReminderNoPendingTest(unittest.TestCase):
 
 class MedReminderScheduleTest(unittest.TestCase):
     def test_schedule_reminds_once_at_due_time(self):
-        bus, clock, arm = make_bus(med_reminder="on", med_times=["10:00"], med_missed_after=3600)
+        slot = wall_hhmm(T0)
+        bus, clock, arm = make_bus(med_reminder="on", med_times=[slot], med_missed_after=3600)
         clock.advance(1, bus)
         doses = med_snapshot(bus)["doses"]
         self.assertEqual(len(doses), 1)
-        self.assertEqual((doses[0]["source"], doses[0]["slot"]), ("schedule", "10:00"))
+        self.assertEqual((doses[0]["source"], doses[0]["slot"]), ("schedule", slot))
         self.assertEqual(med_snapshot(bus)["pending"]["state"], "reminded")
 
         clock.advance(120, bus)
@@ -182,20 +190,22 @@ class MedReminderScheduleTest(unittest.TestCase):
         self.assertEqual(said(bus).count(med_line(bus, "med_remind")), 1)
 
     def test_schedule_outside_grace_is_skipped(self):
-        bus, clock, arm = make_bus(med_reminder="on", med_times=["09:00"], med_missed_after=3600)
+        # 已过 1 小时，超过 30 分钟宽限
+        bus, clock, arm = make_bus(med_reminder="on", med_times=[wall_hhmm(T0 - 3600)], med_missed_after=3600)
         clock.advance(60, bus)
         self.assertEqual(med_snapshot(bus)["doses"], [])
         self.assertNotIn(med_line(bus, "med_remind"), said(bus))
 
     def test_schedule_waits_until_due(self):
-        bus, clock, arm = make_bus(med_reminder="on", med_times=["10:05"], med_missed_after=3600)
+        slot = wall_hhmm(T0 + 300)
+        bus, clock, arm = make_bus(med_reminder="on", med_times=[slot], med_missed_after=3600)
         clock.advance(299, bus)
         self.assertEqual(med_snapshot(bus)["doses"], [])
 
         clock.advance(1, bus)
         doses = med_snapshot(bus)["doses"]
         self.assertEqual(len(doses), 1)
-        self.assertEqual((doses[0]["source"], doses[0]["slot"]), ("schedule", "10:05"))
+        self.assertEqual((doses[0]["source"], doses[0]["slot"]), ("schedule", slot))
 
 
 class MedReminderSafetyChainTest(unittest.TestCase):
@@ -247,7 +257,7 @@ class MedReminderEstopTest(unittest.TestCase):
 
 class MedReminderResetTest(unittest.TestCase):
     def test_reset_clears_doses_keeps_switch_and_fired_slots(self):
-        bus, clock, arm = make_bus(med_reminder="on", med_times=["10:00"], med_missed_after=3600)
+        bus, clock, arm = make_bus(med_reminder="on", med_times=[wall_hhmm(T0)], med_missed_after=3600)
         clock.advance(1, bus)
         self.assertEqual(len(med_snapshot(bus)["doses"]), 1)
 
