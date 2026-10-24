@@ -14,7 +14,7 @@
 
 ```powershell
 cd code
-python tests/run_all.py                  # 回归，必须 ALL PASS（当前 19 套 167 条）
+python tests/run_all.py                  # 回归，必须 ALL PASS（当前 22 套 198 条）
 python -m master_service                 # 主脑 :8000（含三块屏）
 python -m demo_driver --pause            # 按 §3 主线一段一段走演示（另开终端，见 §10）
 python -m hand_controller.arm_service    # 臂+双手 mock :8013（另开终端，可不开）
@@ -410,3 +410,13 @@ python -m camera.phone_fall_watch --phone http://<手机IP>:8080 --master http:/
 ```
 
 `--arm 0` 用于现场校准，`--arm 1` 才会真正上报；`--conn` 控制连续超阈值帧数。手机和主脑必须处于同一网络，手机应保持插电并关闭省电策略。X5 部署可在 `deploy/x5.env` 设置 `PHONE_URL` 和 `PHONE_ARGS`，然后运行 `bash deploy/start.sh phone`；执行 `bash deploy/install_services.sh a` 时若已配置 `PHONE_URL`，会在 X5-A 上安装手机哨兵 systemd 服务。完整交接步骤见 `docs/21_交接_手机摄像头组.md`。
+
+**iPhone / IP Camera Lite**：若 App 首页返回 `Content-Type: multipart/x-mixed-replace`，使用 `--stream-url` 指定这个完整地址，不能附加安卓的 `/shot.jpg`。摄像头连接直接访问手机，不使用系统/环境代理；`.local` 主机名按系统解析，可使用 IPv6。需要登录时传 `--username` / `--password`，也可用 `PHONE_USERNAME` / `PHONE_PASSWORD` 环境变量。账号密码不要写入网址或提交到仓库。
+
+```powershell
+# 在仓库根目录执行；地址替换成 App 实际显示、已测试可连接的地址。
+# admin/admin 仅适用于未修改默认账号密码的 App。
+python code/camera/phone_fall_watch.py --stream-url http://<手机主机名>.local:8081/ --username admin --password admin --arm 0 --frames 10
+```
+
+看到 `[CAMERA] 已收到并解码第一帧画面` 和 `[M] e=...` 表示 Python 已在读取画面；`--frames 10` 会在观察 10 帧后退出，按 Ctrl+C 也可退出。`--arm 0` 不向主脑上报事件，无需先启动主脑或手服务。持续观察时去掉 `--frames 10`。当前保底算法用连续变化能量触发，纵向重心只作日志输出；普通大幅运动也可能触发，仍需现场测量误报/漏报。注意当前能量缩放的理论范围是 0–21.25，旧交接材料中的 `--thresh 38` 不适用于当前实现；先观察实际数值，再标定阈值。
