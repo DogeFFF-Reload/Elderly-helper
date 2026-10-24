@@ -17,8 +17,18 @@
  *     UI 旋转 90 跑横屏；触摸坐标 LVGL indev 层自动补偿（lv_indev.c:675），
  *     旋转渲染由 lv_vendor disp_flush 的 lv_draw_sw_rotate 承接
  *
+ * v0.6（10/25）：
+ *   · Wi-Fi 看门狗：原来只在开机连一次，热点掉一次线屏幕就一直「未连接」到重启（10/25 现场踩到）。
+ *     现在掉线自动重连；Wi-Fi 自称在线但连续 5 次连不上 X5 也强制重连
+ *   · 语音上传超时 8 s → 15 s：X5 改走云端大模型（听写 + 理解约 3~7 s）
+ *
+ * v0.8（10/25）：四个键换成 挥手 / 手指操 / 握手 / 零位待机（POST /screen/<键>，X5 arm_service 处理）；
+ *     界面重做：深色底、渐变卡片、彩色图标 + 大字标题 + 小字说明，状态条右侧状态胶囊（gen_t5ai_btns.py 生成）
+ * v0.7（10/25）：热点换成手机热点「HONOR 90 Pro」。改成认识多个热点（NETS 表），每个热点对应那个网里
+ *     X5 的固定地址；开机按表依次试，掉线后先重连原来的、再轮流试别的
+ *
  * 烧录：USB 接 UART0（CH342 A 口），arduino-cli fqbn = tuya_open:tuya_open:TUYA_T5AI_BOARD
- *       串口日志在 COM9（A 口），B 口（COM10）乱码不读
+ *       本机现在是 COM12（日志 + 烧录同一个口），另一个口没输出不读
  * 授权：占位码可正常启动 SDK（实测无断言）；接涂鸦云时才需要真码
  */
 #include "Log.h"
@@ -33,12 +43,20 @@
 #include <HTTPClient.h>      /* TuyaOpen HTTPClient 库 */
 #include "http_client_interface.h"   /* 底层 HTTP（PCM 裸流长度自填，绕 strlen） */
 #include "Audio.h"           /* 板载 codec 录音/放音（T5AI 专用，AudioRecorder 例程同源） */
+#include "wifi_secrets.h"     /* 热点密码（不入库，见 wifi_secrets.example.h） */
 #include "t5ai_bitmaps.h"    /* 自动生成：中文按钮/状态条位图 */
 
 /* ══════════ 现场校正区 ══════════ */
-#define WIFI_SSID     "Mocen_Bear"
-#define WIFI_PASS     "Mocen_0219"
-#define ARM_HOST      "10.153.47.251"      /* X5-B（臂+手#1），Mocen_Bear 热点里的静态地址 */
+/* 认识的热点，按顺序试：连上哪个，就去那个网里 X5-B（臂+手#1）的固定地址。
+ * 换热点：在这里加一行，并让 X5 也连上它、设同样的固定地址（X5 上 nmcli，见 README） */
+typedef struct { const char *ssid; const char *pass; const char *host; } NetCfg;
+static const NetCfg NETS[] = {
+    { "HONOR 90 Pro", WIFI_PSK_HONOR, "192.168.80.251" },   /* 10-25 起的手机热点 */
+    { "Mocen_Bear",   WIFI_PSK_MOCEN,    "10.153.47.251"  },   /* 原来的热点（备用） */
+};
+#define N_NET   (sizeof(NETS) / sizeof(NETS[0]))
+static int net_idx = 0;                     /* 现在连的是哪个；HTTP 都发到它的 host */
+#define ARM_HOST      (NETS[net_idx].host)
 #define ARM_PORT      8013
 /* TODO·授权三件套（涂鸦群免费领后填入；仅接涂鸦云需要，局域网链路不需要） */
 #define TUYA_DEVICE_UUID    "uuidxxxxxxxxxxxxxxxx"
@@ -53,10 +71,10 @@
 /* 动作键表：位图 / HTTP 路径 / 位置(x,y) —— 480x320 布局（222x100 位图 + 底部通栏语音键） */
 typedef struct { const lv_image_dsc_t *img; const char *ep; int x, y, w, h; } BtnCfg;
 static BtnCfg BTNS[] = {
-    { &BMP_BTN_MED,    "/handover_med",  12,  40, 222, 100 },  /* 递药盒（臂+手配合） */
-    { &BMP_BTN_RETURN, "/return_med",    246,  40, 222, 100 },  /* 还药（臂+手配合）   */
-    { &BMP_BTN_SOS,    "/press_sos",     12, 146, 222, 100 },  /* 按SOS（臂去按呼叫键）*/
-    { &BMP_BTN_RESET,  "/reset",        246, 146, 222, 100 },  /* 归位                */
+    { &BMP_BTN_WAVE,   "/screen/wave",   12,  40, 222, 100 },  /* 挥手（预设动作，1.5 倍速，做完停在原处） */
+    { &BMP_BTN_FINGER, "/screen/finger", 246,  40, 222, 100 },  /* 十三拍手指操（只动手）               */
+    { &BMP_BTN_SHAKE,  "/screen/shake",  12, 146, 222, 100 },  /* 握手（预设动作）                     */
+    { &BMP_BTN_ZERO,   "/screen/zero",   246, 146, 222, 100 },  /* 零位待机点：手张开、全部关节回 0°     */
     { &BMP_BTN_VOICE,  "/voice_cmd",      12, 252, 456,  50 },  /* 点一下说话→录 3s */
 };
 #define N_BTN   (sizeof(BTNS) / sizeof(BTNS[0]))
@@ -80,49 +98,101 @@ static uint8_t *v_buf = NULL;             /* PCM 接收缓冲(一次性 malloc) 
 static uint32_t v_len = 0;
 
 /* ---------- HTTP（TuyaOpen HTTPClient 签名，照官方 BasicHttpClient 例程） ---------- */
-static int http_post(const char *ep) {
-    HTTPClient http;
-    String url = String("http://") + ARM_HOST + ":" + ARM_PORT + ep;
-    if (!http.begin(url)) return -1;
-    http_client_header_t headers[] = {{.key = "Content-Type", .value = "application/json"}};
-    http_client_response_t resp = {0};
-    http_client_status_t st = http.POST(headers, 1, NULL, 0,
-                                        (const uint8_t *)"{}", &resp);
-    http.end(&resp);
-    return (st == HTTP_CLIENT_SUCCESS) ? 200 : -1;
-}
-
-/* PCM 裸流 POST（/voice_cmd）：绕开 HTTPClient 封装——它内部 strlen(body) 量长度，
- * PCM 里全是随机的 0x00 会截断。直接用底层 http_client_request，body_length 自填 */
-static int http_post_voice(const uint8_t *data, uint32_t len) {
+/* Raw client preserves port 8013 and binary lengths for every request. */
+static int http_request(const char *ep, const char *method,
+                        const uint8_t *body, uint32_t len, uint32_t timeout_ms) {
     http_client_request_t req = {
         .host = ARM_HOST,
         .port = ARM_PORT,
-        .path = "/voice_cmd",
+        .path = ep,
         .cacert = NULL,
         .cacert_len = 0,
-        .method = "POST",
+        .method = method,
         .headers = NULL,
         .headers_count = 0,
-        .body = data,
+        .body = body,
         .body_length = len,
-        .timeout_ms = 8000,
+        .timeout_ms = timeout_ms,
     };
     http_client_response_t resp = {0};
     http_client_status_t st = http_client_request(&req, &resp);
-    int code = (st == HTTP_CLIENT_SUCCESS) ? 200 : -1;
+    int code = (st == HTTP_CLIENT_SUCCESS) ? (int)resp.status_code : -1;
+    PR_DEBUG("http %s %s:%d%s -> %d (transport=%d)\n",
+             method, ARM_HOST, ARM_PORT, ep, code, (int)st);
     http_client_free(&resp);
     return code;
 }
 
+static int http_post(const char *ep) {
+    return http_request(ep, "POST", (const uint8_t *)"{}", 2, 5000);
+}
+
+static int http_post_voice(const uint8_t *data, uint32_t len) {
+    return http_request("/voice_cmd", "POST", data, len, 15000);   /* 云端听写 + 理解要几秒 */
+}
+
+/* ---------- Wi-Fi 看门狗（loop 驱动） ----------
+ * 库里的 WiFi.reconnect() 是空实现（直接 return false），所以用 disconnect + begin 重新连热点。
+ *   1) 每 5 s 看一次：不是 GOT_IP 就重连（两次重连至少隔 15 s，给关联 + DHCP 时间）
+ *   2) Wi-Fi 自称在线、但连续 5 次 /status 失败（约 10 s）：热点那边可能已经把我们踢了，强制重连（至少隔 30 s）
+ */
+static uint32_t wifi_last_check = 0;
+static uint32_t wifi_last_join = 0;
+static uint8_t poll_fails = 0;
+static int join_base = 0;      /* 上一次连通 X5 的网络 */
+static int join_tries = 0;     /* 连续重连了几次：第 0 次重连原来的网络，之后轮流试表里其它网络 */
+
+static void wifi_begin(int idx) {
+    net_idx = idx;
+    WiFi.disconnect();
+    delay(200);
+    WiFi.begin(NETS[idx].ssid, NETS[idx].pass);
+    wifi_last_join = millis();
+    poll_fails = 0;
+}
+
+static void wifi_rejoin(const char *why) {
+    int idx = (join_base + join_tries) % (int)N_NET;
+    join_tries++;
+    PR_DEBUG("wifi rejoin (%s), status=%d -> try %s\n", why, (int)WiFi.status(), NETS[idx].ssid);
+    wifi_begin(idx);
+}
+
+/* 开机：按表一个个试，每个最多等 10 s，连上就用它 */
+static bool wifi_join_any(void) {
+    for (int i = 0; i < (int)N_NET; i++) {
+        wifi_begin(i);
+        for (int t = 0; t < 100 && WiFi.status() != WSS_GOT_IP; t++) {
+            delay(100);
+        }
+        if (WiFi.status() == WSS_GOT_IP) {
+            join_base = i;
+            PR_DEBUG("wifi OK ssid=%s ip=%s -> X5 %s\n", NETS[i].ssid, WiFi.localIP().toString().c_str(), NETS[i].host);
+            return true;
+        }
+        PR_DEBUG("wifi %s FAIL\n", NETS[i].ssid);
+    }
+    return false;
+}
+
+static void wifi_watchdog(void) {
+    if (millis() - wifi_last_check < 5000) return;
+    wifi_last_check = millis();
+    static int last = -1;
+    int st = (int)WiFi.status();
+    if (st != last) {
+        PR_DEBUG("wifi status %d -> %d ip=%s\n", last, st, WiFi.localIP().toString().c_str());
+        last = st;
+    }
+    if (st != WSS_GOT_IP) {
+        if (millis() - wifi_last_join > 15000) wifi_rejoin("not connected");
+    } else if (poll_fails >= 5 && millis() - wifi_last_join > 30000) {
+        wifi_rejoin("X5 unreachable");
+    }
+}
+
 static int http_get_status(void) {
-    HTTPClient http;
-    String url = String("http://") + ARM_HOST + ":" + ARM_PORT + "/status";
-    if (http.begin(url) != 0) return -1;
-    http_client_response_t resp = {0};
-    http_client_status_t st = http.GET(NULL, 0, NULL, 0, &resp);
-    http.end(&resp);
-    return (st == HTTP_CLIENT_SUCCESS) ? 200 : -1;
+    return http_request("/status", "GET", NULL, 0, 3000);
 }
 
 /* ---------- UI（全部 lv_vendor_disp_lock/unlock 包住，跑在 LVGL 线程） ---------- */
@@ -177,7 +247,7 @@ static void btn_event_cb(lv_event_t *e) {
 static void ui_build(void) {
     lv_vendor_disp_lock();
 
-    lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0x10141a), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(T5AI_SCREEN_BG)   /* 和位图圆角外的底色一致 */, LV_PART_MAIN);
 
     /* 顶部状态条 480x34（位图，红=未连接/绿=已连接/橙=听音中） */
     bar_img = lv_image_create(lv_screen_active());
@@ -198,11 +268,11 @@ static void ui_build(void) {
 
     /* 按下反馈白框（罩层，默认藏；不吃点击） */
     flash_obj = lv_obj_create(lv_screen_active());
-    lv_obj_set_size(flash_obj, 228, 106);
+    lv_obj_set_size(flash_obj, 228, 106);   /* 按下的白框：比卡片大一圈，圆角跟卡片（18）走 */
     lv_obj_set_style_bg_opa(flash_obj, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_color(flash_obj, lv_color_white(), LV_PART_MAIN);
     lv_obj_set_style_border_width(flash_obj, 3, LV_PART_MAIN);
-    lv_obj_set_style_radius(flash_obj, 15, LV_PART_MAIN);
+    lv_obj_set_style_radius(flash_obj, 21, LV_PART_MAIN);
     lv_obj_remove_flag(flash_obj, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(flash_obj, LV_OBJ_FLAG_HIDDEN);
 
@@ -221,15 +291,12 @@ void setup(void)
         while (1) {}
     }
 
-    /* 网络：连 Mocen_Bear（WiFi API：begin/status 与 ESP32 同形，状态码是 WSS_*） */
+    /* 网络：按 NETS 表依次试（WiFi API：begin/status 与 ESP32 同形，状态码是 WSS_*）；
+     * 都没连上也照常起 UI，看门狗会接着轮流重试 */
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-    for (int i = 0; i < 200 && WiFi.status() != WSS_GOT_IP; i++) {
-        delay(100);   /* 最多等 20 秒 */
+    if (!wifi_join_any()) {
+        PR_DEBUG("wifi: no known network\n");
     }
-    PR_DEBUG("wifi %s ip=%s\n",
-             WiFi.status() == WSS_GOT_IP ? "OK" : "FAIL",
-             WiFi.localIP().toString().c_str());
 
     /* LVGL 厂商层初始化(官方 LVGLdemo 同序;设备名与板层注册的显示设备一致) */
     static char display_name[] = "display";
@@ -300,9 +367,19 @@ void loop()
     if (millis() - last_poll > 2000 && v_state == V_IDLE) {
         last_poll = millis();
         net_ok = (http_get_status() == 200);
+        poll_fails = net_ok ? 0 : (poll_fails < 255 ? poll_fails + 1 : 255);
+        if (net_ok) {           /* 连通了：记住这个网络，下次掉线先重连它 */
+            join_base = net_idx;
+            join_tries = 0;
+        }
         lv_vendor_disp_lock();
         bar_set_locked(net_ok, false);
         lv_vendor_disp_unlock();
+    }
+
+    /* ── Wi-Fi 看门狗（录音 / 发送中不动网络） ── */
+    if (v_state == V_IDLE) {
+        wifi_watchdog();
     }
     delay(10);
 }

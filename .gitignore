@@ -23,3 +23,6 @@ code/config.local.json
 
 # 各现场自己的 IP 等配置
 deploy/x5.env
+
+# T5AI 热点密码（照 wifi_secrets.example.h 自己建）
+firmware/bedside_t5ai/bedside_t5ai_arm/wifi_secrets.h

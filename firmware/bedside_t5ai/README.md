@@ -1,15 +1,17 @@
 # T5AI 大床头屏（涂鸦 T5AI-Board + LCD）
 
 大屏 = 臂主导的床头遥控：四个大键 + 底部语音键，全部打到 X5-B 的 `arm_service`（:8013，`code/hand_controller/arm_service.py`）。
-固件 v0.5，2026-10-24 由队友交接（交接包 `caremate_handover.zip`），屏上实测横屏、按键、在线灯都正常。
+固件 v0.8（2026-10-25 烧录）：四个键换成 挥手 / 手指操 / 握手 / 零位待机，界面重做（深色底、渐变卡片、彩色图标 + 大字标题，
+位图由 `gen_t5ai_btns.py` 生成，效果图 `preview.png`）。v0.7 起多热点轮流连（`NETS` 表），v0.6 起有 Wi-Fi 看门狗
+（掉线 / 连续 5 次连不上 X5 → 断开重连）和 15 s 语音上传超时（X5 走云端大模型，见 `voice_llm.py`）。
 
 | 键 | 请求 | arm_service 里的动作 |
 |---|---|---|
-| 递药盒 | `POST /handover_med` | `deliver_medicine`（臂） |
-| 还药 | `POST /return_med` | `return_medicine`（臂：张开手等 10 秒放进来，送回托盘） |
-| 按SOS | `POST /press_sos` | `press_sos`（臂，保命动作） |
-| 归位 | `POST /reset` | `home`（臂） |
-| 点一下 说话 | `POST /voice_cmd`（16 kHz/16 bit/单声道裸 PCM，录 4 秒净得约 3 秒） | `voice_cmd.py` vosk 离线识别 → 关键词 → 上面同一条路（手#1） |
+| 挥手 | `POST /screen/wave` | 预设 `wave`（1.5 倍速，做完停在原处，和语音一样） |
+| 手指操 | `POST /screen/finger` | 手势 `hand_exercise`（十三拍手指操，只动手） |
+| 握手 | `POST /screen/shake` | 预设 `handshake`（1.5 倍速，做完停在原处） |
+| 零位待机 | `POST /screen/zero` | 零位待机点：手张开，全部关节回 0°（语音说「归位 / 回零位 / 回去待着」也走这个；旧固件的 `/reset` 同样改成这个） |
+| 点一下 说话 | `POST /voice_cmd`（16 kHz/16 bit/单声道裸 PCM，录 4 秒净得约 3 秒） | `voice_llm.py`：qwen3.5-omni-plus 听写 → qwen3.8-max 选预设动作 / 业务动作（「停下」本地直接急停）；没网退回 `voice_cmd.py` vosk 离线关键词 |
 | 顶部状态条 | 每 2 秒 `GET /status` | 回 200 = 绿「已连接」，否则红；录音时橙 |
 
 固件只看 HTTP 通不通：动作被拒（409/422/503）屏上不显示，看 X5 上的日志 `journalctl -u arm_service -f`。
@@ -21,14 +23,19 @@
 
 ## 编译 / 烧录
 
-USB 接 UART0（CH342 的 A 口，本机 COM9），约 35 秒：
+USB 接 UART0（CH342 的 A 口，本机现在是 COM12；日志和烧录同一个口，另一个口 COM11 没输出），烧录约 40 秒。
+工具：Arduino CLI 1.3.1（`D:\Claude\tools\arduino-cli\`）+ TuyaOpen 1.2.5 / GCC Arm 10.3（装在
+`C:\Users\29619\.codex\caremate-tools`，用它的 `arduino-cli.yaml`）：
 
 ```
-D:\arduino-cli\arduino-cli.exe compile --fqbn tuya_open:tuya_open:TUYA_T5AI_BOARD bedside_t5ai_arm
-D:\arduino-cli\arduino-cli.exe upload  --fqbn tuya_open:tuya_open:TUYA_T5AI_BOARD -p COM9 bedside_t5ai_arm
+set CLI=D:\Claude\tools\arduino-cli\arduino-cli.exe --config-file C:/Users/29619/.codex/caremate-tools/arduino-cli.yaml
+%CLI% compile --fqbn tuya_open:tuya_open:TUYA_T5AI_BOARD --build-path D:/Claude/tools/build-t5ai bedside_t5ai_arm
+%CLI% upload  --fqbn tuya_open:tuya_open:TUYA_T5AI_BOARD --input-dir D:/Claude/tools/build-t5ai -p COM12 bedside_t5ai_arm
 ```
 
-compile 退出码 1 但打印 BUILD SUCCESS 也算过。串口日志：COM9，115200（B 口 COM10 是乱码）；`http POST /xxx -> -1` = X5 不可达。
+打印 BUILD SUCCESS 就算过。串口日志 115200；`http GET /status -> -1 (transport=2)` = 连不上 X5。
+回滚：10-24 修复版二进制是 Codex 交接目录里的 `firmware_t5ai_fixed_QIO.bin`。
+USB 串口的 DTR/RTS 复位不了这块板（没接）；要重启就拔插 USB 或按板上复位键。
 
 ## 踩过的坑（别再踩）
 
@@ -45,3 +52,5 @@ compile 退出码 1 但打印 BUILD SUCCESS 也算过。串口日志：COM9，11
   小模型词表里没有「递药」「还药」「按铃」，grammar 里切成「递 药」；闲聊会被硬凑成关键词，所以 [unk] 占说话时长一半以上不算指令。
   2026-10-24 用 edge-tts 两个声音实测：13 条指令全对、2 条闲聊都没动，每条约 0.4 秒。
 - 安全：应急停 = 拔 24V；手的上电顺序 USB → 20 秒 → 24V。
+
+热点密码不入库：第一次编译前把 `bedside_t5ai_arm/wifi_secrets.example.h` 复制成 `wifi_secrets.h` 填上真密码（已在 .gitignore）。
