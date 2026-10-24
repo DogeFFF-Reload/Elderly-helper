@@ -228,7 +228,7 @@ async function show(request,n){request.resolve({ok:true,json:async()=>status(n)}
  frame.resolve({ok:true,blob:async()=>new Uint8Array([n])});await tick();}
 (async()=>{
  await show(requests[0],1);assert.equal(elements.liveStatus.textContent,'● 实时直播');
- const pollTimer=[...timers.values()].find(t=>t.ms===400);pollTimer.f();const outdated=requests.at(-1);
+ const pollTimer=[...timers.values()].find(t=>t.ms===150);pollTimer.f();const outdated=requests.at(-1);
  document.hidden=true;events.visibilitychange();assert.equal(elements.video.style.display,'none');
  document.hidden=false;events.visibilitychange();const fresh=requests.at(-1);
  outdated.resolve({ok:true,json:async()=>status(2)});await tick();

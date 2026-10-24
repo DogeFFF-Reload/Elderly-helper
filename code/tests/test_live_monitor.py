@@ -36,7 +36,8 @@ class LiveMonitorTest(unittest.TestCase):
                         execute=self.execute, settings=self.settings, log=self.logs.append,
                         monitor_factory=lambda **kw: type("Monitor", (), {
                             "address": ("127.0.0.1", kw["port"]), "close": lambda self: None})(),
-                        open_browser=lambda address: setattr(self, "browser", address) or True)
+                        open_browser=lambda address: setattr(self, "browser", address) or True,
+                        probe=lambda _url: "auth", sleep=lambda _s: None)
         return live_monitor.main(list(argv), **dict(defaults, **options))
 
     def test_phone_login_continuous_observe_only_and_browser_open_after_server_starts(self):
@@ -138,6 +139,66 @@ class LiveMonitorTest(unittest.TestCase):
                                         "address": ("127.0.0.1", 8015), "close": lambda self: closed.append(True)})()), 2)
         self.assertEqual(len(calls), 1)
         self.assertEqual(closed, [True])
+
+
+    def test_dropped_stream_reconnects_with_same_login_without_prompting_again(self):
+        from camera.phone_calibrate import CAMERA_ERROR_MESSAGES
+        passwords, updates, closed = [], [], []
+
+        class Monitor:
+            address = ("127.0.0.1", 8015)
+
+            def update(self, **fields):
+                updates.append(fields)
+
+            def close(self):
+                closed.append(True)
+
+        def execute(args, *, monitor_factory, **_options):
+            monitor_factory()
+            passwords.append(args.phone_password)
+            if len(passwords) == 1:
+                return {"ok": False, "status": "error", "message": CAMERA_ERROR_MESSAGES["connection"]}
+            return {"ok": True, "status": "completed"}
+
+        probes = iter(("auth", "refused", "refused", "auth"))
+        result = self.start(execute=execute, monitor_factory=lambda **_kw: Monitor(), probe=lambda _u: next(probes),
+                            prompt=lambda message: self.fail("Unexpected prompt: " + message)
+                            if "账号" not in message and "地址" not in message else
+                            ("http://phone.invalid:8081/" if "地址" in message else "admin"))
+        self.assertEqual(result, 0)
+        self.assertEqual(passwords, ["private-password", "private-password"])
+        self.assertEqual(updates[0]["run_status"], "reconnecting")
+        self.assertEqual(updates[0]["input_message"], CAMERA_ERROR_MESSAGES["reconnecting"])
+        self.assertTrue(any("切回前台" in line for line in self.logs))
+        self.assertNotIn("private-password", "".join(self.logs))
+
+    def test_unreachable_address_explains_cause_and_accepts_new_address_before_login(self):
+        seen = []
+
+        def probe(url):
+            seen.append(url)
+            return "auth" if "new" in url else "timeout"
+
+        answers = iter(("http://old.invalid:8081/", "http://new.invalid:8081/", "admin"))
+        self.assertEqual(self.start(prompt=lambda _m: next(answers), probe=probe), 0)
+        self.assertEqual(self.options.phone_stream, "http://new.invalid:8081/")
+        self.assertEqual(seen.count("http://old.invalid:8081/"), live_monitor.FIRST_WAIT_TRIES)
+        self.assertTrue(any("同一个 Wi-Fi" in line for line in self.logs))
+        saved = json.loads(self.settings.read_text(encoding="utf-8"))
+        self.assertEqual(saved, {"phone_stream": "http://new.invalid:8081/"})
+
+    def test_login_failure_still_waits_for_user_instead_of_retrying(self):
+        from camera.phone_calibrate import CAMERA_ERROR_MESSAGES
+        calls = []
+
+        def execute(args, *, monitor_factory, **_options):
+            calls.append(args)
+            monitor_factory(host="127.0.0.1", port=8015)
+            return {"ok": False, "status": "error", "message": CAMERA_ERROR_MESSAGES["auth"]}
+
+        self.assertEqual(self.start(answers=("http://phone.invalid/", "admin", "q"), execute=execute), 2)
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0a111d">
+<title>CareMate 看护摄像头</title>
+<style>
+:root{color-scheme:dark;--ok:#5fe0bf;--warn:#ffc96b;--bad:#ff8f8f;--line:#2a3a52;--muted:#9aabc3;font-family:-apple-system,"PingFang SC",system-ui,sans-serif;background:#0a111d;color:#edf2fa}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;padding:max(14px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(14px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+header{display:flex;align-items:center;gap:10px}
+.dot{width:12px;height:12px;border-radius:50%;background:#55657d;flex:none}
+.dot.on{background:var(--ok);box-shadow:0 0 0 0 #5fe0bf88;animation:pulse 1.8s infinite}
+@keyframes pulse{70%{box-shadow:0 0 0 10px #5fe0bf00}}
+h1{font-size:18px;margin:0;font-weight:700}
+#state{margin-left:auto;font-size:14px;color:var(--muted)}
+.stage{position:relative;flex:1;margin:12px 0;border-radius:18px;overflow:hidden;background:#05090f;border:1px solid var(--line);min-height:180px}
+video{width:100%;height:100%;object-fit:contain;display:block;background:#05090f}
+.badge{position:absolute;top:10px;left:10px;background:#0d1828d9;border:1px solid var(--line);border-radius:9px;padding:6px 10px;font-size:13px}
+.rotate{position:absolute;left:10px;right:10px;bottom:10px;display:none;align-items:center;gap:10px;background:#3b2f17ee;color:#ffc96b;border:1px solid #6b5428;border-radius:12px;font-size:15px;padding:10px 12px}
+.rotate b{font-size:24px}
+.rotate.show{display:flex}
+.bar{display:flex;gap:10px}
+button{flex:1;font:inherit;font-size:17px;font-weight:600;border:0;border-radius:14px;padding:16px;color:#08201b;background:var(--ok)}
+button.secondary{background:#1c2a40;color:#edf2fa;border:1px solid var(--line);flex:0 0 auto;font-weight:500}
+button.stop{background:#3d1c22;color:var(--bad);border:1px solid #74333c}
+button:disabled{opacity:.5}
+.note{font-size:13px;color:var(--muted);line-height:1.7;margin:10px 2px 0}
+.err{color:var(--bad)}
+@media (orientation:landscape){.note{display:none}}
+</style>
+<header><span id="dot" class="dot"></span><h1>CareMate 看护摄像头</h1><span id="state">未开始</span></header>
+<div class="stage">
+  <video id="preview" playsinline muted autoplay></video>
+  <span id="cam" class="badge">摄像头未打开</span>
+  <div id="rotate" class="rotate"><b>⟳</b><span>建议把手机横过来放置、固定好；电脑那边会自动把画面转正</span></div>
+</div>
+<div class="bar">
+  <button id="start" type="button">开始看护</button>
+  <button id="switch" type="button" class="secondary" disabled>切换镜头</button>
+</div>
+<p id="note" class="note">点“开始看护”后，本机后置摄像头的画面会实时传到电脑，用于跌倒识别；前置摄像头不会打开。画面不在手机上保存。点“结束”或关掉本页即停止。</p>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const KEY=new URLSearchParams(location.search).get('k')||'';
+const RTC={iceServers:[{urls:['stun:stun.cloudflare.com:3478','stun:stun.qq.com:3478','stun:stun.miwifi.com:3478']}]};
+let physPortrait=null,retryTimer=0,pc=null,channel=null,stream=null,wakeLock=null,which='ultra',running=false,pingTimer=0,motionTimer=0,down=[0,1],tilt=0;
+function api(path,body){return fetch(path+(path.includes('?')?'&':'?')+'k='+encodeURIComponent(KEY),body===undefined?{cache:'no-store'}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});}
+function setState(text,on,err){$('state').textContent=text;$('state').className=err?'err':'';$('dot').className='dot'+(on?' on':'');}
+// —— 镜头：按标签挑后置超广角 / 后置主摄，前置一律排除 ——
+const FRONT=/前置|front|facetime/i, ULTRA=/超广角|ultra ?wide/i, OTHER=/长焦|telephoto|双摄|dual|三摄|triple|超广角|ultra/i;
+async function pickDevice(kind){
+  const cams=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput'&&!FRONT.test(d.label));
+  if(kind==='ultra')return cams.find(d=>ULTRA.test(d.label))||null;
+  return cams.find(d=>/后置|back|rear/i.test(d.label)&&!OTHER.test(d.label))||null;
+}
+async function openCamera(kind){
+  const base={width:{ideal:1280},height:{ideal:720},frameRate:{ideal:30,max:30}};
+  // 先按“环境（后置）”拿一次权限，iPhone 之后才给出各镜头的名字
+  let s=await navigator.mediaDevices.getUserMedia({audio:false,video:Object.assign({facingMode:{exact:'environment'}},base)});
+  const dev=await pickDevice(kind);
+  if(dev&&s.getVideoTracks()[0].getSettings().deviceId!==dev.deviceId){
+    s.getTracks().forEach(t=>t.stop());
+    s=await navigator.mediaDevices.getUserMedia({audio:false,video:Object.assign({deviceId:{exact:dev.deviceId}},base)});
+  }
+  const track=s.getVideoTracks()[0];
+  if(FRONT.test(track.label)){s.getTracks().forEach(t=>t.stop());throw Error('拿到的是前置摄像头，已拒绝');}
+  track.contentHint='motion';
+  let viaZoom=false;
+  try{const caps=track.getCapabilities?track.getCapabilities():{};
+    if(caps.zoom&&typeof caps.zoom.min==='number'){
+      const z=kind==='ultra'&&!dev&&caps.zoom.min<1?caps.zoom.min:Math.max(caps.zoom.min,Math.min(1,caps.zoom.max||1));
+      await track.applyConstraints({advanced:[{zoom:z}]});viaZoom=kind==='ultra'&&z<1;}}catch(_){}
+  which=(dev||viaZoom)?kind:(kind==='ultra'?'wide':kind);
+  $('cam').textContent=(which==='ultra'?'后置超广角':'后置主摄')+(which!==kind?'（本机没有超广角）':viaZoom?'（'+(Math.round((track.getSettings().zoom||0)*10)/10||'0.5')+'×）':'');
+  return s;
+}
+// —— 重力：转成屏幕坐标（x 向右、y 向下）的“地面方向”，电脑据此把画面转正、画地平线 ——
+function screenAngle(){const a=(screen.orientation&&typeof screen.orientation.angle==='number')?screen.orientation.angle:(window.orientation||0);return((a%360)+360)%360;}
+function onOrientation(e){
+  if(e.beta==null||e.gamma==null)return;
+  const b=e.beta*Math.PI/180,g=e.gamma*Math.PI/180;
+  const d={x:Math.sin(g)*Math.cos(b),y:-Math.sin(b),z:-Math.cos(g)*Math.cos(b)};   // 设备坐标里的“向下”
+  const a=screenAngle();
+  // 设备逆时针转 a 度后，屏幕右 / 下在设备坐标里的方向
+  const s=a===90?[-d.y,-d.x]:a===270?[d.y,d.x]:a===180?[-d.x,d.y]:[d.x,-d.y];
+  down=s;tilt=-d.z;   // tilt>0：镜头向下俯；用于估地平线
+  // 手机实际是竖着还是横着（和页面有没有跟着转无关）；镜头几乎朝地 / 朝天时不判断
+  if(Math.abs(d.z)<0.8)physPortrait=Math.abs(d.y)>Math.abs(d.x);
+  checkRotate();
+}
+function sendMeta(){if(channel&&channel.readyState==='open')channel.send(JSON.stringify({down,tilt,cam:which,landscape:physPortrait===null?innerWidth>innerHeight:!physPortrait}));}
+function checkRotate(){const portrait=physPortrait===null?innerHeight>innerWidth:physPortrait;$('rotate').className='rotate'+(running&&portrait?' show':'');}
+async function keepAwake(){try{if('wakeLock' in navigator){wakeLock=await navigator.wakeLock.request('screen');}}catch(_){}}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&running)keepAwake();});
+addEventListener('resize',checkRotate);addEventListener('orientationchange',()=>setTimeout(checkRotate,300));
+// 不等外网探测全部回来：拿到第一个本机地址后再等 0.7 秒就发（同一 Wi-Fi 直连只需要本机地址），最多 2 秒
+async function waitIce(peer){if(peer.iceGatheringState==='complete')return;await new Promise(r=>{let done=false,quick=0;const end=()=>{if(!done){done=true;clearTimeout(cap);clearTimeout(quick);r();}};const cap=setTimeout(end,2000);peer.addEventListener('icecandidate',e=>{if(e.candidate&&!quick)quick=setTimeout(end,700);});peer.addEventListener('icegatheringstatechange',()=>{if(peer.iceGatheringState==='complete')end();});});}
+async function start(){
+  $('start').disabled=true;setState('正在打开摄像头…',false);
+  try{
+    if(typeof DeviceOrientationEvent!=='undefined'&&DeviceOrientationEvent.requestPermission){try{await DeviceOrientationEvent.requestPermission();}catch(_){}}
+    addEventListener('deviceorientation',onOrientation);
+    stream=await openCamera('ultra');
+    $('preview').srcObject=stream;
+    running=true;checkRotate();keepAwake();
+    await connect();
+    pingTimer=setInterval(()=>api('/api/phone/ping',{camera:which,landscape:innerWidth>innerHeight}).catch(()=>{}),2000);
+    motionTimer=setInterval(sendMeta,100);
+    $('start').textContent='结束';$('start').className='stop';$('start').disabled=false;$('switch').disabled=false;
+  }catch(err){setState(String(err&&err.message||err).slice(0,60),false,true);stop();}
+}
+// —— 和电脑握手（像打视频电话）；断线后保留摄像头自动重拨 ——
+async function connect(){
+  if(!running)return;
+  clearTimeout(retryTimer);
+  if(pc){try{pc.close();}catch(_){}}
+  setState('正在连接电脑…',false);
+  const peer=new RTCPeerConnection(RTC);pc=peer;
+  const sender=peer.addTrack(stream.getVideoTracks()[0],stream);
+  channel=peer.createDataChannel('meta');
+  channel.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.cmd==='camera')switchCamera(m.which);}catch(_){}};
+  peer.onconnectionstatechange=()=>{if(peer!==pc)return;const s=peer.connectionState;
+    if(s==='connected'){setState('正在看护 · 已连接电脑',true);clearTimeout(retryTimer);}
+    else if(s==='failed'||s==='disconnected'){setState('连接中断，正在自动重连…',false,true);clearTimeout(retryTimer);retryTimer=setTimeout(connect,s==='failed'?500:4000);}};
+  await peer.setLocalDescription(await peer.createOffer());
+  await waitIce(peer);
+  const r=await api('/api/sig/offer',{sdp:peer.localDescription.sdp});
+  if(!r.ok){if(r.status===403)throw Error('链接已失效，请在电脑上重新扫码');retryTimer=setTimeout(connect,3000);return;}
+  const {id}=await r.json();
+  setState('等待电脑接通…',false);
+  for(let i=0;i<3&&running&&peer===pc;i++){   // 每次挂着等最多 15 秒，电脑一回应立刻返回
+    const a=await api('/api/sig/answer?wait=15&id='+encodeURIComponent(id));
+    if(a.ok){const {sdp}=await a.json();if(sdp){await peer.setRemoteDescription({type:'answer',sdp});break;}}
+    else if(a.status===404)break;
+    else await new Promise(r=>setTimeout(r,1000));
+  }
+  if(peer===pc&&!peer.remoteDescription&&running){retryTimer=setTimeout(connect,1000);return;}   // 电脑页没开 / 刷新了：重拨
+  try{const p=sender.getParameters();p.encodings=p.encodings&&p.encodings.length?p.encodings:[{}];p.encodings[0].maxBitrate=3500000;p.encodings[0].maxFramerate=30;p.degradationPreference='maintain-framerate';await sender.setParameters(p);}catch(_){}
+}
+async function switchCamera(kind){
+  if(!running||!pc)return;
+  const next=kind||(which==='ultra'?'wide':'ultra');
+  try{const s=await openCamera(next);const track=s.getVideoTracks()[0];const sender=pc.getSenders().find(x=>x.track&&x.track.kind==='video');
+    await sender.replaceTrack(track);stream.getTracks().forEach(t=>t.stop());stream=s;$('preview').srcObject=s;sendMeta();}
+  catch(_){setState('切换镜头失败',true,true);}
+}
+function stop(){
+  running=false;clearInterval(pingTimer);clearInterval(motionTimer);clearTimeout(retryTimer);
+  removeEventListener('deviceorientation',onOrientation);
+  if(pc){try{pc.close();}catch(_){}pc=null;}channel=null;
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+  $('preview').srcObject=null;$('cam').textContent='摄像头已关闭';
+  if(wakeLock){wakeLock.release().catch(()=>{});wakeLock=null;}
+  try{navigator.sendBeacon('/api/phone/bye?k='+encodeURIComponent(KEY));}catch(_){}
+  $('start').textContent='开始看护';$('start').className='';$('start').disabled=false;$('switch').disabled=true;
+  if(!/中断|失效|没有|拒绝|失败/.test($('state').textContent))setState('已结束',false);
+  checkRotate();
+}
+$('start').addEventListener('click',()=>running?stop():start());
+$('switch').addEventListener('click',()=>switchCamera());
+addEventListener('pagehide',()=>{if(running)stop();});
+if(!window.isSecureContext||!navigator.mediaDevices)setState('请用 Safari 打开电脑上的二维码链接',false,true);
+</script>
+</html>

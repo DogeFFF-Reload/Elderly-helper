@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CareMate · 视频看护</title>
+<style>
+:root{color-scheme:dark;--bg:#0a111d;--panel:#121c2c;--panel-2:#172338;--line:#26344a;--line-2:#34455f;--text:#edf2fa;--muted:#9aabc3;--dim:#71839c;
+ --ok:#5fe0bf;--ok-bg:#123a35;--warn:#ffc96b;--warn-bg:#3b2f17;--bad:#ff8f8f;--bad-bg:#3d1c22;
+ font-family:"Microsoft YaHei","PingFang SC","Noto Sans SC",system-ui,sans-serif;background:var(--bg);color:var(--text)}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;padding:20px 26px;background:radial-gradient(1200px 600px at 85% -10%,#16305066,transparent 60%),var(--bg)}
+header{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.logo{width:42px;height:42px;border-radius:12px;background:linear-gradient(145deg,#6fe6c8,#3bb59b);display:grid;place-items:center}
+.logo svg{width:22px;height:22px}
+h1{font-size:21px;margin:0;font-weight:700;letter-spacing:.4px}
+header p{margin:2px 0 0;color:var(--muted);font-size:13px}
+.spacer{flex:1}
+.badge{display:inline-flex;align-items:center;gap:8px;padding:7px 13px;border:1px solid var(--line-2);border-radius:999px;font-size:14px;white-space:nowrap;background:var(--panel)}
+.badge.accent{color:var(--ok);border-color:#2d6b5e;background:var(--ok-bg)}
+.badge.warning{color:var(--warn);border-color:#6b5428;background:var(--warn-bg)}
+.badge.danger{color:var(--bad);border-color:#74333c;background:var(--bad-bg)}
+.clock{font-variant-numeric:tabular-nums;color:var(--muted);font-size:14px}
+button{font:inherit;font-size:14px;border:1px solid var(--line-2);border-radius:10px;padding:9px 14px;color:var(--text);background:var(--panel-2);cursor:pointer}
+button:hover{background:#22334d}button:disabled{opacity:.45;cursor:default}
+main{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px}
+.viewer{position:relative;width:100%;aspect-ratio:16/9;max-height:calc(100vh - 140px);background:#050a12;border:1px solid var(--line);border-radius:18px;overflow:hidden;box-shadow:0 18px 50px #0006}
+#view{position:absolute;inset:0;width:100%;height:100%}
+#video{display:none}
+.overlay{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;text-align:center;padding:30px;gap:14px;background:radial-gradient(circle at 50% 45%,#13213a,#08101c)}
+.overlay strong{font-size:25px}
+.overlay span{font-size:15px;color:#aebdd2;line-height:1.8;max-width:620px}
+.qr{background:#fff;border-radius:14px;padding:12px;line-height:0}
+.qr svg{width:230px;height:230px}
+.spinner{width:44px;height:44px;border-radius:50%;border:4px solid #2a3a55;border-top-color:var(--ok);animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.tag{position:absolute;top:14px;left:14px;background:#0d1828d9;border:1px solid var(--line-2);border-radius:9px;padding:6px 11px;font-size:13px;z-index:2}
+aside{display:flex;flex-direction:column;gap:14px}
+.card{border:1px solid var(--line);background:linear-gradient(180deg,var(--panel-2),var(--panel));border-radius:16px;padding:18px;position:relative;overflow:hidden}
+.card.status::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--line-2)}
+.card.status.s-ok::before{background:var(--ok)}.card.status.s-warn::before{background:var(--warn)}.card.status.s-bad::before{background:var(--bad)}
+.eyebrow{font-size:12px;color:var(--muted);letter-spacing:1.5px;margin:0 0 9px}
+.state{font-size:24px;font-weight:700;line-height:1.4;margin:0 0 6px}
+.small{font-size:13.5px;line-height:1.7;color:var(--muted);margin:0}
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px}
+.metric{background:#0d1626;border:1px solid var(--line);border-radius:11px;padding:9px 6px;text-align:center}
+.metric b{display:block;font-size:17px;font-weight:650;font-variant-numeric:tabular-nums}
+.metric span{font-size:12px;color:var(--dim)}
+.accent{color:var(--ok)}.warning{color:var(--warn)}.danger{color:var(--bad)}
+.steps{list-style:none;margin:0;padding:0;display:grid;gap:9px}
+.steps li{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--muted)}
+.steps i{width:21px;height:21px;border-radius:50%;border:2px solid var(--line-2);display:grid;place-items:center;font-style:normal;font-size:12px;flex:none}
+.steps li.done{color:var(--text)}.steps li.done i{border-color:var(--ok);background:var(--ok);color:#0b2a24}
+.steps li.wait i{border-color:var(--warn);border-top-color:transparent;animation:spin 1.1s linear infinite}
+.tools{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#events{font-size:13px;color:var(--muted);line-height:1.8;margin:8px 0 0;max-height:110px;overflow:auto}
+footer{margin-top:12px;font-size:12px;color:var(--dim)}
+@media(max-width:1050px){main{grid-template-columns:1fr}aside{display:grid;grid-template-columns:1fr 1fr}}
+@media(max-width:640px){aside{grid-template-columns:1fr}body{padding:14px}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+<header>
+  <div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#0d2c26" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></div>
+  <div><h1>CareMate 视频看护</h1><p>手机扫码连接 · 骨架识别 · 疑似跌倒通知家属 App</p></div>
+  <div class="spacer"></div>
+  <span id="clock" class="clock"></span>
+  <span id="live" class="badge">未连接</span><span id="modeBadge" class="badge">报警通道准备中</span>
+  <button id="fullscreen" type="button">全屏</button>
+</header>
+<main>
+  <section class="viewer" aria-label="手机摄像头画面">
+    <canvas id="view"></canvas>
+    <video id="video" playsinline muted autoplay></video>
+    <span id="camTag" class="tag">等待手机</span>
+    <div id="overlay" class="overlay">
+      <div id="spinner" class="spinner"></div>
+      <div id="qr" class="qr" style="display:none"></div>
+      <strong id="overlayTitle">正在准备连接</strong>
+      <span id="overlayText">正在建立安全链接，二维码马上出现。</span>
+    </div>
+  </section>
+  <aside>
+    <section id="stateCard" class="card status"><p class="eyebrow">识别状态</p><p id="state" class="state">等待画面</p>
+      <p id="stateHelp" class="small">手机横放、固定，让全身尽量入镜。</p>
+      <div class="metrics"><div class="metric"><b id="fps">—</b><span>画面帧率</span></div><div class="metric"><b id="ms">—</b><span>识别耗时</span></div><div class="metric"><b id="model">—</b><span>骨架模型</span></div></div></section>
+    <section class="card"><p class="eyebrow">连接步骤</p><ol class="steps">
+      <li id="s1"><i>1</i>安全链接已就绪（二维码）</li>
+      <li id="s2"><i>2</i><span id="s2text">手机已连接、画面传输中</span></li>
+      <li id="s3"><i>3</i>识别出人体骨架</li></ol></section>
+    <section class="card"><p class="eyebrow">画面与镜头</p><div class="tools">
+      <button id="switchCam" type="button" disabled>切到主摄</button>
+      <button id="flip" type="button">手动旋转 90°</button>
+      <button id="guides" type="button">隐藏地面线</button>
+      <button id="reload" type="button">重新连接</button></div></section>
+    <section id="alarmCard" class="card status"><p class="eyebrow">家属 App 报警</p><p id="alarmState" class="state" style="font-size:20px">准备中</p>
+      <p id="alarmHelp" class="small">正在寻找床头板……</p>
+      <div class="tools" style="margin-top:12px;grid-template-columns:1fr"><button id="testAlarm" type="button" disabled>发送测试报警（家属手机会响）</button></div></section>
+    <section class="card"><p class="eyebrow">规则事件（本次）</p><p id="eventCount" class="state" style="font-size:20px">0 次</p><div id="events"></div></section>
+  </aside>
+</main>
+<footer>画面只在本机内存中处理，不录像；手机端可随时点“结束”停止。报警只发事件（不发画面）：疑似跌倒 → 床头板 → 家属 App 响铃。</footer>
+<script src="/vendor/qrcode.js"></script>
+<script type="module">
+import {FilesetResolver, PoseLandmarker} from '/vendor/vision_bundle.mjs';
+const $=id=>document.getElementById(id);
+const RTC={iceServers:[{urls:['stun:stun.cloudflare.com:3478','stun:stun.qq.com:3478','stun:stun.miwifi.com:3478']}]};
+const video=$('video'),view=$('view'),ctx=view.getContext('2d');
+const work=document.createElement('canvas'),wctx=work.getContext('2d');
+const POSE_MAP={head:0,l_shoulder:11,r_shoulder:12,l_elbow:13,r_elbow:14,l_wrist:15,r_wrist:16,l_hip:23,r_hip:24,l_knee:25,r_knee:26,l_ankle:27,r_ankle:28};
+const BONES=[[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28],[27,29],[29,31],[27,31],[28,30],[30,32],[28,32]];
+const HFOV={ultra:106,wide:68};
+let pc=null,channel=null,sessionId=null,meta={down:[0,1],tilt:0,cam:'ultra'},roll=0,flip=(+localStorage.getItem('camlink.rot')||0)%4,showGuides=true;
+let callStart=0,connectMs=null,warm=0,landmarker=null,modelName='',detectTimes=[],frameTimes=[],lastVideoTime=-1,lm=null,filters=null,lastPost=0,ruleState=null,floorSamples=[],floorY=null,status=null;
+
+// ---------- 小工具 ----------
+function median(a){const s=[...a].sort((x,y)=>x-y);return s[Math.floor(s.length/2)];}
+function steps(a,b,c){const set=(id,done,wait)=>$(id).className=done?'done':wait?'wait':'';set('s1',a,!a);set('s2',b,a&&!b);set('s3',c,b&&!c);}
+function overlay(title,text,{spin=false,qr=null}={}){$('overlay').style.display='grid';$('overlayTitle').textContent=title;$('overlayText').textContent=text;$('spinner').style.display=spin?'block':'none';
+  if(qr){$('qr').style.display='block';if($('qr').dataset.url!==qr){const q=qrcode(0,'M');q.addData(qr);q.make();$('qr').innerHTML=q.createSvgTag({cellSize:6,margin:2,scalable:true});$('qr').dataset.url=qr;}}else $('qr').style.display='none';}
+function hideOverlay(){$('overlay').style.display='none';}
+setInterval(()=>{$('clock').textContent=new Date().toLocaleTimeString('zh-CN',{hour12:false});},500);
+// 手动补转（传感器被浏览器屏蔽时用）：每点一次多转 90°，记在本机
+$('flip').addEventListener('click',()=>{flip=(flip+1)%4;try{localStorage.setItem('camlink.rot',String(flip));}catch(_){}});
+$('guides').addEventListener('click',()=>{showGuides=!showGuides;$('guides').textContent=showGuides?'隐藏地面线':'显示地面线';});
+$('reload').addEventListener('click',()=>location.reload());
+$('switchCam').addEventListener('click',()=>{if(channel&&channel.readyState==='open')channel.send(JSON.stringify({cmd:'camera',which:meta.cam==='ultra'?'wide':'ultra'}));});
+$('fullscreen').addEventListener('click',async()=>{try{document.fullscreenElement?await document.exitFullscreen():await document.querySelector('.viewer').requestFullscreen();}catch(_){}});
+
+// ---------- One-Euro 平滑：静止时稳、动作快时不拖 ----------
+class OneEuro{constructor(min=1.2,beta=0.02,d=1){this.min=min;this.beta=beta;this.d=d;this.x=null;this.dx=0;this.t=0;}
+  a(c,dt){const r=2*Math.PI*c*dt;return r/(r+1);}
+  f(x,t){if(this.x===null){this.x=x;this.t=t;return x;}const dt=Math.max(1e-3,(t-this.t)/1000);this.t=t;const dx=(x-this.x)/dt;this.dx+=this.a(this.d,dt)*(dx-this.dx);
+    const c=this.min+this.beta*Math.abs(this.dx);this.x+=this.a(c,dt)*(x-this.x);return this.x;}}
+function smooth(points,t){if(!filters)filters=points.map(()=>[new OneEuro(),new OneEuro()]);
+  return points.map((p,i)=>({x:filters[i][0].f(p.x,t),y:filters[i][1].f(p.y,t),v:p.visibility??1}));}
+
+// ---------- 骨架模型：先 heavy（准），电脑跟不上自动换 full ----------
+async function loadModel(name){
+  const files=await FilesetResolver.forVisionTasks('/vendor/wasm');
+  const opts={baseOptions:{modelAssetPath:'/vendor/pose_landmarker_'+name+'.task',delegate:'GPU'},runningMode:'VIDEO',numPoses:1,
+    minPoseDetectionConfidence:0.5,minPosePresenceConfidence:0.5,minTrackingConfidence:0.5};
+  try{landmarker=await PoseLandmarker.createFromOptions(files,opts);}
+  catch(_){opts.baseOptions.delegate='CPU';landmarker=await PoseLandmarker.createFromOptions(files,opts);}
+  modelName=name;detectTimes=[];warm=0;$('model').textContent=name==='heavy'?'高精度':'标准';
+}
+
+// ---------- 画面：按手机重力转正（不会上下颠倒），再识别 ----------
+// 目标转角：把画面转多少度，“地面方向”才朝下。镜头几乎朝地 / 朝天时重力不可靠，保持原样。
+function targetAngle(){const [x,y]=meta.down||[0,1];return Math.hypot(x,y)<0.3?null:Math.atan2(x,y);}
+let quarter=0;   // 整 90° 的档位：0 / 1 / 2 / 3（手机竖着、横着、倒着都能转正，宽高随之互换）
+function wrap(a){while(a>Math.PI)a-=2*Math.PI;while(a<=-Math.PI)a+=2*Math.PI;return a;}
+function drawFrame(){
+  const w=video.videoWidth,h=video.videoHeight;if(!w||!h)return false;
+  const t=targetAngle();
+  if(t!==null){
+    // 偏离当前档位超过 55° 才换档（滞回），避免在 45° 附近来回跳
+    if(Math.abs(wrap(t-quarter*Math.PI/2))>55*Math.PI/180){quarter=((Math.round(t/(Math.PI/2))%4)+4)%4;roll=wrap(t-quarter*Math.PI/2);}
+    const res=wrap(t-quarter*Math.PI/2);
+    roll+=((Math.abs(res)<2*Math.PI/180?0:res)-roll)*0.15;   // 剩下的小角度慢慢跟，画面不抖
+  }
+  const q=(quarter+flip)%4,W=q%2?h:w,H=q%2?w:h;
+  if(work.width!==W||work.height!==H){work.width=W;work.height=H;floorSamples=[];floorY=null;filters=null;}
+  wctx.save();wctx.fillStyle='#000';wctx.fillRect(0,0,W,H);wctx.translate(W/2,H/2);wctx.rotate(q*Math.PI/2+roll);
+  const s=Math.abs(roll)>0.02?1+Math.abs(Math.sin(roll))*0.35:1;   // 小角度转正时略放大，避免黑角
+  wctx.scale(s,s);wctx.drawImage(video,-w/2,-h/2,w,h);wctx.restore();return true;
+}
+function detect(now){
+  if(!landmarker||video.currentTime===lastVideoTime)return;lastVideoTime=video.currentTime;
+  frameTimes.push(now);while(frameTimes.length>30)frameTimes.shift();
+  const t0=performance.now();const res=landmarker.detectForVideo(work,now);const dt=performance.now()-t0;
+  // 刚加载的前 20 帧含 GPU 着色器编译，不计入；之后按中位数判断电脑跟不跟得上高精度模型
+  if(++warm>20){detectTimes.push(dt);if(detectTimes.length>60)detectTimes.shift();}
+  if(modelName==='heavy'&&detectTimes.length>=60&&median(detectTimes)>40){landmarker.close();landmarker=null;loadModel('full');}
+  const pts=res&&res.landmarks&&res.landmarks[0];
+  lm=pts?smooth(pts,now):null;if(!pts)filters=null;
+  if(lm)learnFloor();
+  if(now-lastPost>100){lastPost=now;postPose();}
+}
+function upright(){if(!lm)return false;const sh=(lm[11].y+lm[12].y)/2,hip=(lm[23].y+lm[24].y)/2,an=(lm[27].y+lm[28].y)/2;return lm[27].v>0.5&&lm[28].v>0.5&&sh<hip&&hip<an&&(an-sh)>0.25;}
+function learnFloor(){if(!upright())return;floorSamples.push(Math.max(lm[27].y,lm[28].y,lm[29].y,lm[30].y));if(floorSamples.length>90)floorSamples.shift();
+  const s=[...floorSamples].sort((a,b)=>a-b);floorY=s.length>=15?s[Math.floor(s.length*0.6)]:null;}
+async function postPose(){
+  let kp=null;
+  if(lm){kp={};for(const [k,i] of Object.entries(POSE_MAP))kp[k]=[+lm[i].x.toFixed(4),+lm[i].y.toFixed(4),+lm[i].v.toFixed(3)];
+    kp.neck=[+((lm[11].x+lm[12].x)/2).toFixed(4),+((lm[11].y+lm[12].y)/2).toFixed(4),+Math.min(lm[11].v,lm[12].v).toFixed(3)];}
+  try{const r=await fetch('/api/pose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kp,aspect:work.width/work.height})});if(r.ok)ruleState=await r.json();}catch(_){}
+}
+function colorFor(){const s=ruleState&&ruleState.status;return s==='suspected_fall'?'#ff6b6b':s==='candidate'?'#ffc96b':'#5fe0bf';}
+function render(){
+  const rect=view.getBoundingClientRect(),dpr=devicePixelRatio||1;
+  if(view.width!==Math.round(rect.width*dpr)){view.width=Math.round(rect.width*dpr);view.height=Math.round(rect.height*dpr);}
+  ctx.fillStyle='#050a12';ctx.fillRect(0,0,view.width,view.height);
+  if(!work.width)return;
+  const sc=Math.min(view.width/work.width,view.height/work.height),dw=work.width*sc,dh=work.height*sc,ox=(view.width-dw)/2,oy=(view.height-dh)/2;
+  ctx.drawImage(work,ox,oy,dw,dh);
+  const X=x=>ox+x*dw,Y=y=>oy+y*dh;
+  if(showGuides){
+    // 水平线：由手机俯仰角和镜头视场算出；地面线：由站立时脚踝位置学出来
+    const f=(work.width/2)/Math.tan((HFOV[meta.cam]||80)*Math.PI/360),tilt=Math.max(-0.95,Math.min(0.95,meta.tilt||0));
+    const hy=0.5-(f*Math.tan(Math.asin(tilt)))/work.height;
+    ctx.setLineDash([10*dpr,8*dpr]);ctx.lineWidth=1.5*dpr;ctx.font=(13*dpr)+'px "Microsoft YaHei",sans-serif';
+    if(hy>0.02&&hy<0.98){ctx.strokeStyle='#8fb8ffaa';ctx.beginPath();ctx.moveTo(ox,Y(hy));ctx.lineTo(ox+dw,Y(hy));ctx.stroke();ctx.fillStyle='#8fb8ff';ctx.fillText('水平线',ox+10*dpr,Y(hy)-6*dpr);}
+    if(floorY){ctx.strokeStyle='#ffc96baa';ctx.beginPath();ctx.moveTo(ox,Y(floorY));ctx.lineTo(ox+dw,Y(floorY));ctx.stroke();ctx.fillStyle='#ffc96b';ctx.fillText('地面',ox+10*dpr,Y(floorY)-6*dpr);
+      ctx.fillStyle='#ffc96b14';ctx.fillRect(ox,Y(floorY),dw,oy+dh-Y(floorY));}
+    ctx.setLineDash([]);
+  }
+  if(lm){
+    const c=colorFor();ctx.lineCap='round';ctx.strokeStyle=c;ctx.lineWidth=Math.max(3,dw/260);
+    for(const [a,b] of BONES){if(lm[a].v<0.5||lm[b].v<0.5)continue;ctx.beginPath();ctx.moveTo(X(lm[a].x),Y(lm[a].y));ctx.lineTo(X(lm[b].x),Y(lm[b].y));ctx.stroke();}
+    ctx.fillStyle='#fff';
+    for(const i of [0,11,12,13,14,15,16,23,24,25,26,27,28]){if(lm[i].v<0.5)continue;ctx.beginPath();ctx.arc(X(lm[i].x),Y(lm[i].y),Math.max(3.5,dw/320),0,7);ctx.fill();}
+    if(lm[0].v>0.5&&lm[11].v>0.5&&lm[12].v>0.5){ctx.beginPath();ctx.moveTo(X(lm[0].x),Y(lm[0].y));ctx.lineTo(X((lm[11].x+lm[12].x)/2),Y((lm[11].y+lm[12].y)/2));ctx.stroke();}
+  }
+}
+// 识别不能依赖 requestAnimationFrame：标签页在后台时它会停，跌倒判断也就停了。
+// 用 Worker 里的定时器当时钟（后台不被节流），每 15 ms 看一次有没有新画面（同一帧不重复识别）；rAF 只负责画到屏幕上。
+function processTick(){if(drawFrame())detect(performance.now());}
+try{const clock=new Worker(URL.createObjectURL(new Blob(['setInterval(()=>postMessage(0),15)'],{type:'text/javascript'})));clock.onmessage=processTick;}
+catch(_){setInterval(processTick,15);}
+function paint(){render();requestAnimationFrame(paint);}
+requestAnimationFrame(paint);
+
+// ---------- 连接（像视频通话）：手机扫码发邀请，电脑这边自动接 ----------
+// 不等外网探测全部回来：拿到第一个本机地址后再等 0.7 秒就发（同一 Wi-Fi 直连只需要本机地址），最多 2 秒
+async function waitIce(peer){if(peer.iceGatheringState==='complete')return;await new Promise(r=>{let done=false,quick=0;const end=()=>{if(!done){done=true;clearTimeout(cap);clearTimeout(quick);r();}};const cap=setTimeout(end,2000);peer.addEventListener('icecandidate',e=>{if(e.candidate&&!quick)quick=setTimeout(end,700);});peer.addEventListener('icegatheringstatechange',()=>{if(peer.iceGatheringState==='complete')end();});});}
+async function accept(offer){
+  if(pc){try{pc.close();}catch(_){}}
+  sessionId=offer.id;pc=new RTCPeerConnection(RTC);channel=null;
+  pc.ontrack=e=>{video.srcObject=e.streams[0]||new MediaStream([e.track]);video.play().catch(()=>{});
+    video.addEventListener('loadeddata',()=>{if(callStart){connectMs=performance.now()-callStart;callStart=0;}},{once:true});};
+  pc.ondatachannel=e=>{channel=e.channel;channel.onmessage=m=>{try{meta=Object.assign(meta,JSON.parse(m.data));}catch(_){}};};
+  pc.onconnectionstatechange=()=>{if(pc&&['failed','closed'].includes(pc.connectionState)){video.srcObject=null;}};
+  await pc.setRemoteDescription({type:'offer',sdp:offer.sdp});
+  await pc.setLocalDescription(await pc.createAnswer());await waitIce(pc);
+  await fetch('/api/sig/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:offer.id,sdp:pc.localDescription.sdp})});
+}
+async function poll(){
+  try{status=await (await fetch('/api/status',{cache:'no-store'})).json();}catch(_){status=null;}
+  updateUi();setTimeout(poll,800);
+}
+function updateUi(){
+  const connected=pc&&pc.connectionState==='connected'&&video.videoWidth>0;
+  const phone=status&&status.phone_online;
+  const fps=frameTimes.length>1?(frameTimes.length-1)/((frameTimes.at(-1)-frameTimes[0])/1000):0;
+  $('fps').textContent=connected?fps.toFixed(0):'—';
+  $('ms').textContent=connected&&detectTimes.length?median(detectTimes).toFixed(0)+' ms':'—';
+  $('camTag').textContent=connected?(meta.cam==='ultra'?'后置超广角（主镜头）':'后置主摄（辅助镜头）'):'等待手机';
+  $('switchCam').disabled=!connected;$('switchCam').textContent=meta.cam==='ultra'?'切到主摄':'切回超广角';
+  $('live').textContent=connected?'● 实时直播':phone?'手机已在线':'未连接';$('live').className='badge'+(connected?' accent':phone?' warning':'');
+  $('s2text').textContent='手机已连接、画面传输中'+(connected&&connectMs!=null?'（接通 '+(connectMs/1000).toFixed(1)+' 秒）':'');
+  const hasPose=connected&&!!lm;steps(!!(status&&status.cam_url),connected,hasPose);
+  if(!status)overlay('本机服务没有响应','请看启动窗口是否还开着。',{spin:true});
+  else if(connected)hideOverlay();
+  else if(phone||status.pending_offer)overlay('手机正在接入…','正在建立视频连接，通常 1–3 秒。',{spin:true});
+  else if(status.cam_url)overlay('用 iPhone 相机扫一扫','打开链接后点“开始看护”。手机横放、固定好，镜头朝向房间；电脑和手机连同一个 Wi-Fi / 热点。',{qr:status.cam_url});
+  else overlay('正在准备连接','正在建立安全链接（cloudflared），二维码马上出现。',{spin:true});
+  const r=ruleState;const s=connected?(lm?(r&&r.text)||'正在观察':'未检测到人'):'等待画面';
+  $('state').textContent=s;
+  const st=r&&r.status;const bad=st==='suspected_fall',warn=st==='candidate'||!lm;
+  $('state').className='state '+(bad?'danger':warn?'warning':'accent');$('stateCard').className='card status '+(connected?(bad?'s-bad':warn?'s-warn':'s-ok'):'');
+  $('stateHelp').textContent=!connected?'手机横放、固定，让全身尽量入镜。':!lm?'调整取景，让肩、髋、脚踝都在画面里。':bad?'规则判定疑似跌倒（仅本页提示，不发送）。':'正在跟踪骨架；站立走动时会自动学出地面位置。';
+  if(status){$('eventCount').textContent=status.events.length+' 次';
+    const D={queued:'正在发送',bedside_accepted:'已送到床头 → 家属 App 响铃',dry_accepted:'格式检查通过（未响铃）',disabled:'仅本地记录',failed:'发送失败（见报警卡）'};
+    $('events').innerHTML=status.events.slice().reverse().map(e=>e.at+' 疑似跌倒'+(e.delivery?' · '+(D[e.delivery]||e.delivery):'')).join('<br>');
+    alarmUi(status.alarm||{},status.mode);}
+}
+// ---------- 家属 App 报警通道 ----------
+function alarmUi(a,mode){
+  const live=mode==='live',dry=mode==='dry';
+  $('modeBadge').textContent=live?'正式报警 · 自动通知家属 App':dry?'无扰测试 · 不响铃':'仅观察 · 不发送报警';
+  $('modeBadge').className='badge'+(live?' warning':'');
+  if(mode==='off'){$('alarmState').textContent='未开启';$('alarmHelp').textContent='启动时加 --alarm live 才会通知家属 App。';$('alarmCard').className='card status';$('testAlarm').disabled=true;return;}
+  const ok=a.ready;$('alarmState').textContent=ok?(live?'已就绪':'无扰检查通过'):a.searching?'正在找床头板…':'未连接床头板';
+  $('alarmState').className='state '+(ok?'accent':'warning');$('alarmCard').className='card status '+(ok?'s-ok':'s-warn');
+  $('alarmHelp').textContent=ok?('床头板 '+(a.base||'').replace('http://','')+'（v'+(a.version||'?')+'），'+(a.checked?a.checked+' 无扰检查通过':'')+'。疑似跌倒会'+(live?'自动通知家属 App。':'只做格式检查。'))
+    :(a.error?a.error+'；每 15 秒重试，电脑要和床头板连同一个热点。':'正在扫描本机网段的 8013 端口。');
+  $('testAlarm').disabled=!(ok&&live);
+}
+$('testAlarm').addEventListener('click',async()=>{
+  if(!confirm('会给家属 App 发一条真实报警（来源 camlink-test），家属手机会响铃。确定发送？'))return;
+  $('testAlarm').disabled=true;$('testAlarm').textContent='发送中…';
+  try{const r=await (await fetch('/api/alarm/test',{method:'POST'})).json();
+    $('testAlarm').textContent=r.status==='bedside_accepted'?'已送到床头（报警号 '+(r.alarm_id||'?')+'）':'发送失败：'+(r.error||r.error_type||r.status);}
+  catch(_){$('testAlarm').textContent='发送失败';}
+  setTimeout(()=>{$('testAlarm').textContent='发送测试报警（家属手机会响）';},8000);
+});
+
+// 来电：挂着等手机的邀请（长轮询），一到立刻接，不用等下一轮状态刷新
+async function callLoop(){
+  for(;;){try{const o=await (await fetch('/api/sig/offer?wait=20',{cache:'no-store'})).json();
+    if(o&&o.id&&o.id!==sessionId){callStart=performance.now();await accept(o);}}catch(_){await new Promise(r=>setTimeout(r,1000));}}
+}
+loadModel('heavy').catch(()=>loadModel('full'));
+poll();callLoop();
+</script>
+</html>

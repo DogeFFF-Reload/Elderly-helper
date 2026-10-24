@@ -78,6 +78,8 @@ TESTS = {
     "test_vision_rehearsal": ("demo",),
     "test_integrated_demo": ("demo",),
     "test_live_input": ("demo",),
+    "test_camlink": ("demo",),
+    "test_camlink_alarm": ("demo",),
     "test_live_monitor": ("demo",),
     "test_eval_falls": ("demo",),
     "test_export_demo": ("demo",),

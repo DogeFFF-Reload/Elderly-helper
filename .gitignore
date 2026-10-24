@@ -26,3 +26,4 @@ deploy/x5.env
 deploy/bedside_vision.json
 deploy/bedside_vision.env
 firmware/bedside_t5ai/bedside_t5ai_arm/caremate_local.h
+code/vision/camlink/vendor/

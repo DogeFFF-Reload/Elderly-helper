@@ -1,4 +1,5 @@
 """HTTP JPEG/MJPEG input; camera requests bypass system and environment proxies."""
+import errno
 import urllib.request
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
@@ -78,6 +79,42 @@ def iter_mjpeg(response):
             frame = bytes(buffer[:end])
             del buffer[:end]
             yield frame
+
+
+def probe(url, timeout=3.0):
+    """Credential-free reachability check of the camera address; reads no video.
+
+    Returns "ok" (answered), "auth" (answered, login required), "refused"
+    (phone reachable but the app's server is not listening -- usually the app
+    left the foreground), "timeout" (no route: other Wi-Fi or wrong IP) or
+    "error". Never raises for network failures and never logs the URL.
+    """
+    import socket
+    import urllib.error
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(urllib.request.Request(url, method="GET"), timeout=timeout) as response:
+            response.read(1)
+        return "ok"
+    except urllib.error.HTTPError as exc:
+        return "auth" if exc.code in (401, 403) else "ok"
+    except urllib.error.URLError as exc:
+        reason = exc.reason
+        if isinstance(reason, ConnectionRefusedError):
+            return "refused"
+        if isinstance(reason, (socket.timeout, TimeoutError)) or "timed out" in str(reason):
+            return "timeout"
+        # Windows reports "no answer"/"unreachable" as plain OSError codes in the local language.
+        if isinstance(reason, OSError) and (getattr(reason, "winerror", None) in (10051, 10060, 10065)
+                                            or reason.errno in (errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH)):
+            return "timeout"
+        return "error"
+    except (socket.timeout, TimeoutError):
+        return "timeout"
+    except ConnectionRefusedError:
+        return "refused"
+    except OSError:
+        return "error"
 
 
 class PhoneFrameSource:

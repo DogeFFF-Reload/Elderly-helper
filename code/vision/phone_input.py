@@ -13,10 +13,27 @@ from vision.input_quality import InputQuality
 from vision.kpio import KeypointWriter, load_rules
 
 
+def jpeg_width(jpeg):
+    """Width from the JPEG SOF header without decoding; None if not found."""
+    i = 2
+    while i + 9 < len(jpeg):
+        if jpeg[i] != 0xFF:
+            return None
+        marker = jpeg[i + 1]
+        if marker in (0xC0, 0xC1, 0xC2):
+            return int.from_bytes(jpeg[i + 7:i + 9], "big")
+        i += 2 + int.from_bytes(jpeg[i + 2:i + 4], "big")
+    return None
+
+
 def decode_frame(jpeg):
     import cv2
     import numpy as np
-    frame = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+    # Frames wider than 1280 px are decoded at half size: decode and pose both get
+    # ~30% faster, the pose model downsamples to 256 px anyway, the monitor to 960 px.
+    width = jpeg_width(jpeg)
+    flags = cv2.IMREAD_REDUCED_COLOR_2 if width and width > 1280 else cv2.IMREAD_COLOR
+    frame = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), flags)
     if frame is None:
         raise CollectionError("手机返回的画面无法解码，请检查视频地址。")
     return frame
