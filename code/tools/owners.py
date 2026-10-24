@@ -62,6 +62,7 @@ TESTS = {
     "test_phone_calibration_report": ("demo",),
     "test_phone_pose": ("demo",),
     "test_vision_rehearsal": ("demo",),
+    "test_integrated_demo": ("demo",),
     "test_rps_hook": ("software",),
     "test_vision_teach_report": ("demo", "captain"),  # 跌倒/夜间归演示，教学/日报/健康归队长
     "test_voice_profile": ("captain",),
