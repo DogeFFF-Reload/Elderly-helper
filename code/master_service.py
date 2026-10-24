@@ -120,9 +120,11 @@ class ArmClient:
         self.on_result = None
         self.on_link = None
         self.online = None
+        self.mock = None          # 执行端 /status 自报的 mock：True 时手和臂不会真动，大屏不能写“真机同步”
         self.last_ok = None       # 执行端最近一次有回应的时间
         self.last_error = None
         self.counts = {"done": 0, "failed": 0, "dropped": 0}
+        self.halted = False
         self._mu = threading.Lock()
         self.q = queue.Queue()
         threading.Thread(target=self._worker, daemon=True).start()
@@ -135,21 +137,48 @@ class ArmClient:
     def send(self, pose, hand):
         self.q.put((self.clock(), pose, hand))
 
+    def halt(self):
+        """软件急停：置位并丢弃还没发出去的动作；另起线程叫执行端停（尽力而为）。"""
+        self.halted = True
+        while True:
+            try:
+                _queued, pose, hand = self.q.get_nowait()
+            except queue.Empty:
+                break
+            self.counts["dropped"] += 1
+            if self.on_result:
+                _safe_call(self.on_result, pose, hand, False, "estop", "急停")
+            self.q.task_done()
+        threading.Thread(target=lambda: self._call("POST", "/stop"), daemon=True).start()
+
+    def resume(self):
+        """软件急停解除：恢复接收指令，不补做急停期间的动作。"""
+        self.halted = False
+
     def drain(self):
         self.q.join()
 
     def probe(self):
         return self._call("GET", "/status")[0]
 
+    def _note_status(self, body):
+        try:
+            self.mock = bool(json.loads(body.decode("utf-8")).get("mock"))
+        except Exception:  # noqa: BLE001 老版执行端或非 JSON：不知道就当不知道
+            self.mock = None
+
     def status(self):
         ago = None if self.last_ok is None else round(self.clock() - self.last_ok, 1)
-        return dict(self.counts, online=self.online, url=self.base, ok_ago=ago, last_error=self.last_error)
+        return dict(self.counts, online=self.online, url=self.base, ok_ago=ago, last_error=self.last_error,
+                    halted=self.halted, mock=self.mock)
 
     def _call(self, method, path):
         """返回 (ok, why, detail)。HTTP 错误码 = 执行端在线但拒绝（多半是动作表里没有这个 pose）。"""
         req = urllib.request.Request(self.base + path, data=b"" if method == "POST" else None, method=method)
         try:
-            urllib.request.urlopen(req, timeout=self.timeout).read()
+            body = urllib.request.urlopen(req, timeout=self.timeout).read()
+            if path == "/status":
+                self._note_status(body)
         except urllib.error.HTTPError as e:
             # 4xx means the service is alive but rejected this action.  A
             # 5xx means its backend (for example the RH56 serial map) is not
@@ -175,13 +204,17 @@ class ArmClient:
         while True:
             queued, pose, hand = self.q.get()
             try:
-                waited = self.clock() - queued
-                if waited > self.stale:
-                    ok, why, detail = False, "stale", "排队 %.1f 秒" % waited
+                if self.halted:
+                    ok, why, detail = False, "estop", "急停"
                     self.counts["dropped"] += 1
                 else:
-                    ok, why, detail = self._call("POST", "/pose?name=%s&hand=%d" % (urllib.parse.quote(pose), hand))
-                    self.counts["done" if ok else "failed"] += 1
+                    waited = self.clock() - queued
+                    if waited > self.stale:
+                        ok, why, detail = False, "stale", "排队 %.1f 秒" % waited
+                        self.counts["dropped"] += 1
+                    else:
+                        ok, why, detail = self._call("POST", "/pose?name=%s&hand=%d" % (urllib.parse.quote(pose), hand))
+                        self.counts["done" if ok else "failed"] += 1
                 if not ok:
                     self.last_error = "%s：%s %s" % (pose, why, detail)
                 if self.on_result:
@@ -275,6 +308,9 @@ class Bus:
         self.arm.on_result = self._arm_result
         self.arm.on_link = self._arm_link
         self.arm_down_noted = False
+        # 每只手最近一次收到的动作，给大屏的执行端动画用（手指操每拍是 quiet 动作，不进时间线，只能从这里看）。
+        # 重置演示不清：重置不会让臂动，真机停在哪就显示哪
+        self.hands = {"1": self._hand("home", "idle"), "2": self._hand("release", "idle")}
         if arm is None:
             self.arm.start_probing()
         self.clients = {}   # /api/events 的订阅者 → 最近一次来拉的时间（tts_player、asr_bridge…）
@@ -283,6 +319,7 @@ class Bus:
         self.box_seen = None
         self.rng = random.SystemRandom()
         self.next_rps_id = 1
+        self.estop = False   # 不放进 _reset_runtime：重置演示不能解除急停
         self._reset_runtime()
         channel = self.llm.mode
         if self.llm.mode == "llm":
@@ -318,9 +355,13 @@ class Bus:
         hour = time.localtime(self.clock()).tm_hour
         return config.is_night(hour, self.cfg["night_start_hour"], self.cfg["night_end_hour"])
 
+    def _hand(self, pose, status):
+        """status：idle 开机 / sent 已发 / ok 执行端已回执 / offline、rejected、stale 没做成"""
+        return {"pose": pose, "label": pose_label(pose), "ts": self.clock(), "status": status}
+
     def _busy(self):
-        """状态机当前占用的资源：保命链一启动，臂和手#1 就归状态机。"""
-        return {"arm"} if self.fsm.state != IDLE else set()
+        """状态机当前占用的资源：保命链一启动，臂和手#1 就归状态机；软件急停时臂也一直占用。"""
+        return {"arm"} if self.fsm.state != IDLE or self.estop else set()
 
     def _speak(self, text):
         if not text:
@@ -371,6 +412,12 @@ class Bus:
             elif kind == "event":
                 self.events.add(a["type"], a["text"], a.get("level", "info"), who=a.get("who", "system"))
             elif kind == "arm":
+                if self.estop:
+                    if a["pose"] in SAFETY_POSES:
+                        self.events.add("system", "急停中，保命动作未执行：%s；通知家属走软件通道照常送达" % pose_label(a["pose"]),
+                                        "danger", pose=a["pose"], hand=a["hand"])
+                    continue
+                self.hands[str(a["hand"])] = self._hand(a["pose"], "sent")   # 先记再发：回执可能在 send 里同步回来
                 self.arm.send(a["pose"], a["hand"])
                 if not a.get("quiet"):
                     self.events.add("arm", pose_label(a["pose"]), who="arm", pose=a["pose"], hand=a["hand"])
@@ -383,11 +430,15 @@ class Bus:
     def _arm_result(self, pose, hand, ok, why, detail):
         """保命动作没做成 → 马上告诉演示员；其他动作只在刚开始失败时记一笔，免得手指操刷屏。
         type=system：操作台看得到、大屏不显示。通知家属走的是软件通道，不靠臂，照常送达。"""
+        with self.lock:
+            h = self.hands.get(str(hand))
+            if h and h["pose"] == pose and h["status"] == "sent":
+                h["status"] = "ok" if ok else why
         if ok:
             self.arm_down_noted = False
             return
         reason = {"offline": "执行端连不上", "rejected": "执行端拒绝：%s" % detail,
-                  "stale": "%s没发出去，按断链保护丢弃" % detail}.get(why, why)
+                  "stale": "%s没发出去，按断链保护丢弃" % detail, "estop": "软件急停，已丢弃"}.get(why, why)
         with self.lock:
             if pose in SAFETY_POSES:
                 self.events.add("system", "保命动作没做成：%s；%s。通知家属走软件通道，照常送达；现场可切 Plan B" % (
@@ -438,7 +489,8 @@ class Bus:
             if not ok:
                 what = "递“%s”" % slots["item"] if name == "deliver" else sup.allowed[skill]["desc"]
                 if sup.blocked[-1]["busy"]:
-                    return [_ev("blocked", "已挂起：%s（%s）" % (what, reason), "warn"), _say("skill_busy")]
+                    return [_ev("blocked", "已挂起：%s（%s）" % (what, reason), "warn"),
+                            _say("estop_hold" if self.estop else "skill_busy")]
                 if name == "deliver":
                     return self._blocked(what, reason, "deliver_unknown", item=slots["item"])
                 return self._blocked(what, reason, "blocked_skill")
@@ -682,6 +734,27 @@ class Bus:
 
     # ---------- 操作台 ----------
 
+    def set_estop(self, on):
+        """软件急停开关：开=臂和双手一律不再动作，关=恢复接收指令（不补做急停期间的动作）。"""
+        with self.lock:
+            on = bool(on)
+            if on and not self.estop:
+                self.estop = True
+                halt = getattr(self.arm, "halt", None)
+                if halt:
+                    halt()
+                self._run(self._stop_exercise("急停"))
+                self.rps = None
+                self.events.add("estop", "急停：臂和双手全部停止，动作指令一律不发；"
+                                "保命链照常走软件通道（通知家属照常送达）", "danger")
+            elif not on and self.estop:
+                self.estop = False
+                resume = getattr(self.arm, "resume", None)
+                if resume:
+                    resume()
+                self.events.add("estop", "急停已解除：臂和双手恢复接收指令（不补做急停期间的动作）", "ok")
+            return {"ok": True, "estop": self.estop}
+
     def set_night(self, mode):
         with self.lock:
             if mode not in ("auto", "on", "off"):
@@ -802,6 +875,9 @@ class Bus:
             return {
                 "bus": {"uptime": round(now - self.started, 1), "state": self.fsm.state,
                         "events": self.events.next_id - 1, "night": self.is_night()},
+                "estop": self.estop,
+                "tz": {"offset": round(time.localtime(self.clock()).tm_gmtoff / 3600, 2),
+                       "expected": self.cfg["expected_utc_offset"]},
                 "arm": self.arm.status(),
                 "box": {"online": self._box_online(), "id": self.box_seen["id"] if self.box_seen else None,
                         "age": round(now - self.box_seen["ts"], 1) if self.box_seen else None},
@@ -822,6 +898,7 @@ class Bus:
             return {
                 "now": self.clock(),
                 "mode": self.cfg["llm_mode"],
+                "estop": self.estop,
                 "elder_title": self.cfg["elder_title"],
                 "contacts": [{"id": c["id"], "name": c["name"], "pron": c["pron"]} for c in self.cfg["contacts"]],
                 "guard": self.fsm.snapshot(),
@@ -836,6 +913,7 @@ class Bus:
                 "rps": self._rps_view(),
                 "skeleton": self.skeleton,
                 "arm": self.arm.status(),
+                "hands": {k: dict(v) for k, v in self.hands.items()},
                 "box": {"online": self._box_online(), "id": self.box_seen["id"] if self.box_seen else None},
                 "llm": self.llm.status(),
                 "last_say": self.last_say,
@@ -865,6 +943,15 @@ def _read_json(handler):
     return {}
 
 
+def _truthy(v):
+    """开关参数：bool 直接用；字符串 0/false/off/no/空 算关，其余算开；数字按 bool。"""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.strip().lower() not in ("", "0", "false", "off", "no")
+    return bool(v)
+
+
 def dispatch_post(bus, path, body, query=None):
     """POST 路由表；HTTP 层和 demo_driver --local 共用。没有这个路由返回 None。"""
     q = query or {}
@@ -879,6 +966,7 @@ def dispatch_post(bus, path, body, query=None):
         "/api/echo/authorize": lambda: bus.echo_authorize(arg("contact", bus.primary["id"])),
         "/api/echo/revoke": lambda: bus.echo_revoke(arg("contact", bus.primary["id"])),
         "/api/night": lambda: bus.set_night(arg("mode", "auto")),
+        "/api/estop": lambda: bus.set_estop(_truthy(arg("on", True))),
         "/api/params": lambda: bus.set_params(body or q),
         "/api/agent/propose": lambda: bus.agent_propose(arg("skill", "")),
         "/api/reset": lambda: bus.reset(clear_data=str(arg("all", "0")) == "1"),

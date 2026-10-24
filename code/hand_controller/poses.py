@@ -55,3 +55,64 @@ for _say, _shape in FINGER_MOVES:
 def label(pose):
     p = POSES.get(pose)
     return p["label"] if p else pose
+
+
+# ---------- 动作 → 五指开合度（arm_service 交给 rh56f2_driver） ----------
+# 开合度 0 = 全握，100 = 全开。数值取自 caremate_hand2_kit 的词表，
+# 标 :示教: 的是这里新补的，上真机后对着实物再调
+TH, IX, MI, RG, PK, TR = "thumb", "index", "middle", "ring", "pinky", "thumb_rot"
+
+
+def _j(th, ix, mi, rg, pk, tr):
+    return {TH: th, IX: ix, MI: mi, RG: rg, PK: pk, TR: tr}
+
+
+ROCK = _j(10, 10, 10, 10, 10, 50)
+PAPER = _j(90, 95, 95, 95, 95, 50)
+HOLD_CARD = _j(40, 40, 10, 10, 10, 70)        # 捏住举牌的杆
+
+JOINTS = {
+    "home": _j(70, 75, 75, 75, 75, 50),            # :示教: 放松
+    "release": PAPER,
+    "deliver_medicine": _j(35, 35, 35, 35, 35, 60),  # :示教: 握住药盒
+    "press_sos": _j(30, 30, 30, 30, 30, 55),       # 半握拳用指节按键（kit 的 grip_pillow），不拿单根手指硬顶
+    "sign_family_received": HOLD_CARD,
+    "sign_coming": HOLD_CARD,
+    "rps_rock": ROCK,
+    "rps_scissors": _j(15, 90, 90, 10, 10, 50),
+    "rps_paper": PAPER,
+    "finger_fist": ROCK,
+    "finger_open": PAPER,
+    "finger_count_5": PAPER,
+}
+for _n in range(1, 5):                                  # 伸出 n 根：食指起依次伸直，拇指收着
+    JOINTS["finger_count_%d" % _n] = _j(10, *[90 if i < _n else 10 for i in range(4)], 50)
+for _k, _f in enumerate((IX, MI, RG, PK), 1):           # :示教: 拇指转过去碰第 k 指
+    JOINTS["finger_pinch_%d" % _k] = dict(PAPER, **{TH: 35, _f: 45, TR: 85})
+
+# 轻握安抚：一握一松的节拍，循环到新动作 / 急停打断，最长 max_seconds。
+# 握紧那一拍也只到 GENTLE_MIN_OPEN，不握到底（§5.2 握力上限）；force 写进 FORCE_SET，单位 g，手指受力到了就停
+GENTLE_MIN_OPEN = 50
+RHYTHMS = {
+    "gentle_hold": {"steps": [(_j(55, 55, 55, 55, 55, 55), 1.2), (_j(80, 85, 85, 85, 85, 55), 1.2)],
+                    "max_seconds": 60, "force": 300},
+}
+RHYTHMS["comfort_rhythm"] = RHYTHMS["gentle_hold"]      # kit 的名字，同一个节拍
+
+# ---------- kit 词表（数值取自 caremate_hand2_kit 的 POSE_VOCAB / SEQUENCES） ----------
+THUMBS_UP = _j(95, 10, 10, 10, 10, 60)
+JOINTS.update({
+    "rock": ROCK, "paper": PAPER, "scissors": JOINTS["rps_scissors"],
+    "ok": _j(45, 45, 90, 90, 90, 50), "thumbs_up": THUMBS_UP,
+    "hold_card": HOLD_CARD, "grip_pillow": JOINTS["press_sos"],
+})
+for _n in range(1, 6):
+    JOINTS["fingers_%d" % _n] = JOINTS["finger_count_%d" % _n]
+
+# 按顺序走一遍的动作：[(开合度, 停多少秒), …]
+SEQUENCES = {
+    "wave": [(PAPER, 0.4), (ROCK, 0.3), (PAPER, 0.4), (ROCK, 0.3), (PAPER, 0.3)],
+    "nod_like": [(THUMBS_UP, 0.5), (PAPER, 0.2), (THUMBS_UP, 0.6)],
+    "clench_open": [(ROCK, 0.7), (PAPER, 0.7)],
+    "count_five": [(JOINTS["fingers_%d" % n], 0.7 if n < 5 else 0.8) for n in range(1, 6)],
+}

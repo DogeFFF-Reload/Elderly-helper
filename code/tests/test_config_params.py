@@ -24,6 +24,14 @@ class LoadTest(unittest.TestCase):
             with self.assertRaises(config.ConfigError, msg=str(bad)):
                 config.load(bad, use_local=False)
 
+    def test_expected_utc_offset_default_and_range(self):
+        self.assertEqual(config.load(use_local=False)["expected_utc_offset"], 8)
+        with self.assertRaises(config.ConfigError, msg="超出 -12..14"):
+            config.load({"expected_utc_offset": 20}, use_local=False)
+        cfg = config.load(use_local=False)
+        self.assertNotIn("expected_utc_offset", config.TUNABLE, "时区预期值只用于自检，运行中不可调")
+        self.assertFalse(config.apply_params(cfg, {"expected_utc_offset": 9})[0])
+
     def test_env_override_and_bad_env(self):
         no_local = mock.patch.object(config, "LOCAL_PATH", Path(tempfile.gettempdir()) / "caremate-none.json")
         with no_local, mock.patch.dict(os.environ, {"CAREMATE_NIGHT_START_HOUR": "22", "CAREMATE_ASK_WAIT_DAY": "30"}):

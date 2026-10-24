@@ -37,6 +37,8 @@ def _arm_moved(events, pose):
 
 @step("health", "0:20 早上：量血压（康）", 30)
 def _health(d):
+    # 早上 / 中午两段强制日间：主脑按本机时钟判断夜间，笔记本或 X5 的时区不是北京时间时，白天也可能亮 🌙
+    d.post("/api/night", {"mode": "off"})
     before = len(d.state()["health"]["today"]["bp"])
     d.say("我刚量了血压 138比85")
     d.expect("复述“高压 138、低压 85，对吗？”，还没记账",
@@ -51,6 +53,7 @@ def _health(d):
 
 @step("medicine", "0:50 中午：吃药（递）", 30)
 def _medicine(d):
+    d.post("/api/night", {"mode": "off"})
     d.say("把药递给我")
     d.expect("臂 + 手#1 递出药盒", lambda s, ev: _arm_moved(ev, "deliver_medicine"))
 

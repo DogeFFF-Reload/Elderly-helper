@@ -39,6 +39,18 @@ def check(n):
     else:
         add(WARN, "状态机", "正在 %s，上一段还没收尾" % bus["state"], "开演前在操作台点“重置”")
 
+    if n.get("estop"):
+        add(FAIL, "急停", "软件急停未解除：臂和双手不会动",
+            "确认现场安全后在操作台点“解除急停”，或 POST /api/estop {\"on\": false}")
+
+    tz = n.get("tz")
+    if tz:
+        offset, expected = tz["offset"], tz["expected"]
+        if abs(offset - expected) >= 0.01:
+            add(WARN, "时区", "本机 UTC%+g，应为 UTC%+g：夜间模式和健康日报的日期会错" % (offset, expected),
+                "X5 上 sudo timedatectl set-timezone Asia/Shanghai 后重启主脑；"
+                "演示时夜间段用操作台“夜间模式”开关，不依赖钟点")
+
     arm = n["arm"]
     if arm.get("online") is False:
         add(FAIL, "执行端", "连不上 %s" % arm.get("url", ""),
@@ -49,6 +61,9 @@ def check(n):
     elif arm.get("failed") and "rejected" in (arm.get("last_error") or ""):
         add(WARN, "执行端", "在线，但有动作被拒绝：%s" % arm["last_error"],
             "动作名和 hand_controller/poses.py 对不上，找硬件同学")
+    elif arm.get("mock"):
+        add(WARN, "执行端", "在线，但是模拟（mock）：臂和手不会真动，大屏“床边执行端”照常演",
+            "真手 / 臂就绪后 MOCK_SERIAL=0 重启 arm_service；演示时这就是 Plan B，台词别说“真机”")
     else:
         add(OK, "执行端", "在线 %s%s" % (arm.get("url", ""), "，已做 %d 个动作" % arm["done"] if arm.get("done") else ""))
 

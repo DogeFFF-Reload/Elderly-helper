@@ -101,7 +101,8 @@ python -m voice.asr_bridge --device 1
 
 - **大屏**：左侧双色骨架（左半身青、右半身橙，告警变红并发光），倒地有过渡动画；叠加层显示询问倒计时圈、SOS 横幅、手#1/手#2 举牌、120 确认窗、血压复述卡、教学卡、手指操拍数。下方字幕实时显示"老人说了什么 / CareMate 说了什么"，现场听不清也能看懂。夜间模式整屏变暗并亮 🌙。
 - **家属端**：紧急卡上"我收到了，马上到"按钮做了防抖（倒计时只改文字、不重建按钮）；收到后老人那边才举"家人已收到"牌。
-- **操作台**：快捷键 `1` 报血压、`2` 说对、`3` 要药、`N` 夜间、`F` 摔倒、`A` 女儿确认、`O` 绿键、`R` 重置（光标在输入框里时不生效）。
+- **大屏 · 床边执行端**：右上角实时画出臂（侧视）和两只手（正视，五指各自弯曲）在做什么：伸过去按 SOS、递药盒、举牌、轻握、手指操每一拍、猜拳出拳。数据来自 `/api/state` 的 `hands`，真机做了就是真机的镜像；**执行端离线时它就是 Plan B 的“大屏动画”**，角标会显示“执行端离线 · 大屏演示”。
+- **操作台**：快捷键 `1` 报血压、`2` 说对、`3` 要药、`N` 夜间、`F` 摔倒、`A` 女儿确认、`O` 绿键、`R` 重置（光标在输入框里时不生效）。`Esc` 软件急停（输入框里也生效；解除只能点按钮并确认，见 §10.11）。
 
 ## 7. 接口（与文档一致，只替换 mock、不改接口）
 
@@ -116,6 +117,8 @@ python -m voice.asr_bridge --device 1
 | 操作台 → 主脑 | `/api/night {"mode": "auto|on|off"}`、`/api/reset {"all": "0|1"}`、`/api/agent/propose`、`GET/POST /api/params` |
 | 床头盒 ↔ 主脑 | `GET /api/box?id=box1`（灯色 + 心跳，草案，见 §10） |
 | 节点自检 | `GET /api/nodes`（`tools/preflight` 用，见 §10.9） |
+| 软件急停 | `POST /api/estop {"on": true\|false}` → 执行端 `POST :8013/stop`（见 §10.11） |
+| 执行端动画 | `/api/state` 的 `hands`：`{"1": {"pose", "label", "status"}, "2": {…}}` |
 
 演示参数都在 `code/config.py`，可用 `config.local.json`、环境变量（如 `CAREMATE_ASK_WAIT_DAY=30`）或运行中 `/api/params` 覆盖，见 §10。
 
@@ -125,7 +128,7 @@ python -m voice.asr_bridge --device 1
 |---|---|---|
 | `ui/`、`voice/`、`agent/health_tracker.py`、`agent/voice_profile.py`、`agent/guides.json`、`agent/device_helper.py`、`agent/lines.json` | **交互端** | 用这里的 |
 | `master_service.py`、`state_machine/`、`agent/intent.py`、`agent/supervisor.py`、`agent/skills.json`、`agent/llm_client.py`、`config.py`、`demo_driver.py`、`tests/`、`tools/` | **软件** | 用这里的（§10）；软件同学若另有正式版，用 `tools/merge_gate.py` 对照合并 |
-| `hand_controller/` | 硬件 | stand-in；`poses.py` 的 `label` 会显示在大屏时间线上 |
+| `hand_controller/` | 硬件 | RH56F2 驱动（EB 90 协议，按官方手册 V1.09）+ 执行服务（§10.13，软件代接）；`poses.py` 的 `label` 会显示在大屏时间线上 |
 | `vision/`、`gesture/`、`deploy/` | 演示 | 已实现（见 §11）；猜拳的主脑一侧（`/api/rps/gesture`、判输赢）归软件，见 §10.7 |
 
 归属的机器可读版在 `code/tools/owners.py`，`run_all` 和 `merge_gate` 都按它判断"找谁"。
@@ -244,13 +247,13 @@ python -m demo_driver --local           # 不连服务，假时钟几秒跑完
 
 **和硬件同学的约定**：全队只运行仓库里的 `code/hand_controller/arm_service.py`，不要把 kit 自带的第二份服务放到 8013。主脑使用 `POST /pose?name=<规范动作>&hand=<1|2>`；为了让 kit 的验收命令也能打到同一个服务，执行端还兼容 `/pose/<动作>`、`/press_sos`、`/handover_med`、`/reset`，并把 `rock`、`comfort_rhythm`、`thumbs_up`、`handover_med` 映射到仓库规范动作。
 
-双手的真实后端已接入 `rh56f2_driver.py`：Modbus RTU、RS485、115200-8N1、从站 ID 1/2、FC03/FC06/FC16 帧都集中在 `rh56_register_map.py` 和 `rh56_backend.py`。但硬件资料明确说目标/状态/控制寄存器仍是占位值，因此真实写入必须同时满足 `MOCK_SERIAL=0`、`RH56_REGMAP_CONFIRMED=1`，并将 `rh56_register_map.py` 的 `PROVISIONAL=False`；否则服务会拒绝打开真实写链路并返回 503，防止误写未知寄存器。现场核对 `docs/10_RH56F2驱动笔记_待核对.md` 后才允许打开这个开关。Panthera-HT 仍通过 `arm_backend_vendor.py` 接入，SDK 未安装或动作映射未填时会诚实返回失败。
+双手的真实后端是 `rh56f2_driver.py`（**EB 90 协议**，2026-10-24 整合时从 Modbus 版换过来：这只 RH56F2 实测只回 EB 90、Modbus 完全不回，见 §10.13 和 `docs/RH56F2_实测.md`）。真实写入只认 `rh56_register_map.VERIFIED`：F2 的角度设置地址确认前保持 False，执行端对动作回 503，只读探测照常。`PROVISIONAL`（= not VERIFIED）和 `RH56_REGMAP_CONFIRMED` 仍保留给 `tools/hardware_preflight` 报告用。Panthera-HT 仍通过 `arm_backend_vendor.py` 接入（`ARM_BACKEND=vendor_sdk`），SDK 未安装或动作映射未填时会诚实返回失败。
 
 无论是真手还是 mock，`POST /pose` 都应快速回执；动作执行不能阻塞 HTTP 请求。做不了的动作返回错误，在 JSON 的 `error` 里写原因，总线原样显示；`GET /status` 保持可用，总线靠它探测在线。
 
-双手真机环境安装 `pip install -r code/requirements-hardware.txt`。默认仍是安全的 mock：`MOCK_SERIAL=1`。切到 RH56F2 真手前，先按 `docs/10_RH56F2驱动笔记_待核对.md` 核对目标、速度、状态和控制四类寄存器，更新 `rh56_register_map.py` 并把 `PROVISIONAL=False`，再配置 `MOCK_SERIAL=0 RH56_REGMAP_CONFIRMED=1` 以及 `HAND1_PORT/HAND2_PORT`；只接通串口或只安装 pyserial 不代表动作已经验证。Panthera 相关资料见 `docs/22_真实控制资料卡.md`，SDK 到手前保持 `ARM_BACKEND=mock` 或让 Panthera 动作明确失败。
+双手真机环境安装 `pip install -r code/requirements-hardware.txt`。默认仍是安全的 mock：`MOCK_SERIAL=1`。上真手的步骤见 §10.13（先只读 `--probe`，F2 地址确认后再改 `VERIFIED`）；只接通串口或只安装 pyserial 不代表动作已经验证。Panthera 相关资料见 `docs/22_真实控制资料卡.md`，SDK 到手前保持 `ARM_BACKEND=mock` 或让 Panthera 动作明确失败。
 
-上真机前可以先运行只读检查：`cd code && python -m tools.hardware_preflight --arm-url http://127.0.0.1:8013`。它只扫描可见串口并读取执行端 `/status`，不会发姿态或写 Modbus；现场要强制检查 real 条件时加 `--mode real --hand1-port <COMx> --hand2-port <COMx> --require-real`。寄存器表仍标记为占位时，该命令会明确阻塞 real 模式。
+上真机前可以先运行只读检查：`cd code && python -m tools.hardware_preflight --arm-url http://127.0.0.1:8013`。它只扫描可见串口并读取执行端 `/status`，不会发姿态或写寄存器；现场要强制检查 real 条件时加 `--mode real --hand1-port <COMx> --hand2-port <COMx> --require-real`。寄存器表仍标记为占位时，该命令会明确阻塞 real 模式。
 
 按优先级接续现场工作见 `docs/25_现场执行清单_优先级.md`；其中包含真手低风险顺序、Panthera SDK 四项资料、手机跌倒三连验收和可直接填写的现场回执。
 
@@ -289,6 +292,7 @@ CareMate 联调自检 · http://127.0.0.1:8000
 | 床头盒 | 3 秒内有心跳 | ⚠️（兜底：操作台绿键） |
 | LLM | 模式、最近一次错误 | ⚠️（会自动回落 scripted） |
 | 状态机、演示参数 | 不在空闲；参数和默认值不同 | ⚠️（彩排时改了忘了改回来） |
+| 时区 | 本机 UTC 偏移和 expected_utc_offset（默认 +8）比 | ⚠️（X5 设 Asia/Shanghai；夜间段用操作台开关） |
 
 - 没有 ❌ 退出码 0，有 ❌ 为 1，连不上主脑为 2，可以写进开机脚本。数据来自 `GET /api/nodes`，自检本身不触发任何动作。
 - 语音工具订阅事件时带上 `client=脚本名`（`voice/bus_client.py` 改了一行），自检靠它认出喇叭、麦克风那头；没更新的旧版显示为"未标名"。
@@ -301,6 +305,48 @@ CareMate 联调自检 · http://127.0.0.1:8000
 | X5-B | 主脑 :8000 + 三块屏 + `tts_player` / `asr_bridge` + 执行端 `arm_service` :8013 | 显示器、喇叭、麦克风、USB-RS485（双手） |
 
 执行端和主脑放同一块：保命链"主脑 → 执行端"走本机回环，不经过 Wi-Fi，`arm_url` 用默认的 `http://127.0.0.1:8013`。视觉跨板走 Wi-Fi/网线，断了还有操作台"触发摔倒"兜底。
+
+### 10.11 软件急停（§5.2 的软件一侧）
+
+物理急停按钮归硬件同学，一按断电；软件急停是它的补充：演示员在操作台按 `Esc` 或点“🛑 急停”，**臂和双手立刻不再接收任何动作**。
+
+- 总线：`POST /api/estop {"on": true}`。队列里没发出去的动作全部丢弃（不补做），并尽力通知执行端 `POST :8013/stop`。
+- **保命链照常走软件通道**：急停中摔倒，照样询问 → SOS → 通知家属，只是臂不按 SOS 键，操作台日志出红色“急停中，保命动作未执行”。
+- 用到臂的技能（递药、手指操、猜拳）被资源锁挂起，老人听到“机械臂先停一停……”；进行中的手指操、猜拳当场中止。
+- **重置演示不解除急停**；解除只能点“解除急停”并确认现场安全（键盘不给解除，防误触）。解除后不补做急停期间的动作。
+- 自检（`tools/preflight`）在急停未解除时报 ❌；大屏“床边执行端”变灰、显示“急停中”。
+- **和硬件同学的约定**：真执行端实现 `POST /stop`：立刻停止当前运动、保持姿态，回 200；之后的 `/pose` 照常接收（总线在急停期间不会发）。
+
+### 10.12 时区自检
+
+夜间模式和健康日报的“今天”按**本机时区**算。X5 装好 Ubuntu 默认 UTC，比北京时间慢 8 小时，晚上 8 点它以为是中午。自检会比对本机 UTC 偏移和 `expected_utc_offset`（默认 +8），不一致报 ⚠️：X5 上 `sudo timedatectl set-timezone Asia/Shanghai` 后重启主脑；演示的夜间段本来就用操作台开关，不依赖钟点。回归测试的假时钟也改成按本机时区取“上午 10 点”，在任何时区的机器上都能跑过。
+
+**演示机一律默认日间**：笔记本 `code/config.local.json` 写 `{"night_override": "off"}`，X5 在 `deploy/x5.env` 里 `export CAREMATE_NIGHT_OVERRIDE=off`（模板已带）。夜里那段由操作台“夜间模式”开关或 `demo_driver` 打开，重置后回到日间。`demo_driver` 的早上 / 中午两段也会先强制日间。
+
+### 10.13 执行端接真手（RH56F2，按因时官方手册 V1.09）
+
+驱动按《因时机器人仿人五指灵巧手--RH56用户手册V1.09cn》§2.2 的 **EB 90 自有协议**重写（kit 里的 Modbus 版地址全是占位、和手册对不上）。**执行端接口没变**（`POST /pose?name=&hand=`、`/stop`、`/status`），主脑一行没改。
+**不要**用 kit 里的 `arm_service.py` / `START_HAND.bat` / `GO_HAND.ps1`：接口是 `/pose/<名字>` 一套（主脑发的动作全 404），而且一找到 COM 口就往占位地址 `0x0100` 写动作。这只手**不需要烧录**，出厂自带固件。
+
+| 文件 | 干什么 |
+|---|---|
+| `hand_controller/rh56f2_driver.py` | EB 90 协议：读 `EB 90 ID 04 11 地址低 地址高 字节数 校验`，写 `EB 90 ID 字节数+3 12 地址低 地址高 数据 校验`，校验 = 去掉包头后累加和低 8 位。回包逐项校验（包头 `90 EB`、ID、命令、地址、长度、校验和）；兼容会回显的 USB-RS485 转换器；两只手可共用一个口；串口断了自动重开。帧格式和手册 4 个原文例子逐字节一致（测试盯着） |
+| `hand_controller/rh56_register_map.py` | 手册地址：`ANGLE_SET` 1486、`FORCE_SET` 1498（g）、`SPEED_SET` 1522、`ANGLE_ACT` 1546、`FORCE_ACT` 1582、`ERROR` 1606、`STATUS` 1612、`TEMP` 1618。关节顺序 **小拇指、无名指、中指、食指、拇指弯曲、拇指旋转**；角度 1000 = 张开、0 = 握紧、-1 = 不动。**只许写角度 / 力度 / 速度**，改 ID、波特率、`SAVE`（写 FLASH）、`RESET_PARA`（恢复出厂）一律拒绝。`VERIFIED = False` 时真机只读 |
+| `hand_controller/poses.py` | `JOINTS`：仓库每个动作名 → 六个关节开合度（0 握紧 / 100 张开，驱动 ×10 成角度）；`RHYTHMS`：轻握安抚的一握一松节拍 |
+| `hand_controller/arm_service.py` | 收到就回 200，每只手一个线程；新动作或 `/stop` 立刻打断节拍、急停前排着的作废；真手 `/stop` 还会把角度设置值写 -1（手册：手指停在当前位置） |
+
+环境变量：`MOCK_SERIAL=0` 才碰串口（默认 mock）；`HAND1_PORT`/`HAND1_ID`、`HAND2_PORT`/`HAND2_ID`。**手出厂 ID 都是 1**：两只手各接各的串口时设 `HAND2_ID=1`；要接同一条总线，先用官方上位机把手#2 改成 2（程序不写 ID）。真机要 `pip install pyserial`。
+
+**第一次上真手**（Windows 用 `set`，X5 用 `export`）：
+
+1. 看手上型号：`RH56F2-E2…` 是 RS485 版，走这套驱动；`E4…` 是 CAN FD 版，帧格式完全不同（因时《CAN增补协议V0.0.2cn》：1 Mbps、29 位扩展帧，ID 里编手号 / 寄存器地址 / 读写位），要另写。
+2. 插转换器，设备管理器里看 COM 口（本组笔记本上蓝盒是 COM7，COM3~6 是蓝牙）。X5 上是 `/dev/ttyUSB*`，`setup_x5.sh b` 已装 pyserial 并把用户加进 `dialout` 组，**重新登录一次**。
+3. 上 24V 后跑只读探测：`MOCK_SERIAL=0 HAND2_PORT=COM7 HAND2_ID=1 python -m hand_controller.arm_service --probe`。它只发一条读 `ANGLE_ACT` 的指令，读到 6 个 0~100 的开合度 = 线、ID、波特率、协议都对。**读不到先别往下走**。
+4. 读通了再把 `VERIFIED` 改成 `True`；起服务，先发最安全的张开：`POST /pose?name=release&hand=2`，再试 `gentle_hold`、`/stop`。`JOINTS` 里标 `:示教:` 的数对着实物调。
+
+**安全**：轻握节拍最紧只到开合度 50（`GENTLE_MIN_OPEN`，测试盯着），`FORCE_SET` 300 g（手指受力到了就停），最长 60 秒；`/stop` 打断节拍、作废排队、真手写 -1 停住。手册里没有专门的急停寄存器，**拔 24V 是最后一道**。
+
+**实测（2026-10-23，详见 `docs/RH56F2_实测.md`）**：EB 90 协议经蓝盒（COM7）能和手通信（ID 1、115200），但 **F2 的寄存器地址和 V1.09 不一样**——V1.09 的 1486~1617 在 F2 上全是 0xFF，实际角度地址还没找到，所以 `VERIFIED` 仍是 False。**读 4032 及以上的地址会把手卡死**，恢复要 24V 和蓝盒都断电、先插蓝盒再插 24V、等 10 秒。臂（Panthera-HT）的 SDK 还没接，臂的部分只打印。
 
 ### 10.10 回归与合并
 
