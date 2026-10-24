@@ -1,0 +1,34 @@
+{
+  "_说明": "臂的点位与动作序列（硬件维护）。点位 q = 6 个关节角（rad），taught=false 的是占位数，真臂拒绝执行，要在 X5 上用 python -m hand_controller.arm_teach 拖动示教后才算数。禁区和桌面高度按现场床、桌、老人的位置量好再改，改完跑 python tests/run_all.py arm（会把每个动作从 rest 出发整条查一遍）。坐标系：臂底座，x 朝前、y 朝左、z 朝上，单位 m。",
+  "tool_length": {
+    "_说明": "法兰到末端的距离（m）：gripper = Panthera 自带夹爪中心（URDF）；hand1 = 手#1 装在法兰上之后的手心，装好再量",
+    "gripper": 0.166,
+    "hand1": 0.22
+  },
+  "speed": {
+    "_说明": "关节限速（rad/s），SDK 配置上限是 1.0；靠近老人的那几段（点位标 near_person）用更低的限速；每段最短时长 min_seconds",
+    "max_joint_vel": 0.6,
+    "near_person_vel": 0.3,
+    "min_seconds": 1.0
+  },
+  "floor_z": 0.03,
+  "keep_out": [
+    {"name": "老人头面部（示意，现场量）", "min": [0.35, 0.25, 0.0], "max": [0.9, 0.9, 0.8]}
+  ],
+  "points": {
+    "rest": {"q": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "taught": true, "note": "零位 = 收拢姿态；断电、阻尼时最稳，开关机都停在这里"},
+    "above_tray": {"q": [-0.655, 1.075, 0.735, -0.047, -0.045, 0.0], "taught": false, "note": "药盒托盘正上方"},
+    "pick_med": {"q": [-0.111, 1.883, 1.081, -0.565, 1.318, 0.0], "taught": false, "note": "夹住药盒的位置"},
+    "handover": {"q": [-0.044, 1.427, 1.051, 0.012, -0.376, 0.0], "taught": false, "near_person": true, "note": "递到老人手边，别伸到脸前"},
+    "above_sos": {"q": [0.036, 1.633, 1.217, -0.901, -1.092, 0.0], "taught": false, "note": "SOS 键正上方约 8 cm"},
+    "sos_press": {"q": [0.105, 1.642, 0.995, -0.587, -0.887, 0.0], "taught": false, "torque_scale": 0.3, "note": "按下去的位置：示教到刚好按响，按压只用 30% 力矩"},
+    "show_sign": {"q": [0.489, 0.463, 0.829, 0.017, 0.569, 0.0], "taught": false, "near_person": true, "note": "举牌给老人和观众看"}
+  },
+  "skills": {
+    "_说明": "动作名和 poses.POSES 一致。步骤：[move, 点位]、[grip, open|close|relax]、[wait, 秒]。grip 在夹爪上就是开合；在手#1 上 close = poses.JOINTS[本动作名]，open = release，relax = home",
+    "home": [["grip", "relax"], ["move", "rest"]],
+    "deliver_medicine": [["grip", "open"], ["move", "above_tray"], ["move", "pick_med"], ["grip", "close"], ["wait", 0.8], ["move", "above_tray"], ["move", "handover"], ["wait", 3.0], ["grip", "open"], ["wait", 1.0], ["move", "rest"]],
+    "press_sos": [["grip", "close"], ["wait", 0.5], ["move", "above_sos"], ["move", "sos_press"], ["wait", 0.6], ["move", "above_sos"], ["move", "rest"]],
+    "sign_family_received": [["grip", "close"], ["wait", 0.5], ["move", "show_sign"]]
+  }
+}

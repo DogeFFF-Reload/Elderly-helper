@@ -245,9 +245,9 @@ python -m demo_driver --local           # 不连服务，假时钟几秒跑完
 - **断链保护（§5.2 的总线一侧）**：排队超过 `arm_stale`（5 秒）还没发出去的动作直接丢，链路恢复时臂不会补做一串过期动作。**不重发**：超时的请求可能已经到了执行端，重发 press_sos 等于按两下。
 - `arm_timeout`（1.5 秒）、`arm_stale` 是配置项，也能经 `/api/params` 现场调。
 
-**和硬件同学的约定**：全队只运行仓库里的 `code/hand_controller/arm_service.py`，不要把 kit 自带的第二份服务放到 8013。主脑使用 `POST /pose?name=<规范动作>&hand=<1|2>`；为了让 kit 的验收命令也能打到同一个服务，执行端还兼容 `/pose/<动作>`、`/press_sos`、`/handover_med`、`/reset`，并把 `rock`、`comfort_rhythm`、`thumbs_up`、`handover_med` 映射到仓库规范动作。
+**和硬件同学的约定**：全队只运行仓库里的 `code/hand_controller/arm_service.py`，不要把 kit 自带的第二份服务放到 8013。主脑使用 `POST /pose?name=<规范动作>&hand=<1|2>`；为了让 kit 的验收命令也能打到同一个服务，执行端还兼容 `/pose/<动作>`、`/press_sos`、`/handover_med`、`/reset`，并把 `rock`、`comfort_rhythm`、`hold_card`、`handover_med` 等映射到仓库规范动作（对照表见 §10.14）。
 
-双手的真实后端是 `rh56f2_driver.py`（**EB 90 协议**，2026-10-24 整合时从 Modbus 版换过来：这只 RH56F2 实测只回 EB 90、Modbus 完全不回，见 §10.13 和 `docs/RH56F2_实测.md`）。真实写入只认 `rh56_register_map.VERIFIED`：F2 的角度设置地址确认前保持 False，执行端对动作回 503，只读探测照常。`PROVISIONAL`（= not VERIFIED）和 `RH56_REGMAP_CONFIRMED` 仍保留给 `tools/hardware_preflight` 报告用。Panthera-HT 仍通过 `arm_backend_vendor.py` 接入（`ARM_BACKEND=vendor_sdk`），SDK 未安装或动作映射未填时会诚实返回失败。
+双手的真实后端是 `rh56f2_driver.py`（**EB 90 协议**，2026-10-24 整合时从 Modbus 版换过来：这只 RH56F2 实测只回 EB 90、Modbus 完全不回，见 §10.13 和 `docs/RH56F2_实测.md`）。真实写入只认 `rh56_register_map.VERIFIED`：F2 的角度设置地址确认前保持 False，执行端对动作回 503，只读探测照常。`PROVISIONAL`（= not VERIFIED）和 `RH56_REGMAP_CONFIRMED` 仍保留给 `tools/hardware_preflight` 报告用。Panthera-HT 由 `arm_backend.py` 接入（`ARM_BACKEND=panthera`，见 §10.14）；SDK 连不上或点位没示教时臂的动作回 503 / 422，不伪装成功。
 
 无论是真手还是 mock，`POST /pose` 都应快速回执；动作执行不能阻塞 HTTP 请求。做不了的动作返回错误，在 JSON 的 `error` 里写原因，总线原样显示；`GET /status` 保持可用，总线靠它探测在线。
 
@@ -346,7 +346,61 @@ CareMate 联调自检 · http://127.0.0.1:8000
 
 **安全**：轻握节拍最紧只到开合度 50（`GENTLE_MIN_OPEN`，测试盯着），`FORCE_SET` 300 g（手指受力到了就停），最长 60 秒；`/stop` 打断节拍、作废排队、真手写 -1 停住。手册里没有专门的急停寄存器，**拔 24V 是最后一道**。
 
-**实测（2026-10-23，详见 `docs/RH56F2_实测.md`）**：EB 90 协议经蓝盒（COM7）能和手通信（ID 1、115200），但 **F2 的寄存器地址和 V1.09 不一样**——V1.09 的 1486~1617 在 F2 上全是 0xFF，实际角度地址还没找到，所以 `VERIFIED` 仍是 False。**读 4032 及以上的地址会把手卡死**，恢复要 24V 和蓝盒都断电、先插蓝盒再插 24V、等 10 秒。臂（Panthera-HT）的 SDK 还没接，臂的部分只打印。
+**实测（2026-10-23，详见 `docs/RH56F2_实测.md`）**：EB 90 协议经蓝盒（COM7）能和手通信（ID 1、115200），但 **F2 的寄存器地址和 V1.09 不一样**——V1.09 的 1486~1617 在 F2 上全是 0xFF，实际角度地址还没找到，所以 `VERIFIED` 仍是 False。**读 4032 及以上的地址会把手卡死**，恢复要 24V 和蓝盒都断电、先插蓝盒再插 24V、等 10 秒。臂（Panthera-HT）见 §10.14。
+
+### 10.14 执行端接机械臂（Panthera-HT）
+
+**和主脑的接口没变**（`POST /pose?name=&hand=`、`/stop`、`/status`），主脑一行没改。`hand=1` 的 `home`、`deliver_medicine`、`press_sos`、`sign_family_received` 走臂，其余动作照旧走手。笔记本上默认 mock，`ARM_BACKEND=panthera` 才连真臂。
+
+| 文件 | 干什么 |
+|---|---|
+| `hand_controller/arm_backend.py` | `MockArm`（笔记本、回归）和 `PantheraArm`（X5，调 SDK 的 `moveJ` 非阻塞 + 轮询到位、`Joint_Pos_Vel` 停住保持、`set_brake` 阻尼、夹爪开合）。接口一样，服务不分真假 |
+| `hand_controller/arm_kinematics.py` | 纯 Python 正运动学，关节链抄自 SDK 的 URDF V1.1.0。2026-10-24 在 X5 上用 `--check-fk` 和 SDK 的 pinocchio 对过 200 组关节角，误差 0 |
+| `hand_controller/arm_safety.py` | 关节限位（和 X5 的 `Follower.yaml` 一字不差，**不许放宽**）、限速、禁区、桌面高度 |
+| `hand_controller/arm_skills.json` | 点位（6 个关节角）+ 每个动作的步骤 + 禁区 + 限速。`taught: false` 的是占位数，真臂拒绝执行 |
+| `hand_controller/arm_teach.py` | 拖动示教：重力补偿下用手摆臂，敲点位名记进 `arm_skills.json`（只改那一行） |
+| `hand_controller/arm_service.py` | 臂一个线程，一次做一个动作；排队规则见下 |
+
+**安全（`test_arm_motion` 盯着）**
+
+- 每个动作收下前，从"它开始时臂会在的位置"整条预检：终点限位，沿路每 0.05 rad 查一次**肘、腕、法兰、末端**进没进禁区、低没低于桌面；真臂还要求点位示教过。不过回 422 / 503，原因原样显示在操作台。执行时每一段再按臂的实际位置查一遍（臂可能被打断过、被推过）。
+- 限速：关节最快 0.6 rad/s（SDK 上限 1.0）；点位标了 `near_person`（递药、举牌）的那段 0.3 rad/s；刚开机或被打断后的第一段也按 0.3 走（不知道臂在哪）。
+- 按 SOS 那一下只用 30% 力矩（`sos_press` 的 `torque_scale`），示教不会把它冲掉。
+- `/stop`：臂当场停住保持，排着的作废、之后不补做。退出（Ctrl+C、systemd stop）：先慢速回 rest 再转阻尼（阻尼挡不住重力，抬着的 J2/J3 会往下沉）；回 rest 的路不安全就不动；回的路上再按一次 Ctrl+C 立刻停住。
+- 到位：先按 4.6° 判；时间到了臂已经停稳、差得不超过 8.6° 也算到（位置模式没有重力前馈，带载关节会下垂，实测 J3 抬 15° 差 2.5°），每个关节差多少记在 `/status` 的 `settle` 和窗口日志里；差得更多 = 被挡住，停住保持。要彻底去掉下垂得改成 MIT 模式 + `get_Gravity()` 前馈，还没做。
+- 只发位置类指令（`moveJ` / `Joint_Pos_Vel`），不用 `Joint_Vel`：X5 上 `motor_timeout_ms` 必须是 0（固件超时后电机卡在 mode 11，只能断电恢复），X5 一崩，电机会一直执行最后一条指令，位置指令就是停在原地保持。
+- SDK 那几层（关节限位、电机层越界锁定、单实例锁、退出时阻尼）照旧在下面兜着；电机层锁定后服务回 503，推回范围后重启。
+
+**排队规则**：同一个动作正在做或排着回 409；保命动作（`poses.SAFETY`，和主脑的 `SAFETY_POSES` 一致）来了，正在做的递药、回家当场停住，排着的普通动作作废；`press_sos` 后面紧跟的 `sign_family_received` 排着依次做；最多排 2 个。末端是手#1 时，臂忙着手#1 不接别的手势（409）。
+
+**末端**：`ARM_EFFECTOR=gripper | hand1`，不设就看 SDK 配置：装了夹爪用夹爪，否则手#1。步骤里的 `grip close` 在夹爪上就是合上，在手#1 上是 `poses.JOINTS[动作名]`（递药握药盒、按键半握拳、举牌捏牌）。手#1 的协议还没在真手上验证过，夹爪就是递药和按 SOS 的 Plan B。
+
+**caremate_hand2_kit 的写法**（只做映射，kit 里的 `arm_service.py` 不要再起）：
+
+| kit | 仓库 |
+|---|---|
+| `POST /pose/comfort_rhythm` | `gentle_hold`，默认手#2 |
+| `/pose/thumbs_up?hand=2`、`/pose/rock`、`/pose/fingers_3`、`/pose/hold_card?hand=2` | `thumbs_up`、`rps_rock`、`finger_count_3`、`sign_coming` |
+| `POST /press_sos`、`/handover_med`、`/reset`、`/thumbs` | `press_sos`、`deliver_medicine`、`home`、`thumbs_up` |
+| `POST /card_up`、`/wave`；`/pose/wave`、`ok`、`nod_like`、`clench_open`、`count_five` | `sign_coming`（手#2）、`wave`；其余同名（`poses.SEQUENCES` / `JOINTS` 里的 kit 词表） |
+
+`/pose/<名字>` 在 kit 里只动手，所以映射完会动臂的一律拒绝（400）；`thumbs_up` 就是点赞手势，不映射成会动臂的举牌。未知名字按 kit 的约定回 200 `{"ok": false}`（主脑的 `/pose?name=` 仍回 400）。`/handover_item` 仓库里没有。
+
+**上真臂**（X5-B，`ssh rdk-x5`，先同步时钟、`source ~/panthera_venv/bin/activate`，仓库在 `code/` 下）：
+
+1. 正解自检（不碰电机）：`python -m hand_controller.arm_backend --check-fk`，要看到"一致"。
+2. 量现场：床、药盒托盘、SOS 键、老人头的位置，改 `arm_skills.json` 的 `keep_out`、`floor_z`；末端是手#1 的话量 `tool_length.hand1`。
+3. 示教（两人：一人扶臂，一人敲键盘，手边是物理急停）：先停 `arm_service`，`python -m hand_controller.arm_teach`，依次记 `above_tray`、`pick_med`、`handover`、`above_sos`、`sos_press`、`show_sign`。拷回笔记本提交，跑 `python tests/run_all.py arm`：哪个动作从 rest 出发会扫进禁区、扫到桌面，这一步就报出来。
+4. 起服务：`ARM_BACKEND=panthera ARM_EFFECTOR=gripper python -m hand_controller.arm_service --host 0.0.0.0`（末端 2026-10-24 定为夹爪；`panthera_venv` 里已有 `pyserial`，接真手也能用）。开机打印"臂：panthera，末端 …，可以动"，没示教的点位会列出来。
+5. 先 `--probe` 只读一次关节角（2026-10-24 夜里在真臂上跑过：7 个电机全在线，含夹爪）。还没示教时先跑**自检**（一人守急停）：`ARM_SKILLS_FILE=hand_controller/arm_selftest.json` 起服务（动作名一样、点位都是离 rest 很近的小角度：抬 20°、左右转 15°），再跑 `python -m hand_controller.arm_selftest --server http://192.168.127.10:8013`：回 rest → 抬起停住 → 左转到一半发 `/stop` 看停住保持 → 从半路回 rest → 夹爪开合的递药流程，每步动之前等回车，最后汇总各关节到位偏差；然后在服务窗口 Ctrl+C，看退出时回 rest。验的是执行端这条路，不是演示动作。
+6. 示教完换回正式文件，从最稳的开始：`home` → `press_sos` → `sign_family_received` → `deliver_medicine`，每次有人守急停。
+
+**还没做 / 没验证的**
+
+- 真臂上一次都没动过：`hold()` 用"目标 = 当前位置、0.2 rad/s"刹住、`moveJ(iswait=False)` 加 `check_position_reached` 轮询，是照 SDK 源码写的，第一次上电要低速确认。
+- `deploy/start.sh arm` 还是用仓库 `.venv` 起，没有 SDK，`x5.env` 的变量也没 export：真臂先按第 4 步手动起；改 `deploy/` 归演示。
+- 禁区是示意值；`tool_length.hand1`（0.22 m）是估的。末端先用夹爪（2026-10-24 定），手#1 真手验证通过后再考虑换。
+- 物理急停按钮还没接。
 
 ### 10.10 回归与合并
 

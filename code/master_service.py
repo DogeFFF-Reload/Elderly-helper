@@ -170,16 +170,20 @@ class ArmClient:
             return
         self.mock = bool(st.get("mock"))
         # 执行端收到就回 200、动作在后台做：做到一半失败（串口断了、臂后端报错）只能从这里知道
-        for hand, h in (st.get("hands") or {}).items():
+        # 臂的动作都是 hand=1 发的，臂线程的失败按手#1 报
+        workers = [(key, int(key), h) for key, h in (st.get("hands") or {}).items()]
+        if isinstance(st.get("arm"), dict):
+            workers.append(("arm", 1, st["arm"]))
+        for key, hand, h in workers:
             seq = h.get("fail_seq") if isinstance(h, dict) else None
             if not isinstance(seq, int):
                 continue
-            seen = self._fail_seen.get(hand)
-            self._fail_seen[hand] = seq
+            seen = self._fail_seen.get(key)
+            self._fail_seen[key] = seq
             if seen is not None and seq > seen and h.get("fail_pose") and self.on_result:
                 self.counts["failed"] += 1
                 self.last_error = h.get("last_error")
-                _safe_call(self.on_result, h["fail_pose"], int(hand), False, "failed", h.get("last_error") or "")
+                _safe_call(self.on_result, h["fail_pose"], hand, False, "failed", h.get("last_error") or "")
 
     def status(self):
         ago = None if self.last_ok is None else round(self.clock() - self.last_ok, 1)
