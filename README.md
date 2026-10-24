@@ -14,7 +14,7 @@
 
 ```powershell
 cd code
-python tests/run_all.py                  # 回归，必须 ALL PASS（当前 19 套 167 条）
+python tests/run_all.py                  # 回归，必须 ALL PASS（当前 24 套 225 条）
 python -m master_service                 # 主脑 :8000（含三块屏）
 python -m demo_driver --pause            # 按 §3 主线一段一段走演示（另开终端，见 §10）
 python -m hand_controller.arm_service    # 臂+双手 mock :8013（另开终端，可不开）
@@ -452,7 +452,72 @@ bash deploy/start.sh vision                  # 手动起单个服务调试：vis
 pip install -r code/requirements-phonecam.txt
 cd code
 python -m camera.phone_fall_watch --phone http://<手机IP>:8080 --arm 0
-python -m camera.phone_fall_watch --phone http://<手机IP>:8080 --master http://127.0.0.1:8000 --thresh 38 --cooldown 30 --arm 1 --room 客厅
 ```
 
 `--arm 0` 用于现场校准，`--arm 1` 才会真正上报；`--conn` 控制连续超阈值帧数。手机和主脑必须处于同一网络，手机应保持插电并关闭省电策略。X5 部署可在 `deploy/x5.env` 设置 `PHONE_URL` 和 `PHONE_ARGS`，然后运行 `bash deploy/start.sh phone`；执行 `bash deploy/install_services.sh a` 时若已配置 `PHONE_URL`，会在 X5-A 上安装手机哨兵 systemd 服务。完整交接步骤见 `docs/21_交接_手机摄像头组.md`。
+
+**iPhone / IP Camera Lite**：若 App 首页返回 `Content-Type: multipart/x-mixed-replace`，使用 `--stream-url` 指定这个完整地址，不能附加安卓的 `/shot.jpg`。摄像头连接直接访问手机，不使用系统/环境代理；`.local` 主机名按系统解析，可使用 IPv6。需要登录时传 `--username` / `--password`，也可用 `PHONE_USERNAME` / `PHONE_PASSWORD` 环境变量。账号密码不要写入网址或提交到仓库。
+
+```powershell
+# 在仓库根目录执行；地址替换成 App 实际显示、已测试可连接的地址。
+# admin/admin 仅适用于未修改默认账号密码的 App。
+python code/camera/phone_fall_watch.py --stream-url http://<手机主机名>.local:8081/ --username admin --password admin --arm 0 --frames 10
+```
+
+看到 `[CAMERA] 已收到并解码第一帧画面` 和 `[M] e=...` 表示 Python 已在读取画面；`--frames 10` 会在观察 10 帧后退出，按 Ctrl+C 也可退出。`--arm 0` 不向主脑上报事件，无需先启动主脑或手服务。持续观察时去掉 `--frames 10`。当前保底算法用连续变化能量触发，纵向重心只作日志输出；普通大幅运动也可能触发，仍需现场测量误报/漏报。注意当前能量缩放的理论范围是 0–21.25，旧交接材料中的 `--thresh 38` 不适用于当前实现；先观察实际数值，再标定阈值。
+
+### 12.1 一次启动，自动采集三轮日常动作
+
+适用于已经通过上面的观察命令连通手机后，收集正常活动数据。**手机固定，人做动作**；后置超广角可以使用，需让全身和稳固椅子都在画面中。同一包内保持镜头、摆放位置和光照一致。先关掉正在运行的 `phone_fall_watch.py`（Ctrl+C），保持手机摄像头 App 在前台，然后在 Windows PowerShell 运行：
+
+```powershell
+# 地址使用 App 显示且已经连通的完整 MJPEG 地址；默认账号未改时才是 admin/admin。
+python code/camera/phone_calibrate.py --stream-url http://<手机主机名>.local:8081/ --username admin --password admin --open-output
+```
+
+提示音从**电脑当前的声音输出设备**播放。程序先试音：到做动作的位置确认能听清，再回电脑按一次回车，才会连接手机并开始正式采集。每段先给 **10 秒准备**，听到“开始”再做动作，听到“这一段结束”即可休息；正式采集过程中不需要回电脑按键。每轮顺序固定，自动重复 **3 轮**：
+
+| 顺序 | 动作 | 每轮采样时长 |
+|---|---|---|
+| 1 | 全身入镜，自然站立不动 | 20 秒 |
+| 2 | 在画面内正常来回走动 | 20 秒 |
+| 3 | 用稳固椅子缓慢坐下再站起，按舒适节奏重复 | 20 秒 |
+
+9 段采样共 3 分钟，准备共 1.5 分钟，加语音约 **6–8 分钟**。不需要实际摔倒或做危险动作。程序能检查语音调用是否成功，但不能判断你是否听清。听不清时在确认步骤按 Ctrl+C，摄像头不会启动，也不会产生一包看似完成的采集数据。语音组件不可用会结束并报告错误；也可让同伴看电脑报时，使用 `--no-voice`。
+
+可以先单独试音，不需要摄像头地址，也不连接手机：
+
+```powershell
+python code/camera/phone_calibrate.py --sound-check
+```
+
+语音离线合成为内存音频后再放大播放；合成音量明确设置为 100，`--voice-gain` 默认 3，范围 1–8，响亮部分做软限幅以免数值溢出。较小声时可试 `--sound-check --voice-gain 6`；正式采集时使用同样的 `--voice-gain 6` 参数。它只调整本程序音频，不修改 Windows 总音量或混音器。若电脑最大音量仍不够，请给电脑连接耳机或音箱，或让同伴看屏幕报时，确认听清后再采集。
+
+结束后自动打开结果文件夹（`--open-output`），把新生成的 ZIP 发回分析即可。默认路径是 `code/data/phone_calibration/日期时间_随机码.zip`（不入 Git），旁边目录留有原文件：
+
+| 文件 | 内容 |
+|---|---|
+| `samples.csv` | 每次采样的接收时间、轮次、计划动作、源帧序号、间隔、动作能量和变化纵向位置；每段第一条是基准，能量留空 |
+| `summary.json` | 各段样本数、间隔检查、能量平均值/中位数/95百分位/最大值及完整状态 |
+| `events.jsonl` | 开始、准备、结束和错误等阶段时间线 |
+| `结果说明.txt` | 状态、各段摘要、使用限制和需要自行确认的事项 |
+
+只保存数值，不保存照片/视频、摄像头地址或账号密码。程序始终只收画面，不发报警、不访问主脑或机械手，不需要开启这些服务。CSV 保存每次实际采样，不是手机的每一帧视频；默认间隔 0.5 秒。接收时间来自电脑，不能当作手机拍摄时间或端到端延迟。
+
+Ctrl+C 会保存部分数据。断线、画面停更、解码失败会结束并标为 `error`，Ctrl+C 为 `interrupted`；样本数不足或间隔过大为 `insufficient`。只有全部阶段采集完毕且通过采样检查才为 `complete`。这些状态只描述采集过程：标签由定时计划给出，程序不能核实是否有人、全身是否入镜、动作是否做对，或手机是否被移动。做错动作、没听清提示、碰动手机时重新采集；变更机位/镜头/光照后也重新采集。
+
+本包全部是正常活动样本，只用于检查连接、正常动作的数值分布和误报风险，**不能据此证明能识别跌倒、测漏报率或自动选出可靠的跌倒阈值**。完成三轮后先分析这包数据，发现具体问题再安排针对性补测。
+
+### 12.2 离线复核采集结果
+
+`camera/phone_calibration_report.py` 只读取已保存的 CSV、摘要、阶段日志和旁边的 ZIP，核对源帧序号、时间、基准样本、逐段统计和文件一致性；不连接摄像头、主脑或机械手，不播放声音。示例（轮次必须按现场实际情况填写）：
+
+```powershell
+python code/camera/phone_calibration_report.py "code/data/phone_calibration/批次目录" --fixed-rounds 3 --moving-rounds 1 2 --output "code/data/phone_analysis/批次目录/analysis.json"
+```
+
+`--fixed-rounds` 和 `--moving-rounds` 是操作人员陈述，程序不能根据能量自动判断手机是否移动。未指定的轮次记为未确认。移动过手机的轮次排除固定机位基准，保留作干扰分析；标签仍是计划动作。用固定机位数据离线试算阈值时只模拟事件，不实际发送报警，也不把这批正常动作样本当成跌倒验证。
+
+测试前先固定机位、确认全身和走动路线能入镜；测试中人只在画面内活动，不挪动手机去追拍。机位和镜头与已有有效轮次一致时可用 `--rounds 2` 补两轮；重新摆放机位或换镜头后，按新场景重新采集和分析。
+
+阶段结束前剩余时间不足 `--frame-timeout` 时，等待最后一帧到期只代表阶段到时；程序仍检查源错误、画面新鲜度和本段采样质量。不会因阶段到时本身误报连接失败，也不会隐藏真实连接错误。
