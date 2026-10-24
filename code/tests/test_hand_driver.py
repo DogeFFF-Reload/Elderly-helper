@@ -395,7 +395,14 @@ class DriverTest(unittest.TestCase):
 
 class PoseTableTest(unittest.TestCase):
     def test_every_pose_has_joints_or_rhythm(self):
+        from hand_controller.arm_safety import skill_names
+        arm_only = {"arm_warmup", "arm_showcase", "gripper_cycle"}
         for name in poses.POSES:
+            if name in arm_only:
+                import os
+                path = os.path.join(os.path.dirname(poses.__file__), "arm_showcase.json")
+                self.assertIn(name, skill_names(path))
+                continue
             self.assertTrue(name in poses.JOINTS or name in poses.RHYTHMS or name in poses.SEQUENCES,
                             "动作 %s 不在 JOINTS / RHYTHMS / SEQUENCES 里" % name)
 

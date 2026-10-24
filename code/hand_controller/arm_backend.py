@@ -53,6 +53,7 @@ class MockArm:
 
     name = "mock"
     mock = True
+    vel_limit = 1.0     # 和 Follower.yaml 的 velocity_limits 一样（rad/s）
 
     def __init__(self, time_scale=None, has_gripper=False, q=None):
         if time_scale is None:
@@ -60,6 +61,7 @@ class MockArm:
         self.time_scale = time_scale
         self.has_gripper = has_gripper
         self.q = list(q or REST)
+        self.last_command = None
         self.moves = []     # (目标, 时长, torque_scale, 是否走完)
         self.last_errors = [0.0] * 6
         self.grips = []     # True = 合上
@@ -77,9 +79,18 @@ class MockArm:
         return True, ""
 
     def joints(self):
+        cmd = getattr(self, "_cmd", None)
+        if cmd:   # 跟随模式的一帧还在走：按时间插值（time_scale = 0 时 command 直接到位，不会走到这里）
+            start, goal, t0, total = cmd
+            frac = min(1.0, (time.monotonic() - t0) / total) if total > 0 else 1.0
+            self.q = [a + (b - a) * frac for a, b in zip(start, goal)]
+            if frac >= 1.0:
+                self._cmd = None
         return list(self.q)
 
     def move(self, q, seconds, abort, torque_scale=1.0):
+        self._cmd = None
+        self.last_command = list(q)
         start, total, t0 = list(self.q), seconds * self.time_scale, time.monotonic()
         while True:
             frac = 1.0 if total <= 0 else min(1.0, (time.monotonic() - t0) / total)
@@ -93,6 +104,15 @@ class MockArm:
         self.q = list(q)
         self.moves.append((list(q), seconds, torque_scale, True))
         return True
+
+    def command(self, q, seconds, torque_scale=1.0):
+        """跟随模式的一帧：不等走到。time_scale = 0 直接到位；否则从当前位置按时长插值，下一帧随时改目标。"""
+        self.last_command = list(q)
+        if self.time_scale > 0:
+            self._cmd = (self.joints(), list(q), time.monotonic(), seconds * self.time_scale)
+        else:
+            self.q = list(q)
+        self.moves.append((list(q), seconds, torque_scale, True))
 
     def wait(self, seconds, abort):
         """技能里的停顿，和走路一样按 time_scale 缩放；被打断返回 True。"""
@@ -127,11 +147,18 @@ class PantheraArm:
         self.robot = None
         self.error = None
         self.last_errors = None   # 最近一次 move 结束时每个关节离目标多远（rad）
+        self.last_command = None
         self._mu = threading.RLock()
 
     @property
     def has_gripper(self):
         return bool(self.robot is not None and getattr(self.robot, "has_gripper", False))
+
+    @property
+    def vel_limit(self):
+        """SDK 的关节速度限幅（rad/s，取最小的一个）；没连上返回 None。"""
+        lim = getattr(self.robot, "velocity_limits", None) if self.robot is not None else None
+        return float(min(lim)) if lim is not None and len(lim) else None
 
     def connect(self):
         with self._mu:
@@ -175,6 +202,7 @@ class PantheraArm:
             accepted = r.moveJ(list(q), seconds, max_tqu=max_tqu, iswait=False)
         if accepted is False:
             raise ArmError("SDK 拒绝了这次 moveJ（多半是关节限位，看 arm_service 窗口里 SDK 打印的警告）")
+        self.last_command = list(q)
         t0 = time.monotonic()
         deadline = t0 + seconds + SETTLE
         errors, still = [0.0], None   # still = (从什么时候起, 那时的偏差)：判断停稳
@@ -198,6 +226,17 @@ class PantheraArm:
         raise ArmError("%.1f 秒还没走到位（最大偏差 %.1f°）：可能被挡住了" % (
             seconds + SETTLE, math.degrees(max(errors))))
 
+    def command(self, q, seconds, torque_scale=1.0):
+        """跟随模式的一帧：moveJ 只发一帧位置 + 每关节速度（各关节同时到），不等走到；下一帧直接改目标。"""
+        r = self.robot
+        with self._mu:
+            if getattr(r, "_hard_limit_tripped", False):
+                raise ArmError("电机层越界锁定，全部电机已阻尼")
+            accepted = r.moveJ(list(q), seconds, max_tqu=[t * torque_scale for t in r.max_torque], iswait=False)
+        if accepted is False:
+            raise ArmError("SDK 拒绝了这次 moveJ（多半是关节限位）")
+        self.last_command = list(q)
+
     def wait(self, seconds, abort):
         return abort.wait(seconds)
 
@@ -219,6 +258,7 @@ class PantheraArm:
                 raise ArmError("当前位置超出关节限位 %.1f°，不能原地保持（看是不是越界锁定了）" % math.degrees(off))
             if self.robot.Joint_Pos_Vel(target, [HOLD_VEL] * len(target)) is False:
                 raise ArmError("SDK 拒绝了停住保持指令")
+            self.last_command = list(target)
 
     def brake(self):
         with self._mu:
@@ -227,6 +267,10 @@ class PantheraArm:
     def status(self):
         st = {"backend": "panthera", "mock": False, "connected": self.robot is not None,
               "has_gripper": self.has_gripper, "error": self.error}
+        if self.has_gripper and hasattr(self.robot, "get_current_pos_gripper"):
+            with self._mu:
+                st["gripper_position"] = float(self.robot.get_current_pos_gripper())
+                st["gripper_torque"] = float(self.robot.get_current_torque_gripper())
         if self.robot is not None and getattr(self.robot, "_hard_limit_tripped", False):
             st["error"] = "电机层越界锁定"
         return st

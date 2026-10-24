@@ -22,10 +22,11 @@
     "turn_r": {"q": [-0.26, 0.35, 0.35, 0.0, 0.0, 0.0], "taught": true, "torque_scale": 0.5, "note": "抬起后 J1 向右 15°；力矩一半（首次动作测试用的 [10,18,18,10,5,5]）"}
   },
   "skills": {
-    "_说明": "home = 回 rest；press_sos = 抬起、左转、停 1 秒、回 rest（用来试 /stop 和保命动作插队）；deliver_medicine = 加上夹爪开合、左右各转一次；sign_family_received = 抬起停住",
+    "_说明": "home = 回 rest；press_sos = 抬起、左转、停 1 秒、回 rest（用来试 /stop 和保命动作插队）；deliver_medicine = 加上夹爪开合、左右各转一次；sign_family_received = 抬起停住；return_medicine = 抬起、张开等 1 秒、合上、右转、回来张开、回 rest",
     "home": [["grip", "relax"], ["move", "rest"]],
     "deliver_medicine": [["grip", "open"], ["move", "lift"], ["grip", "close"], ["wait", 1.0], ["move", "turn_l"], ["move", "turn_r"], ["move", "lift"], ["grip", "open"], ["wait", 1.0], ["move", "rest"]],
     "press_sos": [["move", "lift"], ["move", "turn_l"], ["wait", 1.0], ["move", "rest"]],
-    "sign_family_received": [["move", "lift"]]
+    "sign_family_received": [["move", "lift"]],
+    "return_medicine": [["grip", "open"], ["move", "lift"], ["wait", 1.0], ["grip", "close"], ["move", "turn_r"], ["move", "lift"], ["grip", "open"], ["wait", 1.0], ["move", "rest"]]
   }
 }

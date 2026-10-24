@@ -1,5 +1,6 @@
 """手机摄像头保底哨兵：图像能量和唯一主脑上报入口。"""
 import io
+import itertools
 import base64
 import contextlib
 import json
@@ -197,7 +198,10 @@ class IPhoneStreamTest(unittest.TestCase):
                 "--frames", "6", "--interval", "0.000001", "--arm", "0",
                 "--conn", "1", "--cooldown", "0", "--thresh", "0"]
         output = io.StringIO()
-        with patch.object(sys, "argv", argv), contextlib.redirect_stdout(output), patch.object(watch, "post_fall") as post:
+        # Windows may deliver this entire buffered stream in one clock tick.
+        # Make sampling deterministic so every deliberately alternating frame counts.
+        with patch.object(watch.time, "monotonic", side_effect=itertools.count(0, .01).__next__), \
+             patch.object(sys, "argv", argv), contextlib.redirect_stdout(output), patch.object(watch, "post_fall") as post:
             self.assertEqual(watch.main(), 0)
         post.assert_not_called()
         self.assertIn("[FALL 试机]", output.getvalue())

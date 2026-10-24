@@ -70,8 +70,9 @@ class RH56F2:
         self.lock = None
         self.error = None
         self.last = None                          # 最近一次下发的开合度
-        self.sim_angles = [RM.VALUE_MAX] * 6      # mock 下的"实际角度"：开机张开，move 后跟着变
+        self.sim_angles = [0 if RM.PROFILE == "f2_motion" else RM.VALUE_MAX] * 6
         self.log = collections.deque(maxlen=50)   # 最近的收发帧，排错用
+        self.force_ready = False
 
     # ---------- 串口 ----------
 
@@ -103,6 +104,7 @@ class RH56F2:
             except Exception:  # noqa: BLE001
                 pass
         self.ser = self.lock = None
+        self.force_ready = False
         self.error = why
 
     # ---------- 收发 ----------
@@ -163,7 +165,8 @@ class RH56F2:
                                    zip(struct.unpack("<%dh" % (len(data) // 2), data), self.sim_angles)]
             return
         resp = self._check(self._transact(req, 9), CMD_WRITE, addr, 9)
-        if resp[3] != 0x04 or resp[7] != 0x01:
+        expected_ack = len(data) if RM.PROFILE == "f2_motion" else 1
+        if resp[3] != 0x04 or resp[7] != expected_ack:
             raise HandError("写入没被确认：%s" % resp.hex(" "))
 
     def _sim_read(self, addr, nbytes):
@@ -183,6 +186,8 @@ class RH56F2:
     def to_raw(pct):
         """开合度 0（握紧）~100（张开）→ 角度 0~1000。"""
         pct = max(0.0, min(100.0, float(pct)))
+        if RM.PROFILE == "f2_motion":
+            return min(RM.RAW_TARGET_MAX, int(round((100.0 - pct) * 20)))
         return int(round(RM.VALUE_MIN + (RM.VALUE_MAX - RM.VALUE_MIN) * pct / 100.0))
 
     def move(self, joints, speed=None):
@@ -190,6 +195,8 @@ class RH56F2:
         missing = [j for j in RM.JOINT_ORDER if j not in joints]
         if missing:
             raise HandError("动作缺关节：%s" % "、".join(missing))
+        if RM.PROFILE == "f2_motion" and not self.force_ready:
+            self.set_force(300)
         if speed is not None:
             self.write_shorts(RM.REG_SPEED_SET, [self.to_raw(speed)] * 6)
         self.write_shorts(RM.REG_ANGLE_SET, [self.to_raw(joints[j]) for j in RM.JOINT_ORDER])
@@ -199,16 +206,27 @@ class RH56F2:
         """每根手指的力控阈值（g，0~1000）：受力到这个值手指就停。"""
         g = int(max(0, min(RM.FORCE_MAX, grams)))
         self.write_shorts(RM.REG_FORCE_SET, [g] * 6)
+        self.force_ready = True
 
     def hold(self):
         """六个角度设置值写 -1：手册说"该指无反应，保持当前实际位置"。急停时用。"""
-        self.write_shorts(RM.REG_ANGLE_SET, [-1] * 6)
+        if RM.PROFILE == "f2_motion":
+            actual = self.read_shorts(RM.REG_ANGLE_ACT, 6)
+            if not all(0 <= v <= 2000 for v in actual):
+                raise HandError("F2 实际位置无效，无法保持当前位置")
+            self.write_shorts(RM.REG_ANGLE_SET, [min(RM.RAW_TARGET_MAX, v) for v in actual])
+        else:
+            self.write_shorts(RM.REG_ANGLE_SET, [-1] * 6)
 
     def read_angles(self):
         """读 ANGLE_ACT，返回 {关节: 开合度 0~100}；读回 -1（0xFFFF，没有值）的关节给 None。只读，探测就用它。"""
         raw = self.read_shorts(RM.REG_ANGLE_ACT, 6)
+        if RM.PROFILE == "f2_motion":
+            return {j: round(100 - v / 20.0, 1) if 0 <= v <= 2000 else None
+                    for j, v in zip(RM.JOINT_ORDER, raw)}
         return {j: None if v < 0 else round(v * 100.0 / RM.VALUE_MAX, 1) for j, v in zip(RM.JOINT_ORDER, raw)}
 
     def status(self):
         return {"port": self.port, "id": self.slave, "mock": self.mock,
-                "connected": self.mock or self.ser is not None, "error": self.error, "last": self.last}
+                "connected": self.mock or self.ser is not None, "error": self.error, "last": self.last,
+                "profile": RM.PROFILE}

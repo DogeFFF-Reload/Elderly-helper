@@ -56,3 +56,21 @@ def confirmed_from_environment(value=None):
         return bool(value)
     import os
     return os.environ.get("RH56_REGMAP_CONFIRMED", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+# F2 motion group from the 2026-10-24 handover; explicitly selected per unit.
+import os as _os
+PROFILE = _os.environ.get("RH56_PROFILE", "manual_v109")
+if PROFILE not in ("manual_v109", "f2_motion"):
+    raise ValueError("Unknown RH56_PROFILE: " + PROFILE)
+if PROFILE == "f2_motion":
+    REG_ANGLE_SET, REG_ANGLE_ACT = 0x040A, 0x0422
+    REG_FORCE_SET = 0x05DA
+    VALUE_MAX = 2000
+    RAW_TARGET_MAX = 1995
+    FORCE_MAX = 500
+    # Speed group and -1 hold have not been validated on F2.
+    WRITABLE = ((REG_ANGLE_SET, REG_ANGLE_SET + 12),
+                (REG_FORCE_SET, REG_FORCE_SET + 12))
+    VERIFIED = confirmed_from_environment()
+    PROVISIONAL = not VERIFIED

@@ -1,0 +1,520 @@
+{
+  "_说明": "现场展示专用：夹爪臂 + 独立灵巧手。展示点位为计算规划姿态；业务点位未示教时仍拒绝。",
+  "tool_length": {
+    "_说明": "法兰到末端的距离（m）：gripper = Panthera 自带夹爪中心（URDF）；hand1 = 手#1 装在法兰上之后的手心，装好再量",
+    "gripper": 0.166,
+    "hand1": 0.22
+  },
+  "speed": {
+    "max_joint_vel": 0.22,
+    "near_person_vel": 0.15,
+    "min_seconds": 2.0
+  },
+  "floor_z": null,
+  "keep_out": [],
+  "points": {
+    "rest": {
+      "q": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "taught": true,
+      "note": "零位 = 收拢姿态；断电、阻尼时最稳，开关机都停在这里"
+    },
+    "above_tray": {
+      "q": [
+        0.0038,
+        1.0418,
+        0.4945,
+        0.0075,
+        -0.0044,
+        -0.0019
+      ],
+      "taught": false,
+      "note": "药盒托盘正上方"
+    },
+    "pick_med": {
+      "q": [
+        -0.039,
+        1.6179,
+        1.082,
+        -0.9953,
+        -0.0126,
+        1.491
+      ],
+      "taught": false,
+      "note": "夹住药盒的位置"
+    },
+    "handover": {
+      "q": [
+        0.2469,
+        0.4725,
+        0.0,
+        0.0,
+        0.0597,
+        1.5055
+      ],
+      "taught": false,
+      "near_person": true,
+      "note": "递到老人手边，别伸到脸前"
+    },
+    "above_sos": {
+      "q": [
+        0.036,
+        1.633,
+        1.217,
+        -0.901,
+        -1.092,
+        0.0
+      ],
+      "taught": false,
+      "note": "SOS 键正上方约 8 cm"
+    },
+    "sos_press": {
+      "q": [
+        0.105,
+        1.642,
+        0.995,
+        -0.587,
+        -0.887,
+        0.0
+      ],
+      "taught": false,
+      "torque_scale": 0.3,
+      "note": "按下去的位置：示教到刚好按响，按压只用 30% 力矩"
+    },
+    "show_sign": {
+      "q": [
+        0.489,
+        0.463,
+        0.829,
+        0.017,
+        0.569,
+        0.0
+      ],
+      "taught": false,
+      "near_person": true,
+      "note": "举牌给老人和观众看"
+    },
+    "show_park": {
+      "q": [
+        1.53589,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "taught": true,
+      "torque_scale": 0.6,
+      "note": "空载展示的规划姿态，不是递药或按键示教点"
+    },
+    "show_low": {
+      "q": [
+        1.53589,
+        0.174533,
+        0.174533,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "taught": true,
+      "torque_scale": 0.6,
+      "note": "空载展示的规划姿态，不是递药或按键示教点"
+    },
+    "show_high": {
+      "q": [
+        1.53589,
+        1.047198,
+        1.396263,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "taught": true,
+      "torque_scale": 0.6,
+      "note": "空载展示的规划姿态，不是递药或按键示教点"
+    },
+    "show_left": {
+      "q": [
+        0.959931,
+        1.047198,
+        1.396263,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "taught": true,
+      "torque_scale": 0.6,
+      "note": "空载展示的规划姿态，不是递药或按键示教点"
+    },
+    "show_right": {
+      "q": [
+        2.094395,
+        1.047198,
+        1.396263,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "taught": true,
+      "torque_scale": 0.6,
+      "note": "空载展示的规划姿态，不是递药或按键示教点"
+    },
+    "show_wrist_l": {
+      "q": [
+        1.53589,
+        1.047198,
+        1.396263,
+        0.436332,
+        0.349066,
+        0.785398
+      ],
+      "taught": true,
+      "torque_scale": 0.6,
+      "note": "空载展示的规划姿态，不是递药或按键示教点"
+    },
+    "show_wrist_r": {
+      "q": [
+        1.53589,
+        1.047198,
+        1.396263,
+        -0.436332,
+        -0.349066,
+        -0.785398
+      ],
+      "taught": true,
+      "torque_scale": 0.6,
+      "note": "空载展示的规划姿态，不是递药或按键示教点"
+    },
+    "pre_grasp": {
+      "q": [
+        -0.039,
+        1.5824007598628247,
+        1.3014525815413878,
+        -1.2502518216785627,
+        -0.0126,
+        1.491
+      ],
+      "taught": false,
+      "note": "取药接近规划：记录新夹取点后生成"
+    },
+    "orient_clear": {
+      "q": [
+        -0.039,
+        0.6981317007977318,
+        1.0471975511965976,
+        0.0,
+        -0.0126,
+        1.491
+      ],
+      "taught": false,
+      "note": "取药接近规划：记录新夹取点后生成"
+    }
+  },
+  "skills": {
+    "_说明": "动作名和 poses.POSES 一致。步骤：[move, 点位]、[grip, open|close|relax]、[wait, 秒]。grip 在夹爪上就是开合；在手#1 上 close = poses.JOINTS[本动作名]，open = release，relax = home；return_medicine（T5AI「还药」）= 张开手伸到老人手边，等 10 秒放进来，握住送回托盘松手，回 rest；wait_put 为等待放入、位置夹持估计和一次 6 秒空握重试（F2 真机）",
+    "home": [
+      [
+        "grip",
+        "relax"
+      ],
+      [
+        "move",
+        "rest"
+      ]
+    ],
+    "deliver_medicine": [
+      [
+        "grip",
+        "open"
+      ],
+      [
+        "wait",
+        4
+      ],
+      [
+        "move",
+        "orient_clear"
+      ],
+      [
+        "move",
+        "pre_grasp"
+      ],
+      [
+        "wait",
+        2.5
+      ],
+      [
+        "move",
+        "pick_med"
+      ],
+      [
+        "wait",
+        2.5
+      ],
+      [
+        "grip",
+        "close"
+      ],
+      [
+        "wait",
+        4
+      ],
+      [
+        "verify_grip",
+        0.12
+      ],
+      [
+        "move",
+        "pre_grasp"
+      ],
+      [
+        "move",
+        "orient_clear"
+      ],
+      [
+        "move",
+        "handover"
+      ],
+      [
+        "wait",
+        5
+      ],
+      [
+        "grip",
+        "open"
+      ],
+      [
+        "wait",
+        4
+      ],
+      [
+        "move",
+        "rest"
+      ]
+    ],
+    "press_sos": [
+      [
+        "grip",
+        "close"
+      ],
+      [
+        "wait",
+        3.5
+      ],
+      [
+        "move",
+        "above_sos"
+      ],
+      [
+        "move",
+        "sos_press"
+      ],
+      [
+        "wait",
+        0.6
+      ],
+      [
+        "move",
+        "above_sos"
+      ],
+      [
+        "move",
+        "rest"
+      ]
+    ],
+    "sign_family_received": [
+      [
+        "grip",
+        "close"
+      ],
+      [
+        "wait",
+        3.5
+      ],
+      [
+        "move",
+        "show_sign"
+      ]
+    ],
+    "return_medicine": [
+      [
+        "grip",
+        "open"
+      ],
+      [
+        "wait",
+        4
+      ],
+      [
+        "move",
+        "handover"
+      ],
+      [
+        "wait_put",
+        10
+      ],
+      [
+        "wait",
+        4
+      ],
+      [
+        "verify_grip",
+        0.12
+      ],
+      [
+        "move",
+        "orient_clear"
+      ],
+      [
+        "move",
+        "pre_grasp"
+      ],
+      [
+        "wait",
+        2.5
+      ],
+      [
+        "move",
+        "pick_med"
+      ],
+      [
+        "wait",
+        2.5
+      ],
+      [
+        "grip",
+        "open"
+      ],
+      [
+        "wait",
+        4
+      ],
+      [
+        "move",
+        "pre_grasp"
+      ],
+      [
+        "move",
+        "orient_clear"
+      ],
+      [
+        "move",
+        "rest"
+      ]
+    ],
+    "arm_warmup": [
+      [
+        "move",
+        "show_park"
+      ],
+      [
+        "move",
+        "show_low"
+      ],
+      [
+        "wait",
+        1
+      ],
+      [
+        "move",
+        "show_park"
+      ]
+    ],
+    "arm_showcase": [
+      [
+        "move",
+        "show_park"
+      ],
+      [
+        "move",
+        "show_low"
+      ],
+      [
+        "move",
+        "show_high"
+      ],
+      [
+        "move",
+        "show_left"
+      ],
+      [
+        "wait",
+        1
+      ],
+      [
+        "move",
+        "show_right"
+      ],
+      [
+        "wait",
+        1
+      ],
+      [
+        "move",
+        "show_high"
+      ],
+      [
+        "move",
+        "show_wrist_l"
+      ],
+      [
+        "wait",
+        1
+      ],
+      [
+        "move",
+        "show_wrist_r"
+      ],
+      [
+        "wait",
+        1
+      ],
+      [
+        "move",
+        "show_high"
+      ],
+      [
+        "move",
+        "show_low"
+      ],
+      [
+        "move",
+        "show_park"
+      ]
+    ],
+    "gripper_cycle": [
+      [
+        "grip",
+        "open"
+      ],
+      [
+        "wait",
+        4
+      ],
+      [
+        "grip",
+        "close"
+      ],
+      [
+        "wait",
+        4
+      ],
+      [
+        "grip",
+        "open"
+      ],
+      [
+        "wait",
+        4
+      ]
+    ]
+  },
+  "fixed_grasp_approach": true,
+  "_floor_z说明": "2026-10-24 现场要求去掉桌面高度检查：J1 正方向没有桌子，负方向的桌面检查妨碍操作。null = 不查；要恢复就填桌面高度（m，相对底座底面）"
+}

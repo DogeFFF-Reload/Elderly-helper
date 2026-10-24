@@ -53,6 +53,8 @@ TESTS = {
     "test_exercise": ("hardware",),
     "test_hand_driver": ("hardware",),
     "test_arm_motion": ("hardware",),
+    "test_single_showcase": ("hardware",),
+    "test_grasp": ("hardware",),
     "test_rps_engine": ("demo",),
     "test_fall_detector": ("demo",),
     "test_phone_fall_watch": ("demo",),
