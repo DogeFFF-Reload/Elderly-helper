@@ -68,6 +68,8 @@ class HandWorker:
         self.current = None             # 最近一次开始做的动作名
         self.done = 0
         self.last_error = None
+        self.fail_seq = 0               # 后台做动作失败的次数：主脑探测 /status 时按它补报"没做成"
+        self.fail_pose = None
         self._mu = threading.Lock()
         threading.Thread(target=self._run, daemon=True).start()
 
@@ -120,6 +122,8 @@ class HandWorker:
                 self.done += 1
             except Exception as e:  # noqa: BLE001 一个动作出错不能弄死这只手的线程
                 self.last_error = "%s：%s" % (pose, e)
+                self.fail_pose = pose
+                self.fail_seq += 1
                 print("[手#%d] %s 没做成：%s" % (self.hand, label(pose), e), flush=True)
             finally:
                 self.running = None
@@ -127,7 +131,8 @@ class HandWorker:
 
     def status(self):
         return dict(self.driver.status(), current=self.current, busy=self.running is not None,
-                    queued=self.q.qsize(), done=self.done, last_error=self.last_error)
+                    queued=self.q.qsize(), done=self.done, last_error=self.last_error,
+                    fail_seq=self.fail_seq, fail_pose=self.fail_pose)
 
 
 _HANDS = {}
@@ -200,6 +205,8 @@ class ArmWorker:
         self.done = 0
         self.aborted = 0
         self.last_error = None
+        self.fail_seq = 0        # 后台做动作出错的次数（被打断、急停不算）：主脑探测 /status 时按它补报"没做成"
+        self.fail_pose = None
         self.settle = None       # 最近一次走到点位时每个关节差多少度（看重力下垂）
         threading.Thread(target=self._run, daemon=True).start()
 
@@ -297,6 +304,8 @@ class ArmWorker:
                     self.done += 1
             except Exception as e:  # noqa: BLE001 一个动作出错不能弄死臂的线程
                 self.last_error = "%s：%s" % (name, e)
+                self.fail_pose = name
+                self.fail_seq += 1
                 print("[臂] %s 没做成：%s" % (label(name), e), flush=True)
             finally:
                 if not ok:
@@ -360,7 +369,8 @@ class ArmWorker:
     def status(self):
         st = dict(self.backend.status(), effector=self.effector, busy=self.running is not None,
                   current=self.current, step=self.step, queued=len(self.pending), at=self.at,
-                  done=self.done, aborted=self.aborted, last_error=self.last_error, settle=self.settle)
+                  done=self.done, aborted=self.aborted, last_error=self.last_error, settle=self.settle,
+                  fail_seq=self.fail_seq, fail_pose=self.fail_pose)
         if self.cfg:
             st["untaught"] = sorted(n for n, p in self.cfg["points"].items() if not p.get("taught"))
         if st["connected"]:

@@ -567,7 +567,11 @@ function handProp(pose, hand) {
 function paintHand(h, pose, t) {
   if (h.pose !== pose) { h.pose = pose; h.prop.innerHTML = handProp(pose); }
   const tgt = SHAPES[pose] || SHAPES.home;
-  for (let i = 0; i < 5; i++) h.cur[i] += (tgt[i] - h.cur[i]) * .14;
+  let d = 0;
+  for (let i = 0; i < 5; i++) { const step = (tgt[i] - h.cur[i]) * .14; h.cur[i] += step; d = Math.max(d, Math.abs(step)); }
+  const live = pose === "gentle_hold" || /^finger_pinch_/.test(pose);   // 这两种一直在动（一握一松 / 指尖闪光）
+  if (d < 1e-4 && !live && h.settled === pose) return;                  // 停稳了就不再每帧重写 SVG
+  h.settled = d < 1e-4 ? pose : null;
   h.fingers.forEach((el, i) => {
     const len = FLEN[i] * (1 - .72 * h.cur[i + 1]) + 8;
     el.setAttribute("y", (66 - len).toFixed(2)); el.setAttribute("height", len.toFixed(2));
@@ -594,7 +598,11 @@ function paintArm(pose, t) {
       : pose === "sign_family_received" ? `<g class="sign"><rect x="-32" y="-24" width="64" height="20" rx="3"/><text x="0" y="-10.5">家人已收到</text></g>` : "";
     $("twinPillHome").style.opacity = pose === "deliver_medicine" ? 0 : 1;
   }
-  a.w[0] += (tgt.w[0] - a.w[0]) * .08; a.w[1] += (tgt.w[1] - a.w[1]) * .08; a.a += (tgt.a - a.a) * .1;
+  const dx = (tgt.w[0] - a.w[0]) * .08, dy = (tgt.w[1] - a.w[1]) * .08, da = (tgt.a - a.a) * .1;
+  a.w[0] += dx; a.w[1] += dy; a.a += da;
+  const still = Math.abs(dx) + Math.abs(dy) + Math.abs(da) < 1e-3;
+  if (still && a.settled === pose) return;
+  a.settled = still ? pose : null;
   const [E, W] = ik(a.w), r = (a.a * Math.PI) / 180, tip = [W[0] + 17 * Math.cos(r), W[1] - 17 * Math.sin(r)];
   $("twinArm").setAttribute("d", `M${ARM.S[0]} ${ARM.S[1]} L${E[0].toFixed(1)} ${E[1].toFixed(1)} L${W[0].toFixed(1)} ${W[1].toFixed(1)}`);
   [[ARM.S, "twinJ0"], [E, "twinJ1"], [W, "twinJ2"]].forEach(([p, id]) => { $(id).setAttribute("cx", p[0].toFixed(1)); $(id).setAttribute("cy", p[1].toFixed(1)); });

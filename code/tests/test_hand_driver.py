@@ -658,3 +658,81 @@ class ServiceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFixTest(unittest.TestCase):
+    """代码审查修的几处：写帧回显、-1 角度、后台失败上报、急停叫臂停。"""
+
+    def setUp(self):
+        rh56f2_driver._PORTS.clear()
+        arm_service._HANDS.clear()
+        arm_service.HISTORY.clear()
+
+    def tearDown(self):
+        arm_service._HANDS.clear()
+        arm_service.HISTORY.clear()
+        rh56f2_driver._PORTS.clear()
+
+    def test_write_survives_echoing_adapter(self):
+        # 写请求 20 字节、写回包 9 字节：回显的转换器下也要能拿到回包
+        d, factory = real_driver(echo=True)
+        with mock.patch.object(rh56_register_map, "VERIFIED", True):
+            d.move(poses.JOINTS["release"])
+        self.assertEqual(d.last, poses.JOINTS["release"])
+
+    def test_invalid_angle_reads_as_none(self):
+        d, _ = real_driver(data={rh56_register_map.REG_ANGLE_ACT: pack_shorts([-1, 500, -1, 1000, 0, -1])})
+        angles = d.read_angles()
+        self.assertIsNone(angles[rh56_register_map.JOINT_ORDER[0]])
+        self.assertEqual(angles[rh56_register_map.JOINT_ORDER[1]], 50.0)
+        self.assertEqual(angles[rh56_register_map.JOINT_ORDER[3]], 100.0)
+
+    def test_background_failure_is_counted_in_status(self):
+        w = arm_service.HandWorker(1, mock_driver(1))
+        with mock.patch.object(arm_service, "_execute", side_effect=RuntimeError("串口断了")):
+            w.submit("press_sos")
+            w.drain()
+        st = w.status()
+        self.assertEqual((st["fail_seq"], st["fail_pose"]), (1, "press_sos"))
+        self.assertIn("串口断了", st["last_error"])
+
+    def test_master_reports_background_failure_once(self):
+        from master_service import ArmClient
+        arm = ArmClient("http://127.0.0.1:9")      # 不探测、不发动作，只喂 /status 的回包
+        got = []
+        arm.on_result = lambda *a: got.append(a)
+        body = lambda seq: json.dumps({"mock": False, "hands": {"1": {"fail_seq": seq, "fail_pose": "press_sos",
+                                                                       "last_error": "press_sos：串口断了"}}}).encode()
+        arm._note_status(body(3))                   # 第一次见：只记基线，不补报旧账
+        arm._note_status(body(3))
+        self.assertEqual(got, [])
+        arm._note_status(body(4))
+        self.assertEqual(got, [("press_sos", 1, False, "failed", "press_sos：串口断了")])
+        self.assertIs(arm.status()["mock"], False)
+
+    def test_bus_alerts_on_reported_failure(self):
+        bus, clock, arm = make_bus()
+        bus.fall("卧室")
+        clock.advance(6, bus)
+        bus._arm_result("press_sos", 1, False, "failed", "press_sos：串口断了")
+        danger = [e["text"] for e in events(bus, "system") if e["level"] == "danger"]
+        self.assertTrue(any("做到一半出错" in t for t in danger), danger)
+        self.assertEqual(bus.snapshot()["hands"]["1"]["status"], "failed")
+
+    def test_arm_background_failure_is_reported_as_hand1(self):
+        # 臂线程做到一半出错（SDK 断了）：/status 的 arm 带 fail_seq，主脑按手#1 补报；被打断、急停不算出错
+        a = arm_service.ArmWorker(MockArm(time_scale=0))
+        with mock.patch.object(a, "_run_skill", side_effect=RuntimeError("SDK 断了")):
+            self.assertEqual(a.request("deliver_medicine"), (200, ""))
+            self.assertTrue(a.wait_idle(3.0))
+        st = a.status()
+        self.assertEqual((st["fail_seq"], st["fail_pose"]), (1, "deliver_medicine"))
+        from master_service import ArmClient
+        client = ArmClient("http://127.0.0.1:9")
+        got = []
+        client.on_result = lambda *x: got.append(x)
+        body = lambda seq: json.dumps({"mock": True, "hands": {}, "arm": {
+            "fail_seq": seq, "fail_pose": "deliver_medicine", "last_error": "deliver_medicine：SDK 断了"}}).encode()
+        client._note_status(body(1))
+        client._note_status(body(2))
+        self.assertEqual(got, [("deliver_medicine", 1, False, "failed", "deliver_medicine：SDK 断了")])
