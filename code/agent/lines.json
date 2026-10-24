@@ -19,7 +19,13 @@
   "contact_blocked": "我只能联系家里人：{contacts}。{who}不在名单里，我不能打。",
 
   "deliver_start": "好的，药盒递过来了，您慢慢拿，拿稳了我再收回来。",
-  "deliver_unknown": "{item}我还没学过怎么递，现在只会递药盒。",
+  "deliver_unknown": "{item}我还没学过怎么递，我现在会递：{items}。",
+  "fetch_start": "好的，我去架子上把{item}拿过来，您稍等。",
+  "fetch_confirm": "您是想要{item}吗？要的话说“对”，我去拿。",
+  "fetch_cancelled": "好，那先不拿。",
+  "fetch_timeout": "没听到您回话，{item}先不拿了。需要的话再叫我。",
+  "fetch_missing": "{item}好像不在架子上，您看看是不是放别处了？",
+  "fetch_no_camera": "我这会儿看不到架子，不确定{item}在不在，先不动手。",
 
   "health_readback": "我听到的是高压 {sys}、低压 {dia}{pulse_part}，对吗？",
   "health_saved_normal": "好，记下了。{sys} 比 {dia}，在家庭自测的参考范围里。",

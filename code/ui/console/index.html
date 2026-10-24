@@ -188,6 +188,17 @@
             <button class="b say" data-say="高压一百二十六低压七十八 心率七十二">“高压一百二十六低压七十八 心率七十二”</button>
             <button class="b say" data-say="我喝了一杯水">“我喝了一杯水”</button>
           </div><p>第二条模拟 ASR 的中文数字输出</p></div>
+          <div class="group"><h4>🤲 取物（固定格位）</h4><div class="row">
+            <button class="b say" data-say="把水杯递给我">“把水杯递给我”</button>
+            <button class="b say" data-say="帮我拿一下眼镜">“帮我拿一下眼镜”</button>
+            <button class="b say" data-say="我有点渴了">“我有点渴了”（LLM 猜）</button>
+            <button class="b say" data-say="对">“对”</button>
+            <button class="b say" data-say="不要">“不要”</button>
+          </div><div class="row" style="margin-top:6px">
+            <button class="b" data-slots="all">📷 模拟 iPhone：都在</button>
+            <button class="b" data-slots="cup_gone">📷 模拟：水杯被拿走</button>
+            <button class="b" data-slots="off">停止模拟</button>
+          </div><p>点名的直接拿；“我渴了”这类要 llm 模式，LLM 猜的先问“对吗”。iPhone 没接时用 📷 按钮代替格位回传</p></div>
           <div class="group"><h4>🎮 陪 · 📚 教</h4><div class="row">
             <button class="b say" data-say="做个手指操吧">“做个手指操吧”</button>
             <button class="b say" data-say="停">“停”</button>
@@ -260,12 +271,19 @@ const A = {
   propose: (s) => run(() => Bus.post("/api/agent/propose", { skill: s }), "🤖 agent 请求 " + s),
   pose: (p) => run(() => Bus.post("/api/skeleton", { pose: p }), "骨架：" + p),
   rps: (g) => run(() => Bus.post("/api/rps/gesture", { round: S && S.rps && S.rps.round, gesture: g }), "✊ 老人出 " + g),
+  slots: (m) => { slotSim = SLOT_SIM[m] || null; if (slotSim) sendSlots(); toast(slotSim ? "📷 模拟格位：" + m : "📷 停止模拟格位"); },
 };
+
+// 格位模拟：主脑 3 秒收不到就当摄像头离线，所以模拟期间每秒补发一次
+const SLOT_SIM = { all: { tray: true, "1": true, "2": true, "3": true }, cup_gone: { tray: true, "1": false, "2": true, "3": true } };
+let slotSim = null;
+const sendSlots = () => slotSim && Bus.post("/api/fetch/slots", { slots: slotSim, src: "console" }).catch(() => {});
+setInterval(sendSlots, 1000);
 
 document.addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b) return;
-  for (const k of ["say", "fall", "ack", "night", "reset", "button", "propose", "pose", "rps"]) {
+  for (const k of ["say", "fall", "ack", "night", "reset", "button", "propose", "pose", "rps", "slots"]) {
     if (b.dataset[k] !== undefined) {
       if (k === "reset" && b.dataset.reset === "1" && !confirm("会删除健康记录和回声风格档案，确定？")) return;
       return A[k](b.dataset[k]);
@@ -297,6 +315,13 @@ $("free").onsubmit = (e) => {
   if (t) { A.say(t); $("freeText").value = ""; }
 };
 
+function fetchText(f) {
+  if (!f) return "—";
+  if (f.pending) return "等老人确认：" + f.pending.name + " · " + UI.secs(f.pending.remaining);
+  if (!f.camera.online) return "格位摄像头离线" + (f.require_camera ? "（不动臂）" : "（照样拿）");
+  return f.items.map((i) => i.name + (i.seen === true ? "✓" : i.seen === false ? "✗" : "?")).join(" ") + " · " + f.camera.src;
+}
+
 function pill(id, cls, html) { $(id).className = "pill " + cls; $(id).innerHTML = html; }
 
 function renderState(s) {
@@ -324,6 +349,7 @@ function renderState(s) {
     ["血压待确认", hp ? hp.sys + "/" + hp.dia + " · " + UI.secs(hp.remaining) : "—", hp ? "amber" : ""],
     ["手指操", ex.active ? ex.beat + " / " + ex.total + " 拍" : "—", ""],
     ["猜拳", s.rps ? "第 " + s.rps.round + " 局 · " + ({ countdown: "倒数 " + UI.secs(s.rps.reveal_in), revealed: "等手势", done: s.rps.result || "没看清" })[s.rps.phase] : "—", s.rps && s.rps.phase !== "done" ? "amber" : ""],
+    ["取物", fetchText(s.fetch), s.fetch && s.fetch.pending ? "amber" : ""],
     ["演示参数", "日 " + s.params.ask_wait_day + "s · 夜 " + s.params.ask_wait_night + "s · 120 " + s.params.dial_confirm_window + "s", ""],
     ["手#1 动作（✓ 真机做了 ✗ 没做成）", handText("1"), stop ? "hot" : ""],
     ["手#2 动作", handText("2"), stop ? "hot" : ""],

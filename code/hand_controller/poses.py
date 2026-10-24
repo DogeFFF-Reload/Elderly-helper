@@ -15,6 +15,10 @@ POSES = {
     "rps_paper": {"label": "手#1 出：布", "hand": 1},
     "thumbs_up": {"label": "比赞（手#2 验收用）", "hand": 2},
 }
+# L1 固定格位取物：第 n 格放什么由 agent/fetch_items.json 定，动作名只认格位
+FETCH_SLOTS = (1, 2, 3)
+for _n in FETCH_SLOTS:
+    POSES["fetch_slot%d" % _n] = {"label": "臂从第 %d 格取物递过来" % _n, "hand": 1}
 
 # RH56F2 kit vocabulary.  These names are accepted at the HTTP boundary and
 # are kept here as a single source of truth so the physical backend and the
@@ -90,6 +94,8 @@ JOINTS = {
     "finger_count_5": PAPER,
     "thumbs_up": _j(95, 10, 10, 10, 10, 60),
 }
+for _n in FETCH_SLOTS:                                  # :示教: 握住格位里的物品，先按药盒的握法
+    JOINTS["fetch_slot%d" % _n] = JOINTS["deliver_medicine"]
 for _n in range(1, 5):                                  # 伸出 n 根：食指起依次伸直，拇指收着
     JOINTS["finger_count_%d" % _n] = _j(10, *[90 if i < _n else 10 for i in range(4)], 50)
 for _k, _f in enumerate((IX, MI, RG, PK), 1):           # :示教: 拇指转过去碰第 k 指

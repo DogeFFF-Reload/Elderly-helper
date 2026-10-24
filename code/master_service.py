@@ -7,6 +7,7 @@
   GET  /api/box?id=box1                   床头盒轮询：灯色 + 心跳（协议草案，见 README）
   GET  /api/nodes                         节点自检：执行端 / 床头盒 / 视觉 / 喇叭 / 麦克风 / LLM（tools/preflight 用）
   GET/POST /api/params                    演示参数查看 / 运行中调整
+  POST /api/fetch/slots {"slots": {"tray": true, "1": false}}   iPhone 格位确认（camera/phone_slot_watch）
   GET  /ui/monitor | /ui/family | /ui/console
 
 运行：python -m master_service [--host 0.0.0.0] [--port 8000]
@@ -26,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import config
-from agent import intent
+from agent import fetch_intent, intent
 from agent.device_helper import DeviceHelper
 from agent.health_tracker import HealthTracker
 from agent.llm_client import LLMClient
@@ -41,6 +42,7 @@ MAX_EVENTS = 500
 TEACH_CARD_SECONDS = 45.0
 BOX_TIMEOUT = 3.0
 VISION_TIMEOUT = 3.0   # 视觉约 5 次/秒推骨架，3 秒没来算离线
+SLOT_TIMEOUT = 3.0     # iPhone 格位确认约 2 次/秒推一次，3 秒没来算离线（没确认，按 fetch_camera 处理）
 ARM_PROBE_EVERY = 2.0
 
 # 保命链里的臂/手动作：没做成要马上告诉演示员，不能让时间线上只写着"已按下"
@@ -59,8 +61,9 @@ def rps_judge(player, robot):
     return "win" if RPS_BEATS[player] == robot else "lose"
 
 
+# 递/拿东西（deliver）不在这张表里：物品先按 fetch_items.json 认出来，技能跟着物品走（_fetch_go）
 SKILL_OF = {
-    "deliver": "deliver_medicine", "exercise_start": "finger_exercise",
+    "exercise_start": "finger_exercise",
     "call_family": "call_family", "message": "leave_message", "safe_report": "safe_report",
     "health_record": "record_health", "health_confirm": "record_health", "health_reject": "record_health",
     "teach": "teach_device", "echo": "echo_chat", "dial_request": "request_dial",
@@ -299,6 +302,14 @@ class SpeechQueue:
                 self.q.task_done()
 
 
+def slot_label(slot):
+    return "药盒托盘" if slot == "tray" else "第 %s 格" % slot
+
+
+def _slots_text(slots):
+    return "，".join("%s%s" % (slot_label(k), "有东西" if v else "空") for k, v in sorted(slots.items()))
+
+
 def _say(key, **params):
     return {"do": "say", "key": key, "params": params}
 
@@ -321,6 +332,8 @@ class Bus:
         self.llm = llm or LLMClient.from_config(self.cfg)
         self.speech = SpeechQueue(self) if self.llm.enabled else None
         self.supervisor = Supervisor(self.cfg["contacts"])
+        self.fetch_items = fetch_intent.FetchCatalog()
+        self.slot_view = None   # iPhone 格位确认最近一次回传；不放进 _reset_runtime：重置演示不改架子上有什么
         self.arm = arm if arm is not None else ArmClient(
             self.cfg["arm_url"], self.cfg["arm_timeout"], self.cfg["arm_stale"])
         self.arm.on_result = self._arm_result
@@ -355,6 +368,7 @@ class Bus:
         self.last_heard = None
         self.rps = None
         self.rps_last = None
+        self.fetch_pending = None   # LLM 猜出来、等老人说"对"的取物信号
 
     # ---------- 工具 ----------
 
@@ -479,6 +493,83 @@ class Bus:
     def _blocked(self, what, reason, line_key, **params):
         return [_ev("blocked", "越权拦截：%s（%s）" % (what, reason), "warn"), _say(line_key, **params)]
 
+    def _denied(self, what, reason, line_key, **params):
+        """supervisor 刚拦下的请求：资源被保命链 / 急停占着就说"等会儿"，否则按越权拦截。"""
+        if self.supervisor.blocked[-1]["busy"]:
+            return [_ev("blocked", "已挂起：%s（%s）" % (what, reason), "warn"),
+                    _say("estop_hold" if self.estop else "skill_busy")]
+        return self._blocked(what, reason, line_key, **params)
+
+    # ---------- 取物（L1 固定格位：语音 → 信号 → 白名单 → 格位确认 → 臂） ----------
+
+    def _item_names(self):
+        return "、".join(self.fetch_items.names())
+
+    def _slot_seen(self, slot):
+        """iPhone 看到这一格：True 有东西 / False 空 / None 没确认（格位摄像头离线或没框这一格）。"""
+        v = self.slot_view
+        if not v or self.clock() - v["ts"] >= SLOT_TIMEOUT:
+            return None
+        return v["slots"].get(slot)
+
+    def _fetch_go(self, sig):
+        """一个取物信号走到底。LLM 猜的（confirm=True）先问老人，说"对"再回到这里；
+        关键词点名的直接往下走。拿不拿由白名单、资源锁和格位确认定，LLM 说了不算。"""
+        name, where = sig["name"], slot_label(sig["slot"])
+        ok, reason = self.supervisor.check(sig["skill"], item=name, busy=self._busy())
+        if not ok:
+            return self._denied("递“%s”" % name, reason, "deliver_unknown", item=name, items=self._item_names())
+        seen = self._slot_seen(sig["slot"])
+        if seen is False:
+            return [_ev("fetch", "iPhone 看到%s是空的，%s不在 → 不动臂" % (where, name), "warn"),
+                    _say("fetch_missing", item=name)]
+        if seen is None and self.cfg["fetch_camera"] == "required":
+            return [_ev("fetch", "格位摄像头离线，确认不了%s在不在 → 按设置不动臂" % name, "warn"),
+                    _say("fetch_no_camera", item=name)]
+        if sig["confirm"]:
+            self.fetch_pending = dict(sig, deadline=self.clock() + self.cfg["fetch_confirm_window"])
+            return [_ev("fetch", "LLM 理解为想要%s（%s）→ 等老人说“对”" % (name, sig["why"] or "没给理由")),
+                    _say("fetch_confirm", item=name)]
+        seen_text = "iPhone 确认%s有东西" % where if seen else "格位未确认，摄像头离线"
+        if sig["item"] == "medicine":
+            return [_ev("deliver", "老人要药 → 递药盒（%s）" % seen_text, "info", "system"),
+                    {"do": "arm", "pose": sig["pose"], "hand": 1},
+                    _say("deliver_start")]
+        how = "老人点名" if sig["source"] == "keyword" else "LLM 理解、老人已确认"
+        return [_ev("fetch", "老人要%s → 臂从%s取（%s；%s）" % (name, where, how, seen_text)),
+                {"do": "arm", "pose": sig["pose"], "hand": 1},
+                _say("fetch_start", item=name)]
+
+    def fetch_slots(self, slots, src="phone_slots"):
+        """iPhone 格位确认回传 {"1": true, "2": false, …}。只收布尔，画面本身不进主脑。"""
+        if not isinstance(slots, dict):
+            return {"ok": False, "reason": "slots 要是 {格位: true/false}"}
+        clean = {str(k): bool(v) for k, v in slots.items()}
+        with self.lock:
+            v = self.slot_view
+            old = v["slots"] if v and self.clock() - v["ts"] < SLOT_TIMEOUT else None
+            self.slot_view = {"slots": clean, "src": str(src), "ts": self.clock()}
+            if old is None:
+                self.events.add("system", "格位摄像头已连上（%s）：%s" % (src, _slots_text(clean)), "ok")
+            else:
+                changed = {k: c for k, c in clean.items() if old.get(k) != c}
+                if changed:
+                    self.events.add("system", "格位变化：%s" % _slots_text(changed))
+            return {"ok": True}
+
+    def _fetch_view(self):
+        now = self.clock()
+        p, v = self.fetch_pending, self.slot_view
+        return {
+            "pending": {"item": p["item"], "name": p["name"],
+                        "remaining": max(0.0, round(p["deadline"] - now, 1))} if p else None,
+            "camera": {"online": bool(v and now - v["ts"] < SLOT_TIMEOUT), "src": v["src"] if v else None,
+                       "age": round(now - v["ts"], 1) if v else None},
+            "items": [{"id": i["id"], "name": i["name"], "slot": i["slot"], "where": slot_label(i["slot"]),
+                       "seen": self._slot_seen(i["slot"])} for i in self.fetch_items.items.values()],
+            "require_camera": self.cfg["fetch_camera"] == "required",
+        }
+
     # ---------- 输入：老人 ----------
 
     def voice(self, text):
@@ -493,12 +584,32 @@ class Bus:
                 "asking": g["state"] == ASKING,
                 "dial_pending": g["dial_pending"],
                 "health_pending": self.health.pending is not None,
+                "fetch_pending": self.fetch_pending is not None,
                 "exercise_active": self.exercise is not None,
                 "contacts": self.cfg["contacts"],
             }
             name, slots = intent.classify(text, ctx)
+            if not self._wants_fetch_llm(name, text):
+                self._run(self._handle(name, slots, text))
+                return {"ok": True, "intent": name}
+        # 关键词没认出物品：问 LLM 是不是想要架子上的东西。锁外问（最长 llm_timeout 秒），别卡住 tick 和保命链
+        sig, why = fetch_intent.llm_signal(text, self.fetch_items, self.llm)
+        with self.lock:
+            if sig and self._wants_fetch_llm(name, text):   # 问的这几秒里可能摔倒了、急停了
+                self._run(self._fetch_go(sig))
+                return {"ok": True, "intent": "fetch_llm"}
+            if why not in ("disabled", "cooldown", "没听出要拿东西", None):
+                self.events.add("system", "LLM 取物解析回落（%s）→ 按原来的流程走" % why, "warn")
             self._run(self._handle(name, slots, text))
             return {"ok": True, "intent": name}
+
+    def _wants_fetch_llm(self, name, text):
+        """闲聊，或者说了递/拿但物品表里认不出来，才去问 LLM；保命链进行中、急停中、已经在等确认时不问。"""
+        if not self.llm.enabled or self.fsm.state != IDLE or self.estop or self.fetch_pending:
+            return False
+        if name == "chitchat":
+            return True
+        return name == "deliver" and fetch_intent.keyword_signal(text, self.fetch_items) is None
 
     def _handle(self, name, slots, text):
         sup = self.supervisor
@@ -506,13 +617,7 @@ class Bus:
         if skill:
             ok, reason = sup.check(skill, contact=slots.get("contact"), item=slots.get("item"), busy=self._busy())
             if not ok:
-                what = "递“%s”" % slots["item"] if name == "deliver" else sup.allowed[skill]["desc"]
-                if sup.blocked[-1]["busy"]:
-                    return [_ev("blocked", "已挂起：%s（%s）" % (what, reason), "warn"),
-                            _say("estop_hold" if self.estop else "skill_busy")]
-                if name == "deliver":
-                    return self._blocked(what, reason, "deliver_unknown", item=slots["item"])
-                return self._blocked(what, reason, "blocked_skill")
+                return self._denied(sup.allowed[skill]["desc"], reason, "blocked_skill")
         if name == "dial_confirm":
             return self.fsm.confirm_dial()
         if name == "dial_cancel":
@@ -536,9 +641,18 @@ class Bus:
         if name == "health_reject":
             return self.health.reject()
         if name == "deliver":
-            return [_ev("deliver", "老人要药 → 递药盒", "info", "system"),
-                    {"do": "arm", "pose": "deliver_medicine", "hand": 1},
-                    _say("deliver_start")]
+            sig = fetch_intent.keyword_signal(text, self.fetch_items)
+            if sig is None:
+                ok, reason = sup.check("deliver_medicine", item=slots["item"], busy=self._busy())
+                return self._denied("递“%s”" % slots["item"], reason, "deliver_unknown",
+                                    item=slots["item"], items=self._item_names())
+            return self._fetch_go(sig)
+        if name == "fetch_confirm":
+            sig, self.fetch_pending = self.fetch_pending, None
+            return [_ev("fetch", "老人确认要%s" % sig["name"])] + self._fetch_go(dict(sig, confirm=False))
+        if name == "fetch_cancel":
+            sig, self.fetch_pending = self.fetch_pending, None
+            return [_ev("fetch", "老人说不要%s，不拿" % sig["name"]), _say("fetch_cancelled")]
         if name == "call_family":
             c = self.contact(slots["contact"])
             return [{"do": "notify", "contact": c["id"], "kind": "call",
@@ -859,6 +973,10 @@ class Bus:
                 acts += [_ev("rps", "猜拳第 %d 局超时：视觉没有回传手势" % r["round"], "warn"), _say("rps_no_camera")]
             if self.rps_last and now - self.rps_last["ts"] > 10:
                 self.rps_last = None
+            p = self.fetch_pending
+            if p and now >= p["deadline"]:
+                self.fetch_pending = None
+                acts += [_ev("fetch", "等老人确认超时，%s不拿了" % p["name"]), _say("fetch_timeout", item=p["name"])]
             if acts:
                 self._run(acts)
 
@@ -902,6 +1020,7 @@ class Bus:
                         "age": round(now - self.box_seen["ts"], 1) if self.box_seen else None},
                 "vision": {"online": live and now - sk["ts"] < VISION_TIMEOUT,
                            "age": round(now - sk["ts"], 1) if live else None},
+                "slots": self._fetch_view()["camera"],
                 "clients": {k: round(now - t, 1) for k, t in self.clients.items()},
                 "heard": {"text": heard["text"], "age": round(now - heard["ts"], 1)} if heard else None,
                 "llm": self.llm.status(),
@@ -930,6 +1049,7 @@ class Bus:
                 "teach": self.teach_card,
                 "exercise": {"active": ex is not None, "beat": ex["beat"] if ex else 0, "total": len(FINGER_MOVES)},
                 "rps": self._rps_view(),
+                "fetch": self._fetch_view(),
                 "skeleton": self.skeleton,
                 "arm": self.arm.status(),
                 "hands": {k: dict(v) for k, v in self.hands.items()},
@@ -990,6 +1110,7 @@ def dispatch_post(bus, path, body, query=None):
         "/api/agent/propose": lambda: bus.agent_propose(arg("skill", "")),
         "/api/reset": lambda: bus.reset(clear_data=str(arg("all", "0")) == "1"),
         "/api/rps/gesture": lambda: bus.rps_gesture(arg("round"), arg("gesture")),
+        "/api/fetch/slots": lambda: bus.fetch_slots(arg("slots"), arg("src", "phone_slots")),
     }
     fn = routes.get(path)
     return fn() if fn else None

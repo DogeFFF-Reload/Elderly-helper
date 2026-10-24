@@ -501,6 +501,8 @@ const ARM_POSES = {
   sign_family_received: { w: [118, 40], a: 90 },
   present: { w: [150, 52], a: 30 },   // 手指操、猜拳：把手亮给老人看
 };
+// 取物架第 n 格：和递药同一个落点（递到老人手边）
+for (let n = 1; n <= 3; n++) ARM_POSES["fetch_slot" + n] = ARM_POSES.deliver_medicine;
 const armPoseOf = (pose) => ARM_POSES[pose] || (/^(finger_|rps_)/.test(pose) ? ARM_POSES.present : ARM_POSES.home);
 
 // 五指弯曲度 [拇指, 食指, 中指, 无名指, 小指]：0 伸直，1 握紧（RH56F2 每指一个自由度）
@@ -522,6 +524,7 @@ const SHAPE_TEXT = {
   SHAPE_TEXT["finger_pinch_" + (i + 1)] = "拇指碰" + f;
 });
 for (let n = 1; n <= 5; n++) SHAPE_TEXT["finger_count_" + n] = `伸出 ${n} 根手指`;
+for (let n = 1; n <= 3; n++) { SHAPES["fetch_slot" + n] = SHAPES.deliver_medicine; SHAPE_TEXT["fetch_slot" + n] = `握住第 ${n} 格的东西`; }
 
 const FX = [34, 45, 56, 66], FLEN = [33, 38, 35, 27], FW = [9, 9.5, 9, 8];
 function buildHand(svg) {

@@ -402,6 +402,26 @@ CareMate 联调自检 · http://127.0.0.1:8000
 - 禁区是示意值；`tool_length.hand1`（0.22 m）是估的。末端先用夹爪（2026-10-24 定），手#1 真手验证通过后再考虑换。
 - 物理急停按钮还没接。
 
+### 10.15 取物（L1 固定格位）：语音 → LLM 信号 → 白名单 → 格位确认 → 臂
+
+东西放在取物架的固定格位上，臂只走示教过的动作，不做视觉定位抓取。
+
+```text
+老人说的话 → /mock/voice → 取物信号 {"item": "cup", "slot": "1", "pose": "fetch_slot1", "source": ..., "confirm": ...}
+  ├─ 点名了（"把水杯递给我"）       → source=keyword，不用确认
+  └─ 没点名（"我渴了""字看不清"）  → llm 模式下问 LLM，source=llm，先问"您是想要水杯吗？"，说"对"才拿
+→ supervisor：技能白名单 fetch_item（物品清单在 skills.json）+ 资源锁（保命链 / 急停中挂起）
+→ iPhone 格位确认：这一格空着就不动臂，口播"好像不在架子上"
+→ arm_service POST /pose?name=fetch_slot1（和递药同一套步骤：张开 → 格位上方 → 夹 → 递到 handover → 松开 → rest）
+```
+
+- 物品表：`agent/fetch_items.json`（药盒=托盘 tray，水杯=第 1 格，老花镜=第 2 格，纸巾=第 3 格）。遥控器故意不放，操作台的"越权拦截"演示还用它。
+- LLM 只能从物品表的 id 里挑一样（`agent/fetch_intent.py`）：输出不了动作名、格位或坐标；回复不是 JSON、挑了表外的东西、超时、断网，都按"没听出要拿东西"交回原流程（回落记一条 system 事件）。走 `LLMClient.ask`，和台词共用超时与冷却；在总线锁外调用，不卡保命链。
+- 参数：`fetch_confirm_window`（等"对"的秒数，默认 10）；`fetch_camera` = `optional`（默认，格位摄像头离线照样拿）/ `required`（确认不了就不动臂）。
+- 格位确认：`camera/phone_slot_watch.py`，iPhone 用支架固定、IP Camera 类 App 推 MJPEG。每格框一个比例矩形，跟"全空"参考图比（先扣掉整体亮度），连续 3 帧一致才改口，2 次/秒 `POST /api/fetch/slots`，只传布尔，画面不出本机。现场三步见脚本开头（`--snapshot` 网格图 → 写 slots.json → `--capture-empty` → `--arm 1`）。iPhone 没接时，操作台"📷 模拟"按钮代替回传。
+- 臂：`arm_skills.json` 加了 `above_slot1~3` / `pick_slot1~3` 和 `fetch_slot1~3`。**点位全是占位（taught=false），真臂会拒绝执行**，架子摆好后在 X5 上用 `arm_teach` 示教；`arm_selftest.json` 加了同名的小角度动作。
+- 测试：`test_fetch_chain`（软件）、`test_phone_slot_watch`（演示）；`test_arm_motion` 的动作名清单补了 `fetch_slot1~3`。
+
 ### 10.10 回归与合并
 
 - 联调这批新增 2 套：`test_arm_link`（回执、告警、断链保护、探测，外加真 `arm_service` 端到端）、`test_preflight`（`/api/nodes` 和自检判定）。

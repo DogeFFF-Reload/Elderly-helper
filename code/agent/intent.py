@@ -1,7 +1,7 @@
 """scripted 模式的意图识别：关键词规则，零网络依赖。
 
 classify(text, ctx) -> (intent, slots)
-ctx 由总线给出当前上下文：asking / dial_pending / health_pending / exercise_active / contacts。
+ctx 由总线给出当前上下文：asking / dial_pending / health_pending / fetch_pending / exercise_active / contacts。
 上下文相关的短回答（"对""确认""我没事"）优先于通用意图。
 """
 import re
@@ -67,6 +67,13 @@ def classify(text, ctx):
             return "health_reject", {}
         if _starts(core, YES_WORDS):
             return "health_confirm", {}
+
+    # LLM 猜出来的取物要老人确认（"您是想要水杯吗？"）
+    if ctx.get("fetch_pending"):
+        if _starts(core, NO_WORDS) or _has(core, CANCEL_WORDS):
+            return "fetch_cancel", {}
+        if _starts(core, YES_WORDS) or _starts(core, ("要", "好", "拿吧", "行")):
+            return "fetch_confirm", {}
 
     if _has(core, EMERGENCY):
         return "dial_request", {}

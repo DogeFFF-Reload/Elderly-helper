@@ -37,6 +37,8 @@ DEFAULTS = {
     # 猜拳：喊完"石头剪刀布"手#1 揭晓的时间、揭晓后等视觉回传手势的时间（秒）
     "rps_reveal_delay": 3.5,
     "rps_timeout": 6.0,
+    "fetch_confirm_window": 10.0,   # LLM 猜出来的取物（"我渴了"→水杯）等老人说"对"的秒数
+    "fetch_camera": "optional",     # optional：格位摄像头离线照样拿；required：确认不了格位有东西就不动臂
     "arm_url": "http://127.0.0.1:8013",
     # 台词通道：scripted（默认，零网络）/ llm（OpenAI 兼容接口，超时或出错自动回落 scripted）
     "llm_mode": "scripted",
@@ -72,6 +74,7 @@ LIMITS = {
     "exercise_beat_seconds": (0.5, 10),
     "rps_reveal_delay": (1, 10),
     "rps_timeout": (2, 30),
+    "fetch_confirm_window": (3, 120),
     "llm_timeout": (0.5, 30),
     "llm_cooldown": (0, 3600),
     "arm_timeout": (0.2, 10),
@@ -82,6 +85,7 @@ TUNABLE = tuple(key for key in LIMITS if key != "expected_utc_offset")
 CHOICES = {
     "llm_mode": ("scripted", "llm"),
     "night_override": ("auto", "on", "off"),
+    "fetch_camera": ("optional", "required"),
 }
 
 

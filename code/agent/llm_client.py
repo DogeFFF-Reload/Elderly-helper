@@ -21,7 +21,7 @@ from pathlib import Path
 LINES_PATH = Path(__file__).resolve().parent / "lines.json"
 
 LLM_KEYS = frozenset({
-    "cancel_ok", "call_family", "deliver_start", "deliver_unknown",
+    "cancel_ok", "call_family", "deliver_start", "deliver_unknown", "fetch_start", "fetch_cancelled",
     "exercise_start", "exercise_done", "exercise_stop", "rps_booth",
     "message_sent", "message_empty", "safe_report", "echo_off",
     "water_saved", "elder_ok_idle", "chitchat",
@@ -93,7 +93,7 @@ class LLMClient:
         if self.now() < self.cooldown_until:
             return self._fallback(text, info, "cooldown")
         try:
-            out = self._call(self._messages(text, params), abort)
+            out = _first_line(self._call(self._messages(text, params), abort))
         except _Aborted:
             return self._fallback(text, info, "queue_busy")
         except Exception as e:  # noqa: BLE001 网络、超时、接口格式，一律回落
@@ -107,6 +107,20 @@ class LLMClient:
         self.stats["llm"] += 1
         info["source"] = "llm"
         return out, info
+
+    def ask(self, messages):
+        """给别的解析器用（取物意图 agent/fetch_intent）：同一套超时和冷却，返回 (原文, 回落原因)。
+        回落时原文为 None，调用方走自己的确定性兜底；原文怎么用、能不能信，由调用方校验。"""
+        if not self.enabled:
+            return None, "disabled"
+        if self.now() < self.cooldown_until:
+            return None, "cooldown"
+        try:
+            return self._call(messages, lambda: False), None
+        except Exception as e:  # noqa: BLE001 网络、超时、接口格式，一律回落
+            self.cooldown_until = self.now() + self.cooldown
+            self.stats["last_error"] = "%s: %s" % (type(e).__name__, e)
+            return None, "timeout" if isinstance(e, TimeoutError) else "error"
 
     def check(self, out, scripted):
         """内容检查：返回问题描述，没问题返回 None。"""
@@ -170,8 +184,7 @@ class LLMClient:
                     raise TimeoutError("超过 %g 秒" % self.timeout)
         if not ok:
             raise value
-        text = str(value or "").strip()
-        return text.splitlines()[0].strip().strip("“”\"") if text else ""
+        return str(value or "").strip()
 
     def _http_chat(self, messages, timeout):
         body = json.dumps({"model": self.model, "messages": messages, "temperature": 0.6,
@@ -183,6 +196,10 @@ class LLMClient:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = json.loads(r.read().decode("utf-8"))
         return data["choices"][0]["message"]["content"]
+
+
+def _first_line(text):
+    return text.splitlines()[0].strip().strip("“”\"") if text else ""
 
 
 class _Aborted(Exception):

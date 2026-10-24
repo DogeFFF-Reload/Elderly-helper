@@ -10,6 +10,8 @@ PATHS = {
     "code/agent/skills.json": "software",
     "code/agent/llm_client.py": "software",
     "code/agent/intent.py": "software",
+    "code/agent/fetch_intent.py": "software",
+    "code/agent/fetch_items.json": "software",
     "code/config.py": "software",
     "code/demo_driver.py": "software",
     "code/tests/": "software",
@@ -66,6 +68,8 @@ TESTS = {
     "test_asr_chain": ("captain",),
     "test_health_readback": ("captain",),
     "test_hardware_preflight": ("hardware",),
+    "test_fetch_chain": ("software",),
+    "test_phone_slot_watch": ("demo",),
 }
 
 

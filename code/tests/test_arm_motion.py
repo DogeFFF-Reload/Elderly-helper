@@ -188,7 +188,8 @@ class ShippedSkillsTest(unittest.TestCase):
             self.assertIn(name, JOINTS, "末端是手#1 时 grip close 要用 JOINTS[%s]" % name)
 
     def test_master_sends_only_known_arm_skills(self):
-        self.assertEqual(S.skill_names(), {"home", "deliver_medicine", "press_sos", "sign_family_received"})
+        self.assertEqual(S.skill_names(), {"home", "deliver_medicine", "press_sos", "sign_family_received",
+                                           "fetch_slot1", "fetch_slot2", "fetch_slot3"})
 
     def test_all_skills_safe_from_rest_and_after_each_other(self):
         for effector in ("gripper", "hand1"):
@@ -214,8 +215,13 @@ class ShippedSkillsTest(unittest.TestCase):
 
     def test_skills_end_at_rest_except_sign(self):
         cfg = S.load_config("gripper")
-        for name in ("home", "deliver_medicine", "press_sos"):
+        for name in ("home", "deliver_medicine", "press_sos", "fetch_slot1", "fetch_slot2", "fetch_slot3"):
             self.assertEqual(S.skill_moves(name, cfg)[-1], "rest", name)
+
+    def test_fetch_slots_hand_over_slowly(self):
+        cfg = S.load_config("gripper")
+        for n in (1, 2, 3):
+            self.assertIn("handover", S.skill_moves("fetch_slot%d" % n, cfg))
 
 
 class SelftestFileTest(unittest.TestCase):

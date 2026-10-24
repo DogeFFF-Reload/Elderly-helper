@@ -1,0 +1,9 @@
+{
+  "_说明": "L1 固定格位取物：每样东西放在固定的格位，臂只走示教过的动作。slot 是 iPhone 格位确认用的名字（camera/phone_slot_watch 的 ROI 名），pose 是发给 arm_service 的动作名，skill 是 supervisor 白名单里的技能（skills.json）。aliases 是老人可能的叫法，按出现位置取第一个。遥控器故意不放进来：操作台的“越权拦截”演示用它。",
+  "items": {
+    "medicine": {"name": "药盒", "aliases": ["药盒", "药瓶", "药"], "slot": "tray", "pose": "deliver_medicine", "skill": "deliver_medicine"},
+    "cup": {"name": "水杯", "aliases": ["水杯", "杯子", "茶杯", "水"], "slot": "1", "pose": "fetch_slot1", "skill": "fetch_item"},
+    "glasses": {"name": "老花镜", "aliases": ["老花镜", "眼镜"], "slot": "2", "pose": "fetch_slot2", "skill": "fetch_item"},
+    "tissue": {"name": "纸巾", "aliases": ["纸巾", "抽纸", "餐巾纸", "卫生纸"], "slot": "3", "pose": "fetch_slot3", "skill": "fetch_item"}
+  }
+}
