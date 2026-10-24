@@ -8,20 +8,27 @@ SDP 不进 /api/poll 的快照（几 KB，每 0.4 秒拉一次太重），页面
 和保命链的关系：不改状态机。跌倒升级通知某位家属时（notify kind=fall），主脑顺带让老人端向他发起紧急通话；
 保命链进行中家属打进来，老人端自动接通（老人可能够不着屏幕）。家属确认“马上到”仍走 /api/family/ack。
 
-页面在不在线看 /api/poll?client=...：老人端 "elder"，家属端 "family:<联系人 id>"。
+页面在不在线看 /api/poll?client=...：老人端 "elder"，家属端 "family:<联系人 id>"，
+床头盒中继（X5 上的 elder_link/relay.py）"elder-box"，喇叭（voice/tts_player）"tts_player"。
+
+语音留言统一 WAV 16 kHz / 16 bit / 单声道：床头盒（S3 屏 + X5）录的就是这个格式，家属端网页也按这个录，
+X5 用 aplay 直接放，不用解码。家属的留言到了，由“播放端”自动放给老人：床头屏页面在线就它放，否则床头盒放。
 """
+import io
 import time
+import wave
 
 RING_TIMEOUT = 45.0        # 响铃这么久没人接 → 未接
 MAX_CALL = 30 * 60.0
 PAGE_TIMEOUT = 15.0        # 页面这么久没来拉 /api/poll 算离线（后台标签页的定时器最慢 1 秒一次）
 ENDED_SHOWN = 8.0          # 通话结束后快照里再留这么久，两边页面都来得及显示“通话结束”
 MAX_SDP = 20000
-MAX_VOICE_BYTES = 2 * 1024 * 1024
+MAX_VOICE_BYTES = 4 * 1024 * 1024   # 60 秒 16k 单声道 WAV ≈ 1.9 MB，留余量
 MAX_VOICE_SECONDS = 60.0
 MIN_VOICE_SECONDS = 0.5
 KEEP_VOICE = 30
-AUDIO_TYPES = ("audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav")
+AUDIO_TYPES = ("audio/wav", "audio/x-wav", "audio/wave", "audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg")
+SPEAKER_TIMEOUT = 5.0      # tts_player 每 0.5 秒拉一次 /api/events
 
 END_TEXT = {"declined": "拒接", "cancelled": "已取消", "missed": "未接", "ended": "已挂断",
             "dropped": "断线", "replaced": "转给下一位家人", "offline": "发起方页面已关闭", "reset": "演示重置"}
@@ -37,6 +44,15 @@ def _say(key, **params):
 
 def _notify(contact, kind, text, **extra):
     return {"do": "notify", "contact": contact, "kind": kind, "text": text, "extra": extra}
+
+
+def wav_seconds(data):
+    """WAV 字节 → 时长（秒）；不是合法 WAV 返回 None。"""
+    try:
+        with wave.open(io.BytesIO(data)) as w:
+            return w.getnframes() / float(w.getframerate())
+    except (wave.Error, EOFError, ZeroDivisionError):
+        return None
 
 
 def _mmss(secs):
@@ -75,9 +91,20 @@ class Comms:
         fam = b if a == "elder" else a if b == "elder" else None
         return fam if fam is not None and self.contact(fam) else None
 
+    def _fresh(self, client, within=PAGE_TIMEOUT):
+        t = self.clients.get(client)
+        return t is not None and self.clock() - t < within
+
     def online(self, party):
-        t = self.clients.get("elder" if party == "elder" else "family:%s" % party)
-        return t is not None and self.clock() - t < PAGE_TIMEOUT
+        return self._fresh("elder" if party == "elder" else "family:%s" % party)
+
+    def player(self):
+        """家属的语音留言由谁放给老人：床头屏页面（"page"）优先，其次床头盒（"box"），都不在 None。"""
+        if self.online("elder"):
+            return "page"
+        if self._fresh("elder-box"):
+            return "box"
+        return None
 
     @property
     def live(self):
@@ -235,42 +262,54 @@ class Comms:
 
     # ---------- 语音留言 ----------
 
-    def add_voice(self, frm, to, mime, data, dur):
-        """存一段录音 → (消息, acts, 错误)。消息由总线放进 messages（和文字留言一条时间线）。"""
-        fam = self._family_of(frm, to)
-        if fam is None:
-            return None, [], "只能在%s和白名单家属之间留言" % self.cfg["elder_title"]
+    def add_voice(self, frm, to, mime, data, dur, via=None):
+        """存一段录音 → (消息列表, acts, 错误)。消息由总线放进 messages（和文字留言一条时间线）。
+        老人发的可以 to="all"：一段录音、每位家属各一条消息（床头盒默认这样发）。via = 床头盒编号，只进日志。"""
+        targets = [c["id"] for c in self.cfg["contacts"]] if frm == "elder" and to == "all" else [to]
+        if any(self._family_of(frm, t) is None for t in targets):
+            return [], [], "只能在%s和白名单家属之间留言" % self.cfg["elder_title"]
         base = (mime or "").split(";")[0].strip().lower()
         if base not in AUDIO_TYPES:
-            return None, [], "不支持的录音格式：%s" % (mime or "空")
+            return [], [], "不支持的录音格式：%s" % (mime or "空")
         if not data:
-            return None, [], "录音是空的"
+            return [], [], "录音是空的"
         if len(data) > MAX_VOICE_BYTES:
-            return None, [], "录音太大（超过 %d MB）" % (MAX_VOICE_BYTES // 1024 // 1024)
+            return [], [], "录音太大（超过 %d MB）" % (MAX_VOICE_BYTES // 1024 // 1024)
+        if dur in (None, ""):
+            dur = wav_seconds(data) if "wav" in base else None   # 床头盒可以不报时长，从 WAV 头算
         try:
             dur = float(dur)
         except (TypeError, ValueError):
-            return None, [], "缺少录音时长"
+            return [], [], "缺少录音时长"
         if dur < MIN_VOICE_SECONDS:
-            return None, [], "说话时间太短"
+            return [], [], "说话时间太短"
         dur = min(dur, MAX_VOICE_SECONDS)
         vid = self.next_voice_id
         self.next_voice_id += 1
         self.audio[vid] = {"mime": mime, "data": bytes(data)}
         for old in sorted(self.audio)[:-KEEP_VOICE]:
             del self.audio[old]
-        msg = {"ts": self.clock(), "from": frm, "to": to, "kind": "voice", "voice_id": vid,
-               "dur": round(dur, 1), "heard": False, "heard_ts": None, "text": None}
+        now = self.clock()
+        msgs = [{"ts": now, "from": frm, "to": t, "kind": "voice", "voice_id": vid, "dur": round(dur, 1),
+                 "heard": False, "heard_ts": None, "text": None, "via": via} for t in targets]
         secs = max(1, int(round(dur)))
-        c = self.contact(fam)
-        if to == "elder":
-            acts = [_ev("voice", "%s发来语音留言（%d 秒）" % (c["name"], secs), who="family"),
-                    _say("voice_from_family", contact=c["name"], pron=c["pron"])]
-        else:
-            acts = [_ev("voice", "%s给%s留了语音（%d 秒）" % (self.cfg["elder_title"], c["name"], secs), who="elder"),
-                    _notify(to, "voice", "%s发来一段语音留言（%d 秒）" % (self.cfg["elder_title"], secs),
-                            voice_id=vid, dur=msg["dur"])]
-        return msg, acts, None
+        if frm != "elder":
+            c = self.contact(frm)
+            target = self.player()
+            acts = [_ev("voice", "%s发来语音留言（%d 秒）" % (c["name"], secs), who="family")]
+            if target:   # 先念一句“女儿发来语音，我放给您听”，播放端等这句念完再放
+                acts.append(_say("voice_from_family", contact=c["name"], pron=c["pron"]))
+                self.request_play(vid, target, auto=True)
+            else:
+                acts.append(_say("voice_from_family_later", contact=c["name"], pron=c["pron"]))
+            return msgs, acts, None
+        names = "、".join(self.name(t) for t in targets)
+        acts = [_ev("voice", "%s给%s留了语音（%d 秒%s）" % (self.cfg["elder_title"], names, secs,
+                                                     "，床头盒 %s" % via if via else ""), who="elder")]
+        for t in targets:
+            acts.append(_notify(t, "voice", "%s发来一段语音留言（%d 秒）" % (self.cfg["elder_title"], secs),
+                                voice_id=vid, dur=round(dur, 1)))
+        return msgs, acts, None
 
     def get_audio(self, vid):
         try:
@@ -278,9 +317,10 @@ class Comms:
         except (TypeError, ValueError):
             return None
 
-    def request_play(self, vid):
+    def request_play(self, vid, target, auto=False):
+        """让播放端放一段家属留言。auto = 刚收到时自动放（播放端先等提示语念完）。"""
         self.play_seq += 1
-        self.play_req = {"seq": self.play_seq, "id": vid}
+        self.play_req = {"seq": self.play_seq, "id": vid, "target": target, "auto": auto, "ts": self.clock()}
 
     # ---------- 输出 ----------
 
@@ -300,5 +340,6 @@ class Comms:
         return {"call": self.view(c) if shown else None,
                 "history": self.history[-10:],
                 "play": self.play_req,
-                "online": dict({"elder": self.online("elder")},
+                "online": dict({"elder": self.online("elder"), "box": self._fresh("elder-box"),
+                                "speaker": self._fresh("tts_player", SPEAKER_TIMEOUT)},
                                **{x["id"]: self.online(x["id"]) for x in self.cfg["contacts"]})}

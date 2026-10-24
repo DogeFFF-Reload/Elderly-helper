@@ -9,12 +9,14 @@
   GET/POST /api/params                    演示参数查看 / 运行中调整
   POST /api/call/start|offer|answer|hangup  老人端 ↔ 家属端语音通话的信令（WebRTC，见 agent/comms.py）
   GET  /api/call/sdp?id=&which=offer      取对方的 SDP
-  POST /api/voice_msg?from=&to=&dur=      语音留言（正文是录音原始字节）；GET ?id= 取回放
+  POST /api/voice_msg?from=&to=&dur=      语音留言（正文是录音原始字节，或床头盒的 multipart：audio/duration/elder）；GET ?id= 取回放
   GET  /ui/monitor | /ui/family | /ui/console | /ui/elder
 
 运行：python -m master_service [--host 0.0.0.0] [--port 8000]
 """
 import argparse
+import email.parser
+import email.policy
 import json
 import mimetypes
 import queue
@@ -362,6 +364,7 @@ class Bus:
         self.last_heard = None
         self.rps = None
         self.rps_last = None
+        self.fall_alerted = []   # 这次摔倒已经报过警的家属（老人说没事时给他们发“解除”）
         if hasattr(self, "med"):
             self.med.reset()
         if hasattr(self, "comms"):
@@ -425,7 +428,7 @@ class Bus:
         self.next_notif_id += 1
         self.notifications.append(n)
         del self.notifications[:-50]
-        level = "danger" if kind in ("fall", "120") else "info"
+        level = "danger" if kind in ("fall", "fall_alert", "120") else "info"
         self.events.add("notify", "通知%s：%s" % (c["name"], text), level, contact=c["id"], kind=kind)
 
     def _run(self, acts):
@@ -534,7 +537,7 @@ class Bus:
         if name == "dial_cancel":
             return self.fsm.cancel_dial()
         if name == "elder_ok":
-            acts = self.fsm.elder_ok("语音“%s”" % text)
+            acts = self._elder_ok("语音“%s”" % text)
             if acts:
                 self.skeleton = {"pose": "standing", "keypoints": None, "ts": self.clock()}
             return acts or [_say("elder_ok_idle")]
@@ -715,16 +718,40 @@ class Bus:
             self.rps = None
             if self.skeleton["pose"] != "live":
                 self.skeleton = {"pose": "fallen", "keypoints": None, "ts": self.clock()}
+            was_idle = self.fsm.state == IDLE
             acts += self.fsm.fall_detected(room, self.is_night())
+            if was_idle and self.fsm.state == ASKING:
+                acts += self._fall_alert(room)
             self._run(acts)
             return {"ok": True, "state": self.fsm.state}
+
+    def _fall_alert(self, room):
+        """识别到摔倒就立刻给所有家属报警，不等询问结果。询问、升级（按 SOS、紧急通话、逐个通知）照旧由状态机走；
+        老人说“没事”会再给收到警报的家属发“解除”。"""
+        g = self.fsm.snapshot()
+        self.fall_alerted = [c["id"] for c in self.cfg["contacts"]]
+        text = "%s在%s可能摔倒了，CareMate 正在确认情况；%d 秒内没有回应会自动按 SOS 并呼叫你" % (
+            self.cfg["elder_title"], room, int(g["wait"]))
+        return [{"do": "notify", "contact": cid, "kind": "fall_alert", "text": text} for cid in self.fall_alerted]
+
+    def _elder_ok(self, via):
+        """老人表示没事：状态机照旧处理；另外给收到过摔倒警报、但状态机没通知到的家属补一条“解除”。"""
+        before = self.fsm.snapshot()
+        acts = self.fsm.elder_ok(via)
+        if acts and self.fall_alerted:
+            told = set(before["notified"]) if before["state"] in (SOS, HELP_COMING) else set()
+            acts += [{"do": "notify", "contact": cid, "kind": "cancel",
+                      "text": "%s说没事了，摔倒警报解除" % self.cfg["elder_title"]}
+                     for cid in self.fall_alerted if cid not in told]
+            self.fall_alerted = []
+        return acts
 
     def button(self, key="ok"):
         with self.lock:
             if key != "ok":
                 return {"ok": False, "reason": "unknown key"}
             self.events.add("button", "床头盒绿键按下", who="elder")
-            acts = self.fsm.elder_ok("绿键")
+            acts = self._elder_ok("绿键")
             if acts:
                 self.skeleton = {"pose": "standing", "keypoints": None, "ts": self.clock()}
             self._run(acts or [_say("elder_ok_idle")])
@@ -814,41 +841,54 @@ class Bus:
         with self.lock:
             return self.comms.sdp(call_id, which)
 
-    def voice_upload(self, frm, to, mime, data, dur):
+    def voice_upload(self, frm, to, mime, data, dur, via=None):
         with self.lock:
-            msg, acts, err = self.comms.add_voice(frm, to, mime, data, dur)
+            msgs, acts, err = self.comms.add_voice(frm, to, mime, data, dur, via)
             if err:
                 return {"ok": False, "error": err}
-            self.messages.append(msg)
+            self.messages.extend(msgs)
             self._run(acts)
-            return {"ok": True, "voice_id": msg["voice_id"], "dur": msg["dur"]}
+            return {"ok": True, "voice_id": msgs[0]["voice_id"], "dur": msgs[0]["dur"], "to": [m["to"] for m in msgs]}
 
     def voice_audio(self, voice_id):
         with self.lock:
             return self.comms.get_audio(voice_id)
 
     def voice_heard(self, voice_id, party):
+        """收听方放完一条语音留言（老人这边：床头屏页面或床头盒都报 party=elder）。"""
         with self.lock:
-            for m in self.messages:
-                if m.get("kind") == "voice" and str(m["voice_id"]) == str(voice_id):
-                    if m["to"] != party:
-                        return {"ok": False, "error": "这条留言不是发给你的"}
-                    if not m["heard"]:
-                        m["heard"], m["heard_ts"] = True, self.clock()
-                    return {"ok": True}
-            return {"ok": False, "error": "没有这条留言"}
+            same = [m for m in self.messages if m.get("kind") == "voice" and str(m["voice_id"]) == str(voice_id)]
+            if not same:
+                return {"ok": False, "error": "没有这条留言"}
+            m = next((x for x in same if x["to"] == party), None)
+            if m is None:
+                return {"ok": False, "error": "这条留言不是发给你的"}
+            if not m["heard"]:
+                m["heard"], m["heard_ts"] = True, self.clock()
+            return {"ok": True}
 
     def _voice_play(self):
-        """老人说“听留言”：床头屏在线就让它放（先放没听过的，最早的先放），不在线就说一声。"""
-        if not self.comms.online("elder"):
+        """老人说“听留言”：让播放端（床头屏页面优先，其次床头盒）放，先放没听过的、最早的先放。"""
+        target = self.comms.player()
+        if target is None:
             return [_say("voice_no_screen")]
         mine = [m for m in self.messages if m.get("kind") == "voice" and m["to"] == "elder"
                 and self.comms.get_audio(m["voice_id"])]
         if not mine:
             return [_say("voice_none")]
         m = next((x for x in mine if not x["heard"]), mine[-1])
-        self.comms.request_play(m["voice_id"])
+        self.comms.request_play(m["voice_id"], target)
         return [_ev("voice", "播放%s的语音留言" % self.comms.name(m["from"]), who="elder")]
+
+    def elder_reread(self, ts):
+        """老人端点“读给我听”：把那条家属文字留言再念一遍（走喇叭，和收到时同一句台词）。"""
+        with self.lock:
+            m = next((x for x in self.messages if x["to"] == "elder" and x.get("text")
+                      and str(x["ts"]) == str(ts)), None)
+            if m is None:
+                return {"ok": False, "error": "没有这条留言"}
+            self._run([_say("family_message", contact=self.comms.name(m["from"]), text=m["text"])])
+            return {"ok": True}
 
     # ---------- 操作台 ----------
 
@@ -1088,6 +1128,25 @@ def _truthy(v):
     return bool(v)
 
 
+def _voice_from_form(bus, ctype, raw, query):
+    """床头盒（S3 屏 + X5）按需求单发的 multipart/form-data：audio=WAV 文件、duration、time、elder（盒子编号），
+    可选 to（默认 all = 发给所有家属）、from（默认 elder）。字段也可以放在 URL 查询串里。"""
+    msg = email.parser.BytesParser(policy=email.policy.HTTP).parsebytes(
+        b"Content-Type: " + ctype.encode("latin-1") + b"\r\n\r\n" + raw)
+    fields, audio, mime = dict(query), None, "audio/wav"
+    for part in msg.iter_parts() if msg.is_multipart() else ():
+        name = part.get_param("name", header="content-disposition")
+        if name == "audio":
+            audio = part.get_payload(decode=True)
+            mime = part.get_content_type() if part.get_content_type() != "application/octet-stream" else "audio/wav"
+        elif name:
+            fields[name] = part.get_payload(decode=True).decode("utf-8", "replace").strip()
+    if not audio:
+        return {"ok": False, "error": "multipart 里没有 audio 文件字段"}
+    return bus.voice_upload(fields.get("from", "elder"), fields.get("to", "all"), mime, audio,
+                            fields.get("duration") or fields.get("dur"), fields.get("elder"))
+
+
 def dispatch_post(bus, path, body, query=None):
     """POST 路由表；HTTP 层和 demo_driver --local 共用。没有这个路由返回 None。"""
     q = query or {}
@@ -1114,6 +1173,7 @@ def dispatch_post(bus, path, body, query=None):
         "/api/call/answer": lambda: bus.call_answer(arg("id"), arg("party"), arg("sdp", "")),
         "/api/call/hangup": lambda: bus.call_hangup(arg("id"), arg("party")),
         "/api/voice_msg/heard": lambda: bus.voice_heard(arg("id"), arg("party")),
+        "/api/elder/reread": lambda: bus.elder_reread(arg("ts")),
     }
     fn = routes.get(path)
     return fn() if fn else None
@@ -1191,13 +1251,16 @@ def make_handler(bus):
         def do_POST(self):
             url = urllib.parse.urlparse(self.path)
             q = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
-            if url.path == "/api/voice_msg":   # 正文是录音原始字节，不是 JSON
+            if url.path == "/api/voice_msg":   # 正文是录音（原始字节或 multipart），不是 JSON
                 n = int(self.headers.get("Content-Length") or 0)
-                if n > MAX_VOICE_BYTES:
+                if n > MAX_VOICE_BYTES + 64 * 1024:
                     return self._json({"ok": False, "error": "录音太大"}, 413)
-                data = self.rfile.read(n) if n else b""
-                return self._json(bus.voice_upload(q.get("from"), q.get("to"), self.headers.get("Content-Type", ""),
-                                                   data, q.get("dur")))
+                ctype = self.headers.get("Content-Type", "")
+                raw = self.rfile.read(n) if n else b""
+                if ctype.lower().startswith("multipart/form-data"):
+                    return self._json(_voice_from_form(bus, ctype, raw, q))
+                return self._json(bus.voice_upload(q.get("from"), q.get("to"), ctype, raw,
+                                                   q.get("dur") or q.get("duration"), q.get("elder")))
             result = dispatch_post(bus, url.path, _read_json(self), q)
             if result is None:
                 return self._json({"ok": False, "error": "not found"}, 404)

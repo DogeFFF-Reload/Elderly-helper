@@ -14,6 +14,7 @@ PATHS = {
     "code/agent/comms.py": "software",
     "code/ui/elder/": "software",
     "code/ui/shared/comms.js": "software",
+    "code/elder_link/": "software",
     "code/config.py": "software",
     "code/demo_driver.py": "software",
     "code/tests/": "software",
