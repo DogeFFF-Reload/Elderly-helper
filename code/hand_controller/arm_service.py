@@ -12,13 +12,17 @@ GET  /status                       在线 + 臂和每只手的状态 + 最近动
 
 caremate_hand2_kit 的写法也认（只在 HTTP 边界换成仓库的规范名，HISTORY 里始终是规范名，requested 记 kit 原名）：
   POST /pose/<名字>?hand=  只做手的动作，映射后会动臂的回 400；未知名字按 kit 的约定回 200 {"ok": false}
-  POST /press_sos  /handover_med  /reset  /thumbs  /card_up  /wave
+  POST /press_sos  /handover_med  /return_med  /reset  /thumbs  /card_up  /wave
   kit 名字 comfort_rhythm、rock、fingers_3、hold_card…… 换成仓库的动作名，见 KIT_NAMES / KIT_ROUTES。
+
+T5AI 大屏（firmware/bedside_t5ai）：四个键走上面的 /handover_med /return_med /press_sos /reset，
+  语音键 POST /voice_cmd（16 kHz 裸 PCM）→ voice_cmd 离线识别 → 同一条路；在线灯看 GET /status 回不回 200。
 
 环境变量（手的写法和 caremate_hand2_kit docs/20 一致）：
   ARM_BACKEND   mock（默认，臂只打印）| panthera；真臂见 arm_backend 的说明
   ARM_EFFECTOR  gripper | hand1（不设自动选）
   ARM_SKILLS_FILE  点位 / 动作文件，不设用 arm_skills.json；上电自检用 hand_controller/arm_selftest.json（小角度）
+  VOSK_MODEL    语音键的 vosk 中文模型目录，默认 /root/caremate/vosk-cn
   MOCK_SERIAL   不设 = mock，只打印不碰串口；=0 走真串口（rh56_register_map.VERIFIED 之前只读，不发动作）
   HAND1_PORT / HAND1_ID   手#1 串口（COM7、/dev/ttyUSB0…）和手的 ID，默认 1
   HAND2_PORT / HAND2_ID   手#2，默认 ID 2（手出厂都是 1：各接各的串口时设 HAND2_ID=1）
@@ -39,6 +43,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from config import utf8_console
 from hand_controller import arm_safety as S
 from hand_controller import rh56_register_map as RM
+from hand_controller import voice_cmd
 from hand_controller.arm_backend import TOLERANCE, ArmError, make_backend
 from hand_controller.arm_kinematics import tool_position
 from hand_controller.poses import JOINTS, POSES, RHYTHMS, SAFETY, SEQUENCES, label
@@ -421,6 +426,7 @@ KIT_NAMES = {
 KIT_ROUTES = {
     "/press_sos": ("press_sos", 1),
     "/handover_med": ("deliver_medicine", 1),
+    "/return_med": ("return_medicine", 1),     # T5AI 大屏的「还药」键
     "/reset": ("home", 1),
     "/thumbs": ("thumbs_up", 1),
     "/card_up": ("sign_coming", 2),
@@ -443,6 +449,7 @@ class Handler(BaseHTTPRequestHandler):
                                     "backend": "rh56_eb90", "arm_backend": arm().backend.name,
                                     "arm": arm().status(),
                                     "hands": {str(h): w.status() for h, w in hands().items()},
+                                    "voice": voice_cmd.status(),
                                     "recent": HISTORY[-10:]})
         self._json(404, {"ok": False})
 
@@ -472,43 +479,53 @@ class Handler(BaseHTTPRequestHandler):
         if url.path in KIT_ROUTES:
             name, hand = KIT_ROUTES[url.path]
             return self._pose(name, str(hand), alias_of=url.path)
+        if url.path == "/voice_cmd":
+            n = int(self.headers.get("Content-Length") or 0)
+            if n > voice_cmd.MAX_BYTES:
+                return self._json(413, {"ok": False, "error": "录音太长（%d 字节）" % n})
+            return self._json(*voice_cmd.handle(self.rfile.read(n), dispatch))
         self._json(404, {"ok": False})
 
     def _pose(self, name, hand_text, alias_of=None):
-        requested = alias_of.lstrip("/") if alias_of else name
-        if name not in POSES:
-            return self._json(400, {"ok": False, "error": "unknown pose: " + requested})
-        try:
-            hand = int(hand_text)
-        except ValueError:
-            hand = 0
-        if name == "gentle_hold":
-            hand = 2                 # 轻握安抚只归手#2
-        if hand not in hands():
-            return self._json(400, {"ok": False, "error": "hand 只能是 1 或 2"})
-        if hand == 1 and name in ARM_SKILLS:
-            a = arm()
-            code, why = a.request(name)
-            if code != 200:
-                return self._json(code, {"ok": False, "error": why})
-            mock = a.backend.mock
-        else:
-            if hand == 1 and arm().holds_hand1():
-                return self._json(409, {"ok": False, "error": "手#1 装在臂上，臂正在做「%s」" % label(arm().current)})
-            w = hands()[hand]
-            ok, why = w.ready()
-            if not ok:
-                return self._json(503, {"ok": False, "error": "手#%d：%s" % (hand, why)})
-            w.submit(name)
-            mock = w.driver.mock
-        _record_history({"ts": time.time(), "pose": name, "hand": hand, "requested": requested})
-        body = {"ok": True, "pose": name, "requested": requested, "hand": hand, "mock": mock}
-        if alias_of:
-            body["alias_of"] = alias_of
-        self._json(200, body)
+        self._json(*dispatch(name, hand_text, alias_of))
 
     def log_message(self, *args):
         pass
+
+
+def dispatch(name, hand_text, alias_of=None, requested=None):
+    """收下一个动作：(HTTP 码, 回包)。主脑、kit 端点、T5AI 按键和语音都走这里。"""
+    requested = requested or (alias_of.lstrip("/") if alias_of else name)
+    if name not in POSES:
+        return 400, {"ok": False, "error": "unknown pose: " + requested}
+    try:
+        hand = int(hand_text)
+    except ValueError:
+        hand = 0
+    if name == "gentle_hold":
+        hand = 2                 # 轻握安抚只归手#2
+    if hand not in hands():
+        return 400, {"ok": False, "error": "hand 只能是 1 或 2"}
+    if hand == 1 and name in ARM_SKILLS:
+        a = arm()
+        code, why = a.request(name)
+        if code != 200:
+            return code, {"ok": False, "error": why}
+        mock = a.backend.mock
+    else:
+        if hand == 1 and arm().holds_hand1():
+            return 409, {"ok": False, "error": "手#1 装在臂上，臂正在做「%s」" % label(arm().current)}
+        w = hands()[hand]
+        ok, why = w.ready()
+        if not ok:
+            return 503, {"ok": False, "error": "手#%d：%s" % (hand, why)}
+        w.submit(name)
+        mock = w.driver.mock
+    _record_history({"ts": time.time(), "pose": name, "hand": hand, "requested": requested})
+    body = {"ok": True, "pose": name, "requested": requested, "hand": hand, "mock": mock}
+    if alias_of:
+        body["alias_of"] = alias_of
+    return 200, body
 
 
 def probe(out=print):
@@ -607,6 +624,7 @@ def main():
         untaught = a.status().get("untaught")
         if untaught:
             print("臂：这些点位还没示教，用到它们的动作会被拒绝：%s" % "、".join(untaught), flush=True)
+    threading.Thread(target=voice_cmd.preload, daemon=True).start()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     signal.signal(signal.SIGTERM, _terminate)
     print("arm_service on http://%s:%d（%s）" % (args.host, args.port, "mock" if _mock_all() else "真机"), flush=True)

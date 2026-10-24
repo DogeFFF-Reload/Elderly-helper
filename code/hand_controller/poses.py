@@ -5,6 +5,7 @@ label 会显示在大屏时间线上。真硬件到场后，每个 pose 对应 R
 POSES = {
     "home": {"label": "回到待机位", "hand": 1},
     "deliver_medicine": {"label": "臂+手#1 递出药盒", "hand": 1},
+    "return_medicine": {"label": "臂+手#1 接回药盒放回托盘", "hand": 1},   # T5AI 大屏「还药」
     "press_sos": {"label": "臂+手#1 按下 SOS 键", "hand": 1},
     "sign_family_received": {"label": "手#1 举牌“家人已收到”", "hand": 1},
     "gentle_hold": {"label": "手#2 轻握安抚（限力）", "hand": 2},
@@ -79,6 +80,7 @@ JOINTS = {
     "home": _j(70, 75, 75, 75, 75, 50),            # :示教: 放松
     "release": PAPER,
     "deliver_medicine": _j(35, 35, 35, 35, 35, 60),  # :示教: 握住药盒
+    "return_medicine": _j(35, 35, 35, 35, 35, 60),   # :示教: 接住老人放进掌心的药盒
     "press_sos": _j(30, 30, 30, 30, 30, 55),       # 半握拳用指节按键（kit 的 grip_pillow），不拿单根手指硬顶
     "sign_family_received": HOLD_CARD,
     "sign_coming": HOLD_CARD,
