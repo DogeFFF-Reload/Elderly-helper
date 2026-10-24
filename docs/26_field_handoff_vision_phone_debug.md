@@ -2,7 +2,7 @@
 
 > 用途：到开发现场后，按这份文档分工和验收。它面向不熟悉硬件的视觉/软件同学，也可以直接转发给硬件队友。
 >
-> 当前基线：仓库 `main` 分支提交 `e8b2549`，全量回归 22 套、187 条通过。现场唯一执行端是仓库里的 `code/hand_controller/arm_service.py`，不要启动 `caremate_d_kit` 中的同名服务。
+> 当前基线：仓库 `main` 分支提交 `e8b2549`，全量回归 27 套、367 条通过。现场唯一执行端是仓库里的 `code/hand_controller/arm_service.py`，不要启动 `caremate_d_kit` 中的同名服务。
 
 ## 1. 先记住三条边界
 
