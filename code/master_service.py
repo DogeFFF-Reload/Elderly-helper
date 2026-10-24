@@ -365,6 +365,7 @@ class Bus:
         self.rps = None
         self.rps_last = None
         self.fall_alerted = []   # 这次摔倒已经报过警的家属（老人说没事时给他们发“解除”）
+        self.fall_photo = None   # 视觉判定跌倒时拍的一张现场照片，只给家属端看；老人说没事或回到空闲 30 秒后删除
         if hasattr(self, "med"):
             self.med.reset()
         if hasattr(self, "comms"):
@@ -738,6 +739,8 @@ class Bus:
         """老人表示没事：状态机照旧处理；另外给收到过摔倒警报、但状态机没通知到的家属补一条“解除”。"""
         before = self.fsm.snapshot()
         acts = self.fsm.elder_ok(via)
+        if acts:
+            self.fall_photo = None   # 警报解除，现场照片立刻删
         if acts and self.fall_alerted:
             told = set(before["notified"]) if before["state"] in (SOS, HELP_COMING) else set()
             acts += [{"do": "notify", "contact": cid, "kind": "cancel",
@@ -879,6 +882,19 @@ class Bus:
         m = next((x for x in mine if not x["heard"]), mine[-1])
         self.comms.request_play(m["voice_id"], target)
         return [_ev("voice", "播放%s的语音留言" % self.comms.name(m["from"]), who="elder")]
+
+    def fall_photo_upload(self, data, mime, src="vision"):
+        """视觉判定跌倒时上传一张现场照片（JPEG/PNG），家属端警报卡里显示。只留内存、只留这一张。"""
+        with self.lock:
+            base = (mime or "").split(";")[0].strip().lower()
+            if base not in ("image/jpeg", "image/png", "image/webp"):
+                return {"ok": False, "error": "只收 JPEG / PNG 照片"}
+            if not data or len(data) > 2 * 1024 * 1024:
+                return {"ok": False, "error": "照片为空或超过 2 MB"}
+            self.photo_seq = getattr(self, "photo_seq", 0) + 1
+            self.fall_photo = {"id": self.photo_seq, "ts": self.clock(), "mime": base, "data": bytes(data), "src": src}
+            self.events.add("fall", "收到摔倒现场照片（%s，%d KB），只给家属端看，解除后删除" % (src, len(data) // 1024), "warn")
+            return {"ok": True, "id": self.photo_seq}
 
     def dial120(self, by="elder", via="床头屏"):
         """一键 120。老人端（床头屏长按 2 秒 / 床头盒的 120 键）：长按本身就是确认，直接走模拟拨号 + 通知所有家属
@@ -1034,6 +1050,9 @@ class Bus:
                 acts += [_ev("rps", "猜拳第 %d 局超时：视觉没有回传手势" % r["round"], "warn"), _say("rps_no_camera")]
             if self.rps_last and now - self.rps_last["ts"] > 10:
                 self.rps_last = None
+            p = self.fall_photo
+            if p and self.fsm.state == IDLE and now - p["ts"] > 30:
+                self.fall_photo = None
             if acts:
                 self._run(acts)
 
@@ -1107,6 +1126,7 @@ class Bus:
                 "rps": self._rps_view(),
                 "med": self.med.snapshot(),
                 "comms": self.comms.snapshot(),
+                "fall_photo": ({k: self.fall_photo[k] for k in ("id", "ts", "src")} if self.fall_photo else None),
                 "skeleton": self.skeleton,
                 "arm": self.arm.status(),
                 "hands": {k: dict(v) for k, v in self.hands.items()},
@@ -1241,6 +1261,11 @@ def make_handler(bus):
                 if client:   # 老人端 / 家属端页面报到：通话要知道对方页面开没开
                     bus.saw_client(client[:40])
                 return self._json(bus.poll(int(q.get("since", ["0"])[0])))
+            if path == "/api/fall_photo":
+                p = bus.fall_photo
+                if not p or str(p["id"]) != q.get("id", [""])[0]:
+                    return self._json({"ok": False, "error": "没有这张照片（已解除并删除）"}, 404)
+                return self._send(200, p["data"], p["mime"])
             if path == "/api/call/sdp":
                 return self._json(bus.call_sdp(q.get("id", [""])[0], q.get("which", [""])[0]))
             if path == "/api/voice_msg":
@@ -1272,6 +1297,12 @@ def make_handler(bus):
         def do_POST(self):
             url = urllib.parse.urlparse(self.path)
             q = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
+            if url.path == "/api/fall_photo":   # 正文是照片原始字节
+                n = int(self.headers.get("Content-Length") or 0)
+                if n > 2 * 1024 * 1024:
+                    return self._json({"ok": False, "error": "照片太大"}, 413)
+                return self._json(bus.fall_photo_upload(self.rfile.read(n) if n else b"",
+                                                        self.headers.get("Content-Type", ""), q.get("src", "vision")))
             if url.path == "/api/voice_msg":   # 正文是录音（原始字节或 multipart），不是 JSON
                 n = int(self.headers.get("Content-Length") or 0)
                 if n > MAX_VOICE_BYTES + 64 * 1024:

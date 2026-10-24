@@ -1,6 +1,7 @@
 // 三块屏共用：轮询 /api/poll；发送统一 UTF-8 JSON
 const Bus = (() => {
   let since = 0;
+  let client = "";   // 老人端 "elder" / 家属端 "family:<id>"：主脑据此知道页面开着（通话要用）
   const listeners = [];
 
   async function post(path, body) {
@@ -15,7 +16,7 @@ const Bus = (() => {
   async function tick() {
     let payload;
     try {
-      const r = await fetch("/api/poll?since=" + since, { cache: "no-store" });
+      const r = await fetch("/api/poll?since=" + since + (client ? "&client=" + encodeURIComponent(client) : ""), { cache: "no-store" });
       const data = await r.json();
       // 总线重启（id 回退）或收到 reset 事件 → 各屏清空本地时间线
       let reset = data.last_id < since;
@@ -38,7 +39,8 @@ const Bus = (() => {
     post,
     voice: (text) => post("/mock/voice", { text }),
     on: (fn) => listeners.push(fn),
-    start: () => tick(),
+    setClient: (name) => { client = name || ""; },
+    start: (opts) => { if (opts && opts.client) client = opts.client; tick(); },
   };
 })();
 
@@ -60,7 +62,7 @@ const UI = {
       fall: "⚠️", ask: "❓", ok: "✅", sos: "🚨", notify: "📨", family_ack: "💚", dial: "📞",
       health: "❤️", deliver: "💊", teach: "📖", message: "✉️", echo: "💬", exercise: "🖐️",
       blocked: "⛔", agent: "🤖", night: "🌙", arm: "🦾", heard: "🗣️", say: "🔊", button: "🟢",
-      reset: "↺", system: "⚙️", estop: "🛑", med: "⏰",
+      reset: "↺", system: "⚙️", estop: "🛑", med: "⏰", call: "📞", voice: "🎙️",
     })[ev.type] || "•";
   },
   contactName(state, id) {
