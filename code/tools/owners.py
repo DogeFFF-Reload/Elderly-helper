@@ -10,6 +10,7 @@ PATHS = {
     "code/agent/skills.json": "software",
     "code/agent/llm_client.py": "software",
     "code/agent/intent.py": "software",
+    "code/agent/med_reminder.py": "software",
     "code/config.py": "software",
     "code/demo_driver.py": "software",
     "code/tests/": "software",

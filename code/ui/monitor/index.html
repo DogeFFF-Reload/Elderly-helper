@@ -415,6 +415,11 @@ function overlay(s) {
         `<div class="big">${r.player ? N[r.player] : "？"}  vs  ${N[r.robot]}</div><p>${res}</p>` });
     }
   }
+  const mp = s.med && s.med.enabled && s.med.pending;
+  if (mp) {
+    items.push({ key: "med-" + mp.id, cls: "card", html: `<h3>⏰ 到吃${UI.esc(mp.name)}的时间了<span class="count">${mp.state === "delivered" ? "已递药" : UI.esc(mp.slot)}</span></h3>
+      <p>说“把药递给我”机械臂递药盒；吃完说“吃了”打卡，家属端同步</p>` });
+  }
   if (s.exercise.active) {
     items.push({ key: "beat", cls: "beat", html: `<div class="n">${s.exercise.beat}<small> / ${s.exercise.total} 拍</small></div>
       <div class="muted">🖐️ 手指操带练</div>` });
