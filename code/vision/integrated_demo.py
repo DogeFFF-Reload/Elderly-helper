@@ -71,7 +71,7 @@ class DemoTarget:
             self.closed = True
             raise KeyboardInterrupt
         if self.status_path and time.monotonic() - self.last_save >= .5:
-            write_json(self.status_path, {"status": "running", "window_open": self.viewer is not None,
+            write_json(self.status_path, {"status": "running", "window_open": bool(self.viewer and getattr(self.viewer, "native_window", True)),
                        "scene": self.scene, "input_source": self.source, "guard_state": self.current["guard"]["state"],
                        "actions": len(self.master.arm.sent), "camera_opened": self.camera_opened,
                        "phone_stream_opened": self.phone_stream_opened, "real_actuator": False,
@@ -92,7 +92,8 @@ class DemoTarget:
             if self.viewer:
                 self.current = self.state()
                 self.present()
-                time.sleep(step / self.speed)
+                if getattr(self.viewer, "realtime", True):
+                    time.sleep(step / self.speed)
 
 
 class VisualSink(MockPoster):
@@ -330,7 +331,9 @@ def run_full_demo(output, *, keypoints=None, normal_confirmed=False, viewer=None
         target.scene = "完整模拟演示通过" if report["ok"] else "演示停止，请查看结果报告"
         target.source = "各类输入已分别标注；未连接真实执行端"
         target.current = target.state()
-        if viewer and not target.closed:
+        if viewer and not target.closed and not getattr(viewer, "keep_open", True):
+            target.present()
+        if viewer and not target.closed and getattr(viewer, "keep_open", True):
             try:
                 # Keep the native view and three project web screens available.
                 deadline = time.monotonic() + 600
@@ -374,19 +377,22 @@ def write_report(output, report):
                 z.write(output / name, name)
 
 
-class Viewer:
-    def __init__(self):
-        import cv2
+class DemoRenderer:
+    """Render a frame without creating a window or accessing a camera."""
+    def __init__(self, *, font_path=None, footer=None):
         from PIL import ImageFont
-        self.cv2, self.fullscreen = cv2, True
-        self.fonts = {s: ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", s) for s in (23, 28, 38)}
-        cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
-        cv2.setWindowProperty(WINDOW, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        candidates = [font_path] if font_path else ["C:/Windows/Fonts/msyh.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/System/Library/Fonts/PingFang.ttc"]
+        selected = next((str(p) for p in candidates if p and Path(p).is_file()), None)
+        if selected is None:
+            raise RuntimeError("找不到中文字体，请通过 --font 指定字体文件")
+        self.fonts = {s: ImageFont.truetype(selected, s) for s in (23, 28, 38)}
+        self.footer = footer
 
-    def show(self, target):
-        import numpy as np
+    def render(self, target):
         from PIL import Image, ImageDraw
-        from vision.preview import BONES
+        from vision.skeleton import BONES
         image = Image.new("RGB", (1440,900), "#0e1929")
         draw = ImageDraw.Draw(image)
         draw.text((28,18), "CareMate · 视觉接入完整模拟演示", font=self.fonts[38], fill="white")
@@ -397,7 +403,7 @@ class Viewer:
         draw.rounded_rectangle((22,195,735,785), radius=20, fill="#182a41")
         x, y, w, h = 50, 210, 650, 550
         if target.frame is not None:
-            picture = Image.fromarray(self.cv2.cvtColor(target.frame, self.cv2.COLOR_BGR2RGB))
+            picture = Image.fromarray(target.frame[:, :, ::-1])
             picture.thumbnail((675, 550))
             w, h = picture.size
             x, y = 22 + (713-w)//2, 210 + (550-h)//2
@@ -423,8 +429,25 @@ class Viewer:
             draw.text((780,510+i*43),text[:25],font=self.fonts[23],fill="#b5c5d9")
         tail = target.logs[-2:]
         for i,line in enumerate(tail):
-            draw.text((28,800+i*36),line.strip()[:57],font=self.fonts[23],fill="#b5c5d9")
-        draw.text((28,868), "Q：关闭并保存  |  F：全屏  |  脚本回放 %.1f 倍；实时输入按真实时间" % target.speed,font=self.fonts[23],fill="#b5c5d9")
+            line = line.strip().replace("✓", "通过：").replace("✗", "未通过：").replace("✅", "通过：").replace("❌", "未通过：")
+            line = line.replace("⚠", "提醒：").replace("\ufe0f", "")
+            draw.text((28,800+i*36),line[:57],font=self.fonts[23],fill="#b5c5d9")
+        footer = self.footer or "Q：关闭并保存  |  F：全屏  |  脚本回放 %.1f 倍；实时输入按真实时间" % target.speed
+        draw.text((28,868), footer,font=self.fonts[23],fill="#b5c5d9")
+        return image
+
+
+class Viewer(DemoRenderer):
+    def __init__(self):
+        super().__init__()
+        import cv2
+        self.cv2, self.fullscreen = cv2, True
+        cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+        cv2.setWindowProperty(WINDOW, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
+    def show(self, target):
+        import numpy as np
+        image = self.render(target)
         self.cv2.imshow(WINDOW, self.cv2.cvtColor(np.asarray(image),self.cv2.COLOR_RGB2BGR))
         key = self.cv2.waitKey(1)&0xff
         if key in (ord('q'),ord('Q')):
