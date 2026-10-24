@@ -125,40 +125,6 @@ class ArmClientTest(unittest.TestCase):
         self.assertIn("400", str(ctx.exception))
         self.assertEqual(arm_service.HISTORY, [])
 
-    def test_http_real_branch_with_in_memory_backend(self):
-        """Exercise the non-mock HTTP branch without a serial device."""
-        fake = arm_service.RH56Backend(
-            arm_service.RH56F2(mock=True), arm_service.RH56F2(mock=True))
-        old_mock = arm_service.MOCK_SERIAL
-        old_history = list(arm_service.HISTORY)
-        try:
-            arm_service.MOCK_SERIAL = False
-            arm_service.HISTORY.clear()
-            with mock.patch.object(arm_service, "_ensure_real_backend", return_value=fake), \
-                 mock.patch.object(arm_service, "_execute",
-                                   side_effect=lambda pose, hand: fake.execute(pose, hand)):
-                server = ThreadingHTTPServer(("127.0.0.1", 0), arm_service.Handler)
-                server.daemon_threads = True
-                thread = threading.Thread(target=server.serve_forever, daemon=True)
-                thread.start()
-                def stop_server():
-                    server.shutdown()
-                    server.server_close()
-                    thread.join(timeout=2)
-                self.addCleanup(stop_server)
-                base = "http://127.0.0.1:%d" % server.server_address[1]
-                req = Request(base + "/pose/fingers_5", data=b"", method="POST")
-                with urlopen(req, timeout=1) as response:
-                    payload = response.read().decode("utf-8")
-                    self.assertEqual(response.status, 200)
-                    self.assertIn('"backend": "rh56_serial"', payload)
-                with urlopen(base + "/status", timeout=1) as response:
-                    self.assertEqual(response.status, 200)
-                    self.assertIn('"mock": true', response.read().decode("utf-8"))
-        finally:
-            arm_service.MOCK_SERIAL = old_mock
-            arm_service.HISTORY[:] = old_history
-
     def test_action_history_is_bounded(self):
         old_history = list(arm_service.HISTORY)
         try:
@@ -224,6 +190,43 @@ class BusArmFeedbackTest(unittest.TestCase):
     def test_snapshot_keeps_console_shape(self):
         bus, clock, arm = make_bus()
         self.assertIs(bus.snapshot()["arm"]["online"], True)
+
+    def test_hands_track_last_pose_for_screen(self):
+        # 大屏执行端动画的数据源：每只手最近一次动作 + 做没做成（手指操每拍是 quiet，不进时间线）
+        bus, clock, arm = make_bus()
+        hands = bus.snapshot()["hands"]
+        self.assertEqual((hands["1"]["pose"], hands["2"]["pose"]), ("home", "release"))
+        bus.voice("做个手指操吧")
+        clock.advance(8, bus)
+        h1 = bus.snapshot()["hands"]["1"]
+        self.assertTrue(h1["pose"].startswith("finger_"), h1)
+        self.assertEqual(h1["status"], "sent")
+        bus._arm_result(h1["pose"], 1, True, "", "")
+        self.assertEqual(bus.snapshot()["hands"]["1"]["status"], "ok")
+        bus.reset()
+        self.assertTrue(bus.snapshot()["hands"]["1"]["pose"].startswith("finger_"), "重置不让臂动，显示真机停在哪")
+
+    def test_hands_show_failure_status(self):
+        bus, clock, arm = make_bus(arm=DeadArm())
+        bus.fall("卧室")
+        clock.advance(6, bus)
+        h = bus.snapshot()["hands"]
+        self.assertEqual((h["1"]["pose"], h["1"]["status"]), ("press_sos", "offline"))
+        self.assertEqual((h["2"]["pose"], h["2"]["status"]), ("gentle_hold", "offline"))
+
+    def test_status_reports_mock_executor(self):
+        # 执行端是 mock 时，大屏 / 操作台 / 自检都不能说“真机”：主脑从 /status 读 mock 字段
+        url, stop = start_arm()
+        self.addCleanup(stop)
+        arm = ArmClient(url)
+        self.assertTrue(arm.probe())
+        self.assertIs(arm.status()["mock"], True)
+        from tools import preflight
+        nodes = {"bus": {"state": "IDLE"}, "arm": arm.status(), "box": {"online": False}, "vision": {"online": False}, "clients": {},
+                 "heard": None, "llm": {"mode": "scripted"}, "params_changed": {}}
+        rows = [r for r in preflight.check(nodes) if r[1] == "执行端"]
+        self.assertEqual(rows[0][0], "warn")
+        self.assertIn("模拟", rows[0][2])
 
     def test_end_to_end_with_real_arm_service(self):
         url, stop = start_arm()

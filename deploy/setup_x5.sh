@@ -36,8 +36,9 @@ case "$ROLE" in
     # 手机哨兵只依赖 Pillow；即使 PHONE_URL 还没填，提前装好也方便现场换机位
     "${PIP[@]}" -r "$ROOT/code/requirements-phonecam.txt" ;;
   b)
-     # X5-B owns the repository arm_service and the two RH56F2 RS485 links.
+     # X5-B 跑仓库的 arm_service，蓝盒在 /dev/ttyUSB*：装 pyserial，并把当前用户加进 dialout 组才打得开串口（重新登录生效）
      "${PIP[@]}" -r "$ROOT/code/requirements-hardware.txt"
+     sudo usermod -aG dialout "$USER"
      if [ "${WITH_ASR:-0}" = 1 ]; then "${PIP[@]}" -r "$ROOT/code/requirements-voice.txt"; fi ;;
 esac
 

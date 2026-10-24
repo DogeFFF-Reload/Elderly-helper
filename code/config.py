@@ -28,6 +28,8 @@ DEFAULTS = {
     # 夜间窗口 [start, end)，跨零点
     "night_start_hour": 19,
     "night_end_hour": 6,
+    # 本机时区应处的 UTC 偏移（小时）。北京时间 +8；只在启动时校验，演示中不可调
+    "expected_utc_offset": 8,
     # 时间覆盖开关：auto 按时钟 / on 强制夜间 / off 强制日间。演示时不依赖真实钟点
     "night_override": "auto",
     # 手指操每拍间隔（秒）
@@ -66,6 +68,7 @@ LIMITS = {
     "health_confirm_window": (5, 300),
     "night_start_hour": (0, 23),
     "night_end_hour": (0, 23),
+    "expected_utc_offset": (-12, 14),
     "exercise_beat_seconds": (0.5, 10),
     "rps_reveal_delay": (1, 10),
     "rps_timeout": (2, 30),
@@ -74,7 +77,8 @@ LIMITS = {
     "arm_timeout": (0.2, 10),
     "arm_stale": (1, 60),
 }
-TUNABLE = tuple(LIMITS)
+# expected_utc_offset 只用于自检，改了要重启主脑，不放进运行中可调白名单
+TUNABLE = tuple(key for key in LIMITS if key != "expected_utc_offset")
 CHOICES = {
     "llm_mode": ("scripted", "llm"),
     "night_override": ("auto", "on", "off"),
