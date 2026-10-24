@@ -46,9 +46,10 @@ def main():
             fails.append(name)
 
     try:
-        # [1] 健康检查:版本核对
+        # [1] 健康检查:版本核对(ver 前缀断言,防契约版本漂移)
         r = call(a.base, "/fall_alarm")
-        check("健康检查", r.get("ok") is True and r.get("service") == "arm_service",
+        check("健康检查", r.get("ok") is True and r.get("service") == "arm_service"
+              and str(r.get("ver", "")).startswith("5.7"),
               "ver=%s" % r.get("ver", "?"))
 
         # [2] 基线:当前警报条数
