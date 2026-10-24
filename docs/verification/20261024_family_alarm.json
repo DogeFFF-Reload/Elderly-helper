@@ -1,18 +1,20 @@
 {
   "schema_version": 1,
-  "verified_at_utc": "2026-10-24T14:56:39.710229+00:00",
-  "merged_team_commit": "40b190e1347a7be8f976e0d193b95d1e1d98c018",
+  "verified_at_utc": "2026-10-24T15:12:25.314012+00:00",
+  "merged_team_commit": "ca34987240ba9b87189deadfb296d3c9c39d59ba",
   "receiver_source_version": "5.7.1",
   "live_receiver_version": null,
   "regression": {
-    "suites": 41,
-    "tests": 570,
+    "suites": 42,
+    "tests": 585,
     "failures": 0,
     "errors": 0,
     "skipped": 0
   },
   "added_alarm_test_methods": 34,
   "added_http_test_methods": 2,
+  "merged_bedside_test_methods": 15,
+  "merged_receiver_changes": "Preserved teammate voice matching changes. Alarm numbering keeps the original millisecond format with an atomic logical counter; no wall-clock spin. Dedup lookup and insert share an RLock.",
   "resolved_regression_failure": "Windows closed an unread oversized JSON body with TCP reset instead of a readable 413. Fixed with response-first bounded draining; initial failed logs preserved.",
   "full_mock": {
     "ok": true,
@@ -133,13 +135,17 @@
   "source_sha256": {
     "code/master_service.py": "f88c7c1612d06aee21313b7bdaf88ab33cc5b36ccd1a0718878348dbdab1f755",
     "code/tests/test_bus_http.py": "72da7819902976d91eaddd2c3fe1a38d5f13053d53b5af72d6a9778b2cc22433",
+    "code/tests/run_all.py": "610f672f120116890af94433619bb17fa07dbafce75e7e23466162aa166c35e2",
+    "code/tools/owners.py": "30bb2d423fff30e627516829ddde30e9276316e08ba9c040fb03aa336aa158ab",
+    "bedside_family/tests/core_fixture.py": "62a24e9121f6d385b9222eab789ca428d6d217878d8869927ee5d77bd33aeb2b",
+    "bedside_family/tests/test_bedside_core.py": "d6826d8e6d720fb0eed5bb35d55ded8a5a8d0a16069423530ceec47ab708458c",
     "code/vision/family_alarm.py": "d1400424b8bce90dbca72e161de922bac7e99de5bebfdeb997c1321a21fd45c5",
     "code/vision/family_watch.py": "18ae4e4747ff629acd305d0d752ec0048f95e10c69de8fc24e0a66d6c9aef52d",
     "run_family_alarm.py": "71a50729fc58eb08be99dcb02d791d695ff2ba4420c48dfee19f644b35aecae4",
     "START_FAMILY_ALARM.bat": "c13745f5ff2bddc9448b65f796800ac8ef57d82e35e31302f0b9ec62b97cc649",
     "bedside_family/bridges/fall_to_family.py": "5ddf3ddecd2d9a5344f7d56b6868508a4404f06eb090fc6214c3313ddc385c43",
-    "bedside_family/service_handboard/arm_service.py": "9bf30b7f40b081abe0071932a4da6f0e710168648bb9aeb0b3a717132043747f",
-    "code/tests/family_alarm_receiver.py": "a5ec4793f924a0f7e2753bbcf9579a0d4048c0eff7e6b7e8a00b6b71c35f03c8",
+    "bedside_family/service_handboard/arm_service.py": "3d2a3eb7c5d4dfd85c2061f4cd6c6ebc5d2cdf1c7feb990a75561ab12e78bf16",
+    "code/tests/family_alarm_receiver.py": "3570cd4980b659d5ea6694a0a3ea6087be331745ffe7dfc5cb4ca1a29b51aff4",
     "code/tests/test_family_alarm.py": "0bde0d668896d7e6a67dc6fd29ffb1ab6c75727a280851ed027bd982da0068e7",
     "code/tests/test_family_watch.py": "8b10fddbf24305290cc64122b468478a70d886e92b6cb4cdf70f14dc7526209e",
     "code/tests/test_family_alarm_bridge.py": "fd94da71aa6a61ca88b2f682a4fe1b73a1fe67501eabcbcd5f071e82d83f1962"
@@ -155,9 +161,9 @@
     "complete_mock_before_http_fix/report.json": "f52ed83f76d18d39a50f12a54d9b3636d4a252061f51d08f63a12759a6e79f3f",
     "initial_failed.stderr.txt": "2161aaca5ea7a2c7a5e48abf324bce9ee98ee9d0b9d7f3c41495719d28f48a65",
     "initial_failed.stdout.txt": "317a74a2a914c55adec7d40da03e38681b5553e7a2f21b5e4cb70be9d9055ece",
-    "regression.json": "78becf670e3f23c72d606b035eed4bda9619d23e909da2cd2c7409ca062eb4cf",
-    "regression.stderr.txt": "5621ab56578cb09efc2c633afb74e97765511cebb89296559c3914bb4f480a44",
-    "regression.stdout.txt": "c51f18cec0793d0aba3cc582e23fdddade20a6a11246ef3834fc3911dc2c9463",
+    "regression.json": "b43cc68e9016b4e38867db1155ece9d1904fe13e3292b11743a16e2a98df7557",
+    "regression.stderr.txt": "372a3f1c212c78a1a61bc395e088db695a5753a3e7442b4e19bb7229f503657c",
+    "regression.stdout.txt": "71a289818272db286b8cec9ff1c948a45ba5e1d79ac53b1c97733d9cd39a0cf5",
     "safe_entry/summary.json": "fa7b9cabd9764d7e09745acee9fe9c91e2eeb102677d66e0ff4104e43039246e",
     "safe_entry.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "safe_entry.stdout.txt": "cf988346e3521e051a9506b88f1b99ac6c47b7189aacecaa5a0598080dfba995",
@@ -173,11 +179,5 @@
     "Direct watcher has bounded retries and journaled ids; cross-process retry is explicit, not automatic.",
     "Receiver dedup retention remains bounded by existing in-memory and persisted alarm history.",
     "No browser layout inspection, Android APK rebuild, or hardware validation in this task."
-  ],
-  "verified_feature_commit": "138559ee230aa617b0984143e2f1df9d47e6aa04",
-  "post_verification_merge": {
-    "team_commit": "f02e670e56a776c71a0cbd567a97de61148a67f5",
-    "runtime_source_hashes_unchanged": true,
-    "scope": "Preserved teammate firmware headers, audio assets, deployment helpers and documentation. Resolved duplicate-history add/add conflicts; tested runtime files preserved byte-for-byte. Newly added hardware helpers were not executed."
-  }
+  ]
 }

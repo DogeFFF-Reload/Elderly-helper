@@ -21,6 +21,10 @@ def main(argv=None):
             stream.reconfigure(encoding="utf-8", errors="replace")
     only = sys.argv[1:] if argv is None else argv
     suite = unittest.defaultTestLoader.discover(HERE, pattern="test_*.py", top_level_dir=HERE)
+    bedside = os.path.join(os.path.dirname(os.path.dirname(HERE)), "bedside_family", "tests")
+    if os.path.isdir(bedside):
+        sys.path.insert(0, bedside)
+        suite.addTests(unittest.defaultTestLoader.discover(bedside, pattern="test_*.py", top_level_dir=bedside))
     if only:
         suite = unittest.TestSuite(t for t in _iter(suite) if any(k in _suite(t) for k in only))
     names = sorted({_suite(t) for t in _iter(suite)})  # run() 之后 suite 会被清空，先取名

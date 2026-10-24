@@ -29,6 +29,9 @@ class AlarmReceiver:
                            isinstance(t, ast.Name) and t.id == "SVC_VER" for t in node.targets))
         lock = next(node for node in tree.body if isinstance(node, ast.Assign) and any(
             isinstance(t, ast.Name) and t.id == "_alarm_lock" for t in node.targets))
+        serial = next(node for node in tree.body if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "_alarm_serial_ms" for t in node.targets))
+        assert ast.literal_eval(serial.value) == 0
         assert (isinstance(lock.value, ast.Call) and not lock.value.args and not lock.value.keywords
                 and isinstance(lock.value.func, ast.Attribute) and lock.value.func.attr in ("Lock", "RLock")
                 and isinstance(lock.value.func.value, ast.Name) and lock.value.func.value.id == "threading")
@@ -36,7 +39,7 @@ class AlarmReceiver:
                           "SVC_VER": version, "threading": threading, "_alarm_mem": [],
                           "AL_DIR": self.temp.name, "ALARMS_JSON": self.temp.name + "/alarms.json",
                           "_log": lambda *args: None}
-        exec(compile(ast.Module(body=[lock, *selected], type_ignores=[]), str(source), "exec"), self.namespace)
+        exec(compile(ast.Module(body=[lock, serial, *selected], type_ignores=[]), str(source), "exec"), self.namespace)
         self.requests, self.drop_next = [], False
         owner = self
 

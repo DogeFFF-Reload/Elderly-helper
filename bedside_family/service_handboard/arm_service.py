@@ -311,7 +311,7 @@ VOICE_OPEN = {
     "四根手指": "fingers_4", "比四": "fingers_4", "数四": "fingers_4",
     "五指全开": "fingers_5", "比五": "fingers_5", "数五": "fingers_5",
     # 精细动作(对指/波浪卷指,康复向,全不在按钮上)
-    "拉勾": "pinch_4", "拉钩": "pinch_4", "捏小指": "pinch_4",
+    "拉勾": "pinch_4", "拉钩": "pinch_4", "捏小指": "pinch_4", "拉个勾": "pinch_4", "拉个钩": "pinch_4", "勾一勾": "pinch_4",
     "捏一下": "pinch_1", "捏合": "pinch_1", "对指": "pinch_1", "捻一捻": "pinch_1",
     "捏中指": "pinch_2", "捏无名指": "pinch_3",
     "波浪": "curl_pk", "卷指": "curl_pk", "卷小指": "curl_pk",
@@ -431,6 +431,15 @@ def voice_init():
         _log("voice_down", _VOICE["err"])
 
 
+def _voice_open_match(norm: str):
+    """开放语音词表匹配(纯函数,长词优先包含匹配)——离线兜底与语法救援共用。
+    例:"比一个ok的手势"→"ok手势"(4字)优先于"比ok"(3字)→"ok"(2字)。"""
+    for kw in sorted(VOICE_OPEN, key=len, reverse=True):
+        if kw in norm:
+            return VOICE_OPEN[kw]
+    return None
+
+
 def voice_cmd(pcm: bytes) -> dict:
     """开放语音三层:S3 录音(16k/16bit/mono 裸PCM) → ①(可选)LLM agent 语义理解(优先) →
     ②同义词词表兜底 → ③词表语法救援;都 miss 才回「没听清」。"""
@@ -462,10 +471,7 @@ def voice_cmd(pcm: bytes) -> dict:
         action, reply, agent_ok = agent_intent(heard)
     # ② 同义词直配(没配 key / agent 挂了时的离线兜底;长词优先)
     if action is None and not agent_ok:
-        for kw in sorted(VOICE_OPEN, key=len, reverse=True):
-            if kw in norm:
-                action = VOICE_OPEN[kw]
-                break
+        action = _voice_open_match(norm)
     # ③ 救援:词表语法约束重识别一次(仅离线路径:转写糊但声音在时,强制从关键词里挑最贴近的)
     if action is None and not agent_ok:
         grammar = _json.dumps(list(VOICE_OPEN) + ["[unk]"], ensure_ascii=False)
@@ -473,11 +479,9 @@ def voice_cmd(pcm: bytes) -> dict:
         heard2 = _pick(rec2)
         if heard2:
             norm2 = heard2.replace(" ", "").lower()
-            for kw in sorted(VOICE_OPEN, key=len, reverse=True):
-                if kw in norm2:
-                    action = VOICE_OPEN[kw]
-                    heard = heard2
-                    break
+            action = _voice_open_match(norm2)
+            if action:
+                heard = heard2
     if action in (None, "none"):
         out = {"ok": False, "heard": heard, "error": "没听清或不在动作表"}
         if reply:
@@ -865,6 +869,7 @@ AL_DIR = os.environ.get("APP_ALARM_DIR", "/root/caremate/alarms")
 ALARMS_JSON = os.path.join(AL_DIR, "alarms.json")
 _alarm_lock = threading.RLock()  # incoming的查重和alarm_new的落账共用原子临界区
 _alarm_mem = []          # 内存态(新在前),boot 时从磁盘恢复
+_alarm_serial_ms = 0     # 锁内推进逻辑毫秒;时钟暂停也不忙等,保持既有id格式
 
 
 def alarms_load():
@@ -877,25 +882,31 @@ def alarms_load():
 
 
 def alarm_new(kind="fall", src="", conf=None, eid=""):
-    """记录一条警报;返回带 id 的 dict。随机后缀避免同毫秒新事件撞号。"""
+    """锁内取号并落账;同毫秒推进计数,不依赖时钟走动或改变id格式。"""
     import time as _t
-    import uuid as _uuid
-    t = _t.time()
-    now = _t.localtime(t)
-    aid = ("al_" + _t.strftime("%Y%m%d_%H%M%S", now)
-           + "_%03d_" % int((t - int(t)) * 1000) + _uuid.uuid4().hex[:12])
-    a = {"id": aid, "time": _t.strftime("%Y-%m-%d %H:%M:%S", now),
-         "kind": kind, "acked": False}
-    if eid:
-        a["event_id"] = str(eid)[:64]
-    if src:
-        a["src"] = str(src)[:40]
-    if conf is not None:
-        try:
-            a["conf"] = round(float(conf), 2)
-        except Exception:
-            pass
     with _alarm_lock:
+        global _alarm_serial_ms
+        t = _t.time()
+        stamp = max(int(t * 1000), _alarm_serial_ms + 1)
+        existing = {item["id"] for item in _alarm_mem}
+        while True:
+            aid = ("al_" + _t.strftime("%Y%m%d_%H%M%S", _t.localtime(stamp / 1000))
+                   + "_%03d" % (stamp % 1000))
+            if aid not in existing:
+                break
+            stamp += 1  # 兼容重启后从盘恢复的同毫秒记录,至多跳过当前历史条数
+        _alarm_serial_ms = stamp
+        a = {"id": aid, "time": _t.strftime("%Y-%m-%d %H:%M:%S", _t.localtime(t)),
+             "kind": kind, "acked": False}
+        if eid:
+            a["event_id"] = str(eid)[:64]
+        if src:
+            a["src"] = str(src)[:40]
+        if conf is not None:
+            try:
+                a["conf"] = round(float(conf), 2)
+            except Exception:
+                pass
         _alarm_mem.insert(0, a)
         del _alarm_mem[100:]
         try:

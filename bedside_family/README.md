@@ -1,6 +1,7 @@
 # Mocen CareMate · 床头屏侧 + 家属端模块(嘉立创屏 + 手板 + 家属 App + 跌倒警报推送)
 
 > 视觉接入更新：新增 `START_FAMILY_ALARM.bat`，默认off、dry无扰、live才报警；操作见 [用户页](../docs/31_用户_视觉报警怎么启动.md)，部署和验证见 [Agent交接](../docs/32_Agent_家属App报警接入交接.md)。床头源码现为5.7.1，补上并发重试原子去重及同毫秒报警编号防冲突；本次未访问或部署实机。下文原有真机结果为队友此前反馈，不等同于本次端到端验收。
+[![bedside-ci](https://github.com/DogeFFF-Reload/Elderly-helper/actions/workflows/bedside-ci.yml/badge.svg)](https://github.com/DogeFFF-Reload/Elderly-helper/actions/workflows/bedside-ci.yml)
 
 本目录是团队仓库之外的另一半系统——**床头侧(老人端)** 与 **家属手机端** 的完整实现。
 与本仓库其他模块的关系,一句话:**视觉模块(§11)负责"发现跌倒",本目录负责"警报立刻响到家属手机上"**,同时床头屏、留言互通、家属语音回话也都从这里完成。

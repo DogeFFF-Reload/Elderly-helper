@@ -10,7 +10,7 @@
 | `code/vision/family_watch.py` | 电脑摄像头 / 手机 MJPEG / 离线验证入口 |
 | `run_family_alarm.py`、`START_FAMILY_ALARM.bat` | 不依赖当前工作目录的启动器 |
 | `bedside_family/bridges/fall_to_family.py` | 修复现有主脑桥接，严格事件匹配、持久化待发送事件 |
-| `bedside_family/service_handboard/arm_service.py` | v5.7.1：原子查重+插入，报警编号增加随机后缀 |
+| `bedside_family/service_handboard/arm_service.py` | v5.7.1：原子查重+插入，锁内推进毫秒编号，保持既有格式 |
 | `code/master_service.py` | 大请求/公网拒绝先回执，再限时丢弃未读正文，避免Windows断线 |
 | `code/tests/test_family_alarm*.py`、`test_family_watch.py` | 接口、桥接和入口回归 |
 
@@ -35,11 +35,13 @@ Content-Type: application/json; charset=utf-8
 
 1. 拉取团队仓库 `main`。本轮没有访问板子、摄像头、手机报警服务，没有执行部署或重启。
 2. 床头板沿用现有部署方式，把 **`bedside_family/service_handboard/arm_service.py`** 更新到实际 systemd 使用的脚本（任务包给出 `/root/caremate/hand_controller/arm_service.py`）。由硬件负责人检查服务路径、保留现场配置、备份旧文件后重启既有 `arm_service`。
-3. GET `/fall_alarm` 应返回 `ver:"5.7.1"`。发送端接受5.7及更新版，但并发去重修复必须部署5.7.1源码才存在。报警 `id` 应当视为不透明字符串；现在末尾增加12位随机片段，Android源码只按字符串比较，无需因这次改动重打APK。
+3. GET `/fall_alarm` 应返回 `ver:"5.7.1"`。发送端接受5.7及更新版，但并发去重修复必须部署5.7.1源码才存在。报警 `id` 保持原有 `al_日期_时分秒_毫秒` 格式，锁内推进计数避免同毫秒冲突，不靠等待系统时钟继续走动。无需因这次改动重打APK。
 4. 核对床头实际IP、路由器和手机App配置。`code/hand_controller/arm_service.py` 是主脑动作服务，**不要把它覆盖为这份床头服务**；两份仓库代码对应不同用途/板子，均不用 kit 自带服务。
 5. 按 [用户操作页](31_用户_视觉报警怎么启动.md) 依次完成无扰检查、一条真实接口报警、实际摄像头普通活动观察。确认前台和后台手机表现，记录床头版本、App版本、网络、event_id、alarm_id、实际延迟和是否确认。
 
 接收端5.7.1将同一 `event_id` 的查重和新增放进同一可重入锁，防止超时后的并发请求各落一条。不同事件在同一毫秒也会获得不同报警编号。历史仍保留原来的内存100条、落盘50条策略；不能声称无限期去重。服务回执也未增加磁盘持久化确认或手机送达确认。
+
+已合并队友新增的开放语音长词匹配及15条床头核心测试。测试入口改为只提取报警、词表和路径纯逻辑，不导入硬件服务顶层、不加载驱动、不改硬件相关环境变量；这些测试也纳入根目录一键回归。GitHub bedside-ci保留，并使用同一套纯逻辑测试。
 
 ## 主脑桥接备用通道
 
@@ -75,7 +77,7 @@ python bedside_family/bridges/fall_to_family.py --master "http://主脑IP:8000" 
 .\.venv\Scripts\python.exe -X utf8 run_family_alarm.py --synthetic fall --mode off
 ```
 
-完整回归 **41套570条全部通过，无失败、无跳过**；其中接入专项34条，另增加2条主脑HTTP拒绝请求回归。完整模拟流程10/10通过；一次已确认正常活动的三个片段各0次事件，9个合成场景均符合标签。数量、原始录制校验值和源文件校验值统一记录在 [本次验证摘要](verification/20261024_family_alarm.json)。
+完整回归 **42套585条全部通过，无失败、无跳过**；其中接入专项34条，另增加2条主脑HTTP拒绝请求回归。完整模拟流程10/10通过；一次已确认正常活动的三个片段各0次事件，9个合成场景均符合标签。数量、原始录制校验值和源文件校验值统一记录在 [本次验证摘要](verification/20261024_family_alarm.json)。
 
 全量检查曾复现Windows提前关闭未读大请求，使413回执变成断线的问题；初次失败日志保留，修复后重新全量通过。拒绝后仅在字节数和时间上限内丢弃正文，不解析或执行它，且无需等待正文到齐才回应。测试仅绑定 `127.0.0.1`；通过AST白名单提取实际床头报警函数和HTTP处理器，未导入硬件服务顶层；网络连接受loopback守卫约束。
 
