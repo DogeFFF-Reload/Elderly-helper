@@ -14,7 +14,7 @@
 
 ```powershell
 cd code
-python tests/run_all.py                  # 回归，必须 ALL PASS（当前 28 套 382 条）
+python tests/run_all.py                  # 回归，必须 ALL PASS（当前 28 套 384 条）
 python -m master_service                 # 主脑 :8000（含三块屏）
 python -m demo_driver --pause            # 按 §3 主线一段一段走演示（另开终端，见 §10）
 python -m hand_controller.arm_service    # 臂+双手 mock :8013（另开终端，可不开）
@@ -628,3 +628,11 @@ python -m vision.rehearsal --keypoints "data/phone_pose/批次/keypoints.jsonl"
 录制文件默认未标注，不按文件名推断是否应当报警。原先第三轮保存的是画面变化能量，不能作为骨架回放。实际手机入口仍只观察，不向主程序上报。
 
 视觉过程会分别提示无人、身体关键点不足、疑似倒地确认和输入错误。相邻帧时间缺口超过 3 秒时，重新开始动作计时；已发出的疑似跌倒不会因此重新布防。持续收到新画面但人体被遮挡仍按原有遮挡规则处理。更新后的现场分工与操作见 [视觉、iPhone 摄像头与 Debug 交接](docs/26_field_handoff_vision_phone_debug.md)。
+
+### 12.5 电脑摄像头全屏本地观察
+
+Windows 已准备好项目 `.venv` 和姿态模型时，双击根目录的 `START_PC_CAMERA.bat`。程序打开电脑 0 号摄像头，全屏显示真人画面、骨架、大号中文动作提示和倒计时。只在本地处理，不创建主程序或执行端客户端，不保存影像。
+
+先调整位置让肩部和髋部入镜，准备好后在预览窗口按空格，按提示完成一轮正常活动：准备10秒、站立15秒、准备5秒、走动15秒、准备10秒、坐下站起15秒。没有稳固椅子时跳过该动作并在交接时说明。无需做跌倒动作。F 切换全屏，Esc 退出全屏，Q 结束并保存；窗口默认最多保留10分钟。
+
+骨架坐标、阶段提示、输入可用统计和本地疑似事件保存在 `code/data/pc_pose/批次/`，运行中的 `live_status.json` 可用于确认窗口状态和帧数。阶段只是计划提示，不是真值标签；不能由提示推断动作已完成。电脑测试可检查姿态算法，不能代替 iPhone 传输链路或真实跌倒效果验收。

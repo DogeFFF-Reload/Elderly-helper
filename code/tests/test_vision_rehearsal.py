@@ -15,6 +15,24 @@ from vision.fall_bridge import run
 from vision.input_quality import InputQuality
 from vision.phone_input import ObservationPoster
 from vision.kpio import KeypointWriter, read_keypoints
+from vision.pc_observe import stage_at
+
+
+class PcObservationPlanTest(unittest.TestCase):
+    def test_framing_waits_for_explicit_start(self):
+        name, instruction, countdown = stage_at(None)
+        self.assertEqual(name, "framing")
+        self.assertIn("空格", instruction)
+        self.assertIsNone(countdown)
+
+    def test_phase_boundaries_and_completion(self):
+        for elapsed, name, countdown in ((0, "prepare_stand", 10), (9.9, "prepare_stand", 1),
+                                         (10, "stand", 15), (25, "prepare_walk", 5),
+                                         (30, "walk", 15), (45, "prepare_sit", 10),
+                                         (55, "sit_stand", 15), (70, "finished", 0)):
+            with self.subTest(elapsed=elapsed):
+                result = stage_at(elapsed)
+                self.assertEqual((result[0], result[2]), (name, countdown))
 
 
 class QualityTest(unittest.TestCase):

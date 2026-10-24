@@ -1,3 +1,5 @@
 # 视觉模块（fall_bridge --camera/--video、rps_bridge）需要；--keypoints / --synthetic / --mock 不需要
 # mediapipe 自带 opencv-contrib-python（提供 cv2），不要再另装 opencv-python，两个 cv2 会互相覆盖
 mediapipe>=0.10
+# pc_observe 的中文动作提示与大屏预览
+Pillow>=9.0
