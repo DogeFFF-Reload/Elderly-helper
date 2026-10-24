@@ -1,12 +1,21 @@
 // 三块屏共用：轮询 /api/poll；发送统一 UTF-8 JSON
 const Bus = (() => {
   let since = 0;
+  let client = "";   // 老人端 "elder" / 家属端 "family:<id>"：主脑据此知道页面开着（通话要用）
   const listeners = [];
+  // 公网钥匙：家属端链接里带 ?key=，记在本机，之后每个请求都带上（局域网用不着，没有就不带）
+  let key = "";
+  try {
+    key = new URLSearchParams(location.search).get("key") || localStorage.getItem("cm-key") || "";
+    if (key) localStorage.setItem("cm-key", key);
+  } catch (e) {}
+  const headers = (extra) => Object.assign(key ? { "X-CareMate-Token": key } : {}, extra || {});
+  const withKey = (url) => (key ? url + (url.includes("?") ? "&" : "?") + "key=" + encodeURIComponent(key) : url);
 
   async function post(path, body) {
     const r = await fetch(path, {
       method: "POST",
-      headers: { "Content-Type": "application/json; charset=utf-8" },
+      headers: headers({ "Content-Type": "application/json; charset=utf-8" }),
       body: JSON.stringify(body || {}),
     });
     return r.json();
@@ -15,8 +24,10 @@ const Bus = (() => {
   async function tick() {
     let payload;
     try {
-      const r = await fetch("/api/poll?since=" + since, { cache: "no-store" });
+      const r = await fetch("/api/poll?since=" + since + (client ? "&client=" + encodeURIComponent(client) : ""),
+                            { cache: "no-store", headers: headers() });
       const data = await r.json();
+      if (r.status === 401 || r.status === 403) throw Object.assign(new Error(data.error || "denied"), { denied: data.error });
       // 总线重启（id 回退）或收到 reset 事件 → 各屏清空本地时间线
       let reset = data.last_id < since;
       if (reset) since = 0;
@@ -26,7 +37,7 @@ const Bus = (() => {
       }
       payload = { state: data.state, events: data.events, reset, online: true };
     } catch (e) {
-      payload = { state: null, events: [], reset: false, online: false };
+      payload = { state: null, events: [], reset: false, online: false, denied: e.denied || null };
     }
     for (const fn of listeners) {
       try { fn(payload); } catch (e) { console.error(e); }
@@ -38,7 +49,11 @@ const Bus = (() => {
     post,
     voice: (text) => post("/mock/voice", { text }),
     on: (fn) => listeners.push(fn),
-    start: () => tick(),
+    setClient: (name) => { client = name || ""; },
+    headers,
+    withKey,
+    hasKey: () => !!key,
+    start: (opts) => { if (opts && opts.client) client = opts.client; tick(); },
   };
 })();
 
@@ -75,7 +90,7 @@ const UI = {
       fall: "⚠️", ask: "❓", ok: "✅", sos: "🚨", notify: "📨", family_ack: "💚", dial: "📞",
       health: "❤️", deliver: "💊", teach: "📖", message: "✉️", echo: "💬", exercise: "🖐️",
       blocked: "⛔", agent: "🤖", night: "🌙", arm: "🦾", heard: "🗣️", say: "🔊", button: "🟢",
-      reset: "↺", system: "⚙️", estop: "🛑", med: "⏰",
+      reset: "↺", system: "⚙️", estop: "🛑", med: "⏰", call: "📞", voice: "🎙️",
     })[ev.type] || "•";
   },
   contactName(state, id) {

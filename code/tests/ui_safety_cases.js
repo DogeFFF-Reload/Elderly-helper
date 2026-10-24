@@ -9,7 +9,7 @@ function page(name) {
   const elements = new Map();
   function el(id) {
     if (!elements.has(id)) elements.set(id, {
-      innerHTML: "", textContent: "", children: [], dataset: {}, style: {}, value: "", hidden: false,
+      innerHTML: "", textContent: "", firstChild: {textContent: ""}, children: [], dataset: {}, style: {}, value: "", hidden: false,
       classList: {toggle() {}, remove() {}, add() {}},
       querySelectorAll() { return []; }, querySelector() { return el(id + ":span"); },
       setAttribute() {}, getContext() { return {}; }, focus() {}, addEventListener() {},
@@ -18,8 +18,10 @@ function page(name) {
   }
   const context = vm.createContext({
     console, URLSearchParams, location: {search: ""}, localStorage: {getItem() {return null;}, setItem() {}},
-    document: {getElementById: el, documentElement: {}, body: el("body"), addEventListener() {}},
-    window: {devicePixelRatio: 1}, requestAnimationFrame() {}, setInterval() {}, setTimeout() {},
+    document: {getElementById: el, querySelectorAll() {return [];}, documentElement: {}, body: el("body"), addEventListener() {}},
+    window: {devicePixelRatio: 1, addEventListener() {}}, navigator: {}, requestAnimationFrame() {}, setInterval() {}, setTimeout() {},
+    clearTimeout() {}, Comms: {loadPrefs() {}, ringer() {return {};}, callClient() {return {phase:"idle",update() {}};},
+      chime() {}, player:{on() {},current() {return null;}}, talkButton() {return {};}},
     getComputedStyle() {return {getPropertyValue() {return "";}};},
     fetch() { throw Error("network must not be used in this test"); },
   });
@@ -38,13 +40,13 @@ family.run(`globalThis.s = {
   hands:{1:{pose:"press_sos", status:"sent"}, 2:{pose:"gentle_hold", status:"sent"}},
   arm:{mock:false, online:true}, estop:false, notifications:[], messages:[], echo:{},
   health:{today:{bp:[], date:"2026-10-24", high_count:0, water_cups:0, summary:"", note:""}},
-  med:{enabled:false, times:[], doses:[], utc_offset:8, missed_after:120}
+  med:{enabled:false, times:[], doses:[], utc_offset:8, missed_after:120}, comms:{call:null, online:{}}
 }; renderAlert(s);`);
 assert.match(family.el("alert").innerHTML, /等待执行端回执/);
 assert.doesNotMatch(family.el("alert").innerHTML, /已按下SOS|已按下 SOS|真机已执行/);
-family.run('s.elder_title="爸爸"; s.guard.wait=8; renderAlert(s);');
+family.run('s.elder_title="爸爸"; s.guard.room="卧室"; renderAlert(s);');
 assert.match(family.el("alert").innerHTML, /爸爸/);
-assert.match(family.el("alert").innerHTML, /8 秒/);
+assert.match(family.el("alert").innerHTML, /卧室/);
 family.run('s.hands[1].status = "failed"; renderAlert(s);');
 assert.match(family.el("alert").innerHTML, /执行失败/);
 family.run('s.hands[1].status = "ok"; renderAlert(s);');

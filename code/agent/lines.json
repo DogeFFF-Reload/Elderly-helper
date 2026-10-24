@@ -47,6 +47,13 @@
   "message_empty": "您想跟{contact}说什么？比如“给女儿留言：我今天挺好的”。",
   "safe_report": "好，家属演示页面已经记录了您的报平安消息。",
   "family_message": "您{contact}给您留言：{text}",
+  "call_dialing": "好的，正在给您{contact}打电话。",
+  "call_incoming": "您{contact}来电话了，点屏幕上绿色的按钮就能接。",
+  "call_missed": "您{contact}暂时没接，我已经发消息让{pron}回电话。",
+  "voice_from_family": "您{contact}发来一段语音留言，我放给您听。",
+  "voice_from_family_later": "您{contact}发来一段语音留言，床头屏或床头盒连上以后说“听留言”就能听。",
+  "voice_none": "现在没有语音留言。",
+  "voice_no_screen": "语音留言要在床头屏或床头盒上放，现在它们都没连上。",
 
   "echo_off": "{contact}还没开启回声代聊。要不要我给{pron}留个言？",
 

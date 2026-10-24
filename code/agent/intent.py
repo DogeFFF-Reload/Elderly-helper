@@ -1,7 +1,8 @@
 """scripted 模式的意图识别：关键词规则，零网络依赖。
 
 classify(text, ctx) -> (intent, slots)
-ctx 由总线给出当前上下文：asking / dial_pending / health_pending / exercise_active / contacts。
+ctx 由总线给出当前上下文：asking / dial_pending / health_pending / exercise_active / med_pending /
+call_incoming / call_active / contacts。
 上下文相关的短回答（"对""确认""我没事"）优先于通用意图。
 """
 import re
@@ -22,6 +23,9 @@ TEACH_HINTS = ("怎么", "咋", "教我", "不会", "如何", "怎样")
 MED_TAKEN = ("吃了", "吃过了", "吃完了", "吃好了", "服了", "吃过药", "药吃了")
 MED_NOT_YET = ("没吃", "还没", "等会", "待会", "一会儿吃")
 DISTRESS_WORDS = ("起不来", "动不了", "救命", "救救", "很疼", "好疼", "疼得", "很痛", "需要帮助", "需要帮忙")
+CALL_ANSWER = ("接", "喂")
+CALL_HANGUP = ("挂", "不接", "不听", "拒接")
+VOICE_PLAY = ("听留言", "放留言", "播放留言", "听语音", "放语音", "播放语音", "听一下留言", "放一下留言")
 
 _PUNCT = re.compile(r"[\s，。？！,.?!~～、：:]")
 
@@ -84,12 +88,25 @@ def classify(text, ctx):
         if _has(core, MED_TAKEN):
             return "med_taken", {}
 
+    # 来电时“接 / 不接”；老人在通话里（含自己打出去还在响铃）说“挂了”
+    if ctx.get("call_incoming"):
+        if _has(core, CALL_HANGUP):
+            return "call_hangup", {}
+        if _starts(core, CALL_ANSWER):
+            return "call_answer", {}
+    if ctx.get("call_active") and _has(core, CALL_HANGUP):
+        return "call_hangup", {}
+
     if _has(core, EMERGENCY):
         return "dial_request", {}
 
     # 教学放在"打电话"前面：如"微信视频电话怎么打"
     if _has(core, TEACH_HINTS) or "用法" in core:
         return "teach", {"text": text}
+
+    # “听留言”也带“留言”两个字，要放在留言前面
+    if _has(core, VOICE_PLAY):
+        return "voice_play", {}
 
     if "留言" in core or re.search(r"(告诉|跟|和)(.{1,3})(说|讲)", core):
         c = find_contact(core, contacts) or (contacts[0] if contacts else None)

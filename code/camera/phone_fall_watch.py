@@ -3,6 +3,7 @@
 """phone_fall_watch.py — 手机摄像头简易视觉哨兵（CareMate 保底视觉链 v0）
 
 链路：手机 --HTTP JPEG/MJPEG--> 本脚本 --POST /mock/fall--> 主脑全套跌倒闭环
+      上报成功后再 POST /api/fall_photo 发触发那一帧，家属端看现场（--no-photo 关掉）
 
 角色说明（对评委口径）：
   官方视觉 = X5 板载 hobot_falldown_detection（MIPI 摄像头，骨架级）
@@ -90,6 +91,18 @@ def post_fall(master, room="客厅", src="phone_watch"):
         print("[MASTER] 上报失败: %s" % e)
         return 0
 
+def post_photo(master, jpeg_bytes, src="phone_watch"):
+    """跌倒上报成功后补发触发那一帧给家属端看现场；发不出去不影响报警。"""
+    from urllib.parse import quote
+    url = master.rstrip("/") + "/api/fall_photo?src=%s" % quote(src)
+    try:
+        req = urllib.request.Request(url, data=jpeg_bytes, method="POST", headers={"Content-Type": "image/jpeg"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status
+    except Exception as e:
+        print("[MASTER] 现场照片没发出去: %s" % e)
+        return 0
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
@@ -108,6 +121,7 @@ def main():
     ap.add_argument("--src", default="phone_watch", help="上报来源标记")
     ap.add_argument("--interval", type=float, default=0.5)
     ap.add_argument("--frames", type=int, default=0, help="处理多少帧后退出（0=一直观察）")
+    ap.add_argument("--no-photo", action="store_true", help="上报跌倒时不发现场照片给家属端")
     a = ap.parse_args()
 
     if Image is None or ImageChops is None:
@@ -190,6 +204,8 @@ def main():
                         st = post_fall(a.master, room=a.room, src=a.src)
                         print("[FALL ARMED] 疑似跌倒上报结果 st=%s 连击帧=%d 能量=%.0f 重心=%.2f"
                               % (st, streak, e_, cy))
+                        if st == 200 and not a.no_photo:
+                            post_photo(a.master, jb, src=a.src)
                         last_fire = time.time()
                     else:
                         print("[FALL 试机] 能量=%.0f 重心=%.2f (arm=0 未上报)" % (e_, cy))

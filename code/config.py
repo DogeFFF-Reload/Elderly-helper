@@ -43,6 +43,9 @@ DEFAULTS = {
     "llm_base_url": "",          # 例 https://api.example.com/v1
     "llm_api_key": "",           # 只用环境变量 CAREMATE_LLM_API_KEY 或 config.local.json，别进仓库
     "llm_model": "",
+    # 公网钥匙（Cloudflare 隧道进来的请求要带它，见 tools/public_link.py）；只放环境变量 CAREMATE_PUBLIC_TOKEN
+    # 或 config.local.json，别进仓库。空 = 公网访问全部关闭
+    "public_token": "",
     "llm_timeout": 3.0,          # 单句超时（秒），超时这句就用 scripted
     "llm_cooldown": 60.0,        # 连续失败后这么多秒内直接走 scripted，断网时不再每句干等
     # 执行端（arm_service）：/pose 要在 arm_timeout 秒内回（收到就回，动作在执行端自己做完）；

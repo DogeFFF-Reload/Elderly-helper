@@ -11,7 +11,8 @@
 发给总线的格式与 mock 完全一致，主脑不用改：
   POST /api/skeleton {"keypoints": {...}, "fallen": bool}   大屏画实时骨架（约 5 次/秒）
   POST /mock/fall?room=卧室                                 规则判定跌倒时发一次
-画面只在本机内存里处理，不落盘、不外发；--record-keypoints 只存坐标。
+  POST /api/fall_photo（JPEG）                              判定跌倒那一帧，给家属端看现场（--no-photo 关掉）
+画面只在本机内存里处理、不落盘；只有判定跌倒时发那一张给主脑（主脑只存内存，警报解除即删）；--record-keypoints 只存坐标。
 
 调参：--preview 开一个本机窗口看骨架和判定过程；--set lying_angle=50 改单个阈值；
      --bed x1,y1,x2,y2 标出床（床上躺着不报）；录下来的骨架用 vision.eval_falls 批量评估。
@@ -45,14 +46,39 @@ def _post(url, payload=None, timeout=2.0):
         return json.loads(r.read().decode("utf-8"))
 
 
-class BusPoster:
-    """后台线程发送，摄像头循环永不因网络卡住；骨架只发最新一帧，跌倒事件排队必达。"""
+def _post_raw(url, data, ctype, timeout=5.0):
+    req = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": ctype})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8"))
 
-    def __init__(self, server, dry_run=False, log=print, post=_post):
+
+def snapshot_jpeg(frame, max_width=640):
+    """判定跌倒那一帧 → JPEG（缩到 640 宽，几十 KB）；没有画面或没装 OpenCV 返回 None。"""
+    if frame is None:
+        return None
+    try:
+        import cv2
+        h, w = frame.shape[:2]
+        if w > max_width:
+            frame = cv2.resize(frame, (max_width, int(h * max_width / w)))
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return buf.tobytes() if ok else None
+    except Exception:
+        return None
+
+
+class BusPoster:
+    """后台线程发送，摄像头循环永不因网络卡住；骨架只发最新一帧，跌倒事件排队必达。
+    跌倒时带的现场照片在跌倒事件送达后补发一次，发不出去就算了（照片不能耽误报警）。"""
+    accepts_photo = True   # run() 只给声明了这个的 poster 传照片（phone_input / rehearsal 的 poster 不收）
+
+    def __init__(self, server, dry_run=False, log=print, post=_post, post_raw=_post_raw):
         self.server = server.rstrip("/")
         self.dry_run = dry_run
         self.log = log
         self.post = post
+        self.post_raw = post_raw
+        self.photo = None
         self.events = queue.Queue()
         self.latest = None
         self.last_sent = 0.0
@@ -72,8 +98,10 @@ class BusPoster:
             self.latest = {"keypoints": pts, "fallen": bool(fallen)}
             self.cond.notify()
 
-    def fall(self, room):
+    def fall(self, room, photo=None):
         with self.cond:
+            if photo:
+                self.photo = photo
             self.events.put(room)
             self.cond.notify()
 
@@ -98,6 +126,13 @@ class BusPoster:
                     else:
                         r = self.post(url)
                         self.log("→ 已上报跌倒（%s）总线状态：%s" % (room, r.get("state")))
+                        photo, self.photo = self.photo, None
+                        if photo:
+                            try:
+                                self.post_raw(self.server + "/api/fall_photo?src=fall_bridge", photo, "image/jpeg")
+                                self.log("→ 现场照片已发给家属端（%d KB）" % (len(photo) // 1024))
+                            except Exception as e:
+                                self.log("× 现场照片没发出去（%s），报警不受影响" % e)
                 elif skel is not None and not self.dry_run:
                     self.post(self.server + "/api/skeleton", skel)
                 if self.online is False:
@@ -164,8 +199,8 @@ def opencv_source(capture_arg, estimator, realtime, fps_cap=0.0, log=print):
 
 # ---------- 主循环 ----------
 
-def run(source, detector, poster, room, recorder=None, preview=None, log=print, quality=None, alarms=None):
-    """跑完一个输入源；返回触发的报警列表。"""
+def run(source, detector, poster, room, recorder=None, preview=None, log=print, quality=None, alarms=None, photos=True):
+    """跑完一个输入源；返回触发的报警列表。photos=True 时把判定跌倒那一帧发给家属端。"""
     alarms = [] if alarms is None else alarms
     seen, frames, t_report = 0, 0, 0.0
     quality = quality if quality is not None else InputQuality(log=log)
@@ -183,7 +218,11 @@ def run(source, detector, poster, room, recorder=None, preview=None, log=print, 
             if ev:
                 alarms.append(ev)
                 log("⚠ %.1fs 判定跌倒（%s）：%s" % (t, ev["kind"], ev["reason"]))
-                poster.fall(room)
+                photo = snapshot_jpeg(frame) if photos and getattr(poster, "accepts_photo", False) else None
+                if photo:
+                    poster.fall(room, photo)
+                else:
+                    poster.fall(room)
             if preview and not preview.show(frame, kp, detector):
                 break
             if t - t_report >= 5.0:
@@ -221,6 +260,7 @@ def main():
     ap.add_argument("--fps-cap", type=float, default=0.0, help="最多每秒处理几帧（X5 上省 CPU，如 10）")
     ap.add_argument("--complexity", type=int, choices=[0, 1, 2], default=0, help="姿态模型大小：0 快 / 2 准")
     ap.add_argument("--dry-run", action="store_true", help="只打印不发送")
+    ap.add_argument("--no-photo", action="store_true", help="判定跌倒时不发现场照片给家属端")
     ap.add_argument("--phone-username", default=os.environ.get("PHONE_USERNAME"))
     ap.add_argument("--phone-password", default=os.environ.get("PHONE_PASSWORD"))
     ap.add_argument("--duration", type=float, default=60, help="手机姿态观察时长，默认60秒")
@@ -281,7 +321,7 @@ def main():
     try:
         while True:
             detector = FallDetector(rules)
-            run(make_source(), detector, poster, args.room, recorder, preview)
+            run(make_source(), detector, poster, args.room, recorder, preview, photos=not args.no_photo)
             if not args.loop or args.camera is not None:
                 break
     except KeyboardInterrupt:
