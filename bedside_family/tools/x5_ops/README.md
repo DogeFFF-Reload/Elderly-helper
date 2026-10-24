@@ -43,3 +43,19 @@
 ## 板号纪律(血泪)
 
 **.252=手板(用户侧),.251=臂板(队友侧只读勿动)**。曾有队友脚本误推 .252 造成双进程打架清场——**推哪块板之前先看 IP,推错=清场事故**。
+
+## 应急手术工具(surgery/)
+
+事发当时的一次性手术脚本,每个的头注释写明处置步骤;复用时改目标 IP/单元名。密码一律 env 注入(BOARD_PWD),不在脚本里。
+
+| 脚本 | 处置什么 |
+|---|---|
+| `fix_x5a_service.py` | **双进程打架清场**(板号纪律事故现场):列清全部 unit → 停旧启用新 → 真机 env → 启动验证 |
+| `fix_x5a_unit.py` | 补 arm_service.service unit + 真机 env + 启动验证(unit 被覆盖/丢配置时用) |
+| `cleanup_board.py` | 板上留言/警报自测残留清理(测试 fam_/msg_ 文件)+ 服务复核 |
+| `handover_x5a.py` | 手板交接盘点:unit.env / vosk-cn 模型一屏确认 |
+| `capture_boot.py` | S3 COM8 串口启动日志抓取(ES8311 自检验证) |
+| `diag_buttons.py` | S3 硬复位重启 + 完整抓 45s 串口(查播放后主循环假死;名字带 buttons 但实际是复位抓日志) |
+| `subnet_scan.py` | 热点网段(10.153.47.0/24)SSH 22 扫描——找哪块板活着 |
+
+> 全是 python + 并发 socket / paramiko,零第三方依赖之外仅 paramiko/serial(现场笔记本已装)。

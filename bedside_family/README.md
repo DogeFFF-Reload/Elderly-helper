@@ -75,7 +75,8 @@ python bedside_family/bridges/fall_to_family.py --master http://<主脑IP>:8000 
 bedside_family/
 ├── firmware_s3/bedside_s3_arm_kiosk.ino   # 嘉立创 S3 床头屏固件 v5.4(六键+留言+语音,COM7 烧录/COM8 日志)
 │   ├── btn_bitmaps.h                      #   六键图标位图(1.4MB 生成物,入库即源码,缺了编译不过)
-│   └── voice_prompts.h                    #   提示音 WAV 数组(2.2MB SAPI 16k/mono)
+│   ├── voice_prompts.h                    #   提示音 WAV 数组(2.2MB SAPI 16k/mono)
+│   └── prebuilt/                          #   撤架说明(预编译 bin 含现场 WiFi 凭据不入公开库;自建走 flash_s3.ps1)
 ├── firmware_t5ai_handover/bedside_t5ai_arm/   # 涂鸦 T5AI 床头臂屏固件(交接队友的原始版;队友已在仓库 firmware/bedside_t5ai 继续演进)
 ├── firmware_bedside_box/bedside_box.ino   #床头盒(无屏留言中继/播音)固件
 ├── firmware_diag/                         # 嘉立创 S3 面板诊断板配置(ESP_Panel 板级 conf 7 件,排屏/触摸故障用)
@@ -86,15 +87,19 @@ bedside_family/
 ├── family_app/                            # 家属 App(原生安卓,无第三方依赖,纯手工工具链构建)
 │   ├── android/                           #   源码(Manifest / MainActivity / GuardService / Cfg)
 │   ├── build_app.py                       #   构建脚本(aapt2→javac→d8→zipalign→apksigner,无需 gradle)
-│   ├── family_app_v1.1.apk                #   签名成品(桌面版,~30KB)
+│   ├── family_app_v1.4.apk                 #   签名成品(~33KB;桌面交付别名"家人留言v5.apk";问题史见 CHANGELOG)
 │   ├── README.md                          #   行为规格 / 4G 中转升级法 / 构建坑位
 │   └── legacy_webview_v1/                 #   初版 WebView+MIC 原型(考古)
 ├── bridges/fall_to_family.py              # 视觉/主脑 → 家属警报 桥接器(姿势 B,带 event_id=bus-<事件id>)
 ├── voice_pack/                            # TTS 台词播报包:73 条×原速/慢速 + lines.json(+tools/gen_tts.py)
 ├── deploy_x5/                             # X5 板端 systemd 单元(caremate*.service)+ 开板/翻转脚本
+├── tests/                                 # 离线单测 15 例(警报 id 唯一/去重/掉电恢复/语音匹配/留言安全;零硬件零三方依赖,bedside-ci 跑)
 ├── tools/                                 # 现场/联调工具
 │   ├── smoke_alarm_api.py                 #   警报契约冒烟测试(无扰优先,自建自收,退出码可判 CI)
+│   ├── agent_tests/                       #   agent 离线冒烟:意图三元组+白名单中文名完备性+糊转写网关(key/网关走 env)
 │   ├── x5_ops/                            #   X5 运维交接包 9 件:部署/模型上传/agent推送/救砖/验证(密码 env 注入)
+│   │   └── surgery/                       #     应急手术 7 件:双进程清场/unit 补配/板上残留清理/复位抓日志/网段扫描
+│   ├── flash_s3.ps1 flash_t5ai.ps1        #   一键烧录(S3 预编译直烧/源码编译自动找口;T5AI 兼容 BUILD SUCCESS 奇癖)
 │   ├── gen_*btns.py gen_voice_prompts.py  #   按键位图与提示音批量生成器
 │   └── bg_capture.py probe_x5.py 等       #   串口抓日志/板存活监测/TTS 提示音
 └── docs/                                  # 对接卡 / 需求单 / 交接说明 / 队友 agent 任务包

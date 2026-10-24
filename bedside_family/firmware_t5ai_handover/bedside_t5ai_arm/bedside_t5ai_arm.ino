@@ -37,7 +37,7 @@
 
 /* ══════════ 现场校正区 ══════════ */
 #define WIFI_SSID     "Mocen_Bear"
-#define WIFI_PASS     "Mocen_0219"
+#define WIFI_PASS     "YOUR_WIFI_PASSWORD"
 #define ARM_HOST      "10.153.47.251"      /* X5#B（臂+手#1,队友侧,静态固守 .251;S3 侧另走 .252） */
 #define ARM_PORT      8013
 /* TODO·授权三件套（涂鸦群免费领后填入；仅接涂鸦云需要，局域网链路不需要） */

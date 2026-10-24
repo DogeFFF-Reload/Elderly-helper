@@ -1,5 +1,6 @@
 package com.mocen.caremate.family;
 
+import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -36,10 +37,13 @@ public class GuardService extends Service {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         Notification ch = mkChannel(nm, "caremate_alive", "守护在线");
         try {
-            startForeground(1, ch);
+            if (Build.VERSION.SDK_INT >= 29)
+                startForeground(1, ch, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+            else startForeground(1, ch);
         } catch (Exception e) { return; }
         if (threadUp) return;                       // 已在轮询,不重复起线程
         threadUp = true;
+        paceNext();                                 // 先挂一拍系统闹钟,拉活链立即闭环
 
         new Thread(() -> {
             SharedPreferences pf = getSharedPreferences("alarm", 0);
@@ -49,6 +53,7 @@ public class GuardService extends Service {
                 if (base != null) {
                     try {
                         String j = httpGet(base + "/alarms");
+                        pf.edit().putLong("lastPoll", System.currentTimeMillis()).apply();   // 自检心跳:成功轮询才记
                         JSONArray arr = new JSONObject(j).getJSONArray("alarms");
                         String newest = null;
                         for (int k = 0; k < arr.length(); k++) {
@@ -70,9 +75,23 @@ public class GuardService extends Service {
                         }
                     } catch (Exception e) { /* 网络/解析失败:静默下轮再试 */ }
                 }
+                paceNext();
                 try { Thread.sleep(tick++ == 0 ? 4000 : 10000); } catch (Exception e) { return; }
             }
         }, "guard-poll").start();
+    }
+
+    /** 闹钟级拉活链:每轮向系统挂一个 10 秒后的 setAlarmClock 精确闹钟(内核负责触发,无需任何特殊权限)。
+     *  进程被 ROM 杀掉后,闹钟仍会触发 PaceReceiver 把服务重新拉起——闹钟/电话类 App 的标准存活方式。 */
+    private void paceNext() {
+        try {
+            AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
+            PendingIntent pi = PendingIntent.getBroadcast(this, 11,
+                    new Intent(this, PaceReceiver.class),
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            am.setAlarmClock(new AlarmManager.AlarmClockInfo(
+                    System.currentTimeMillis() + 10000, pi), pi);
+        } catch (Exception e) {}
     }
 
     private String pickBase() {
@@ -111,6 +130,9 @@ public class GuardService extends Service {
                 .setContentTitle("⚠ 跌倒警报")
                 .setContentText("检测到老人疑似跌倒!" + who)
                 .setContentIntent(pi)
+                .setCategory(Notification.CATEGORY_ALARM)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)   // 锁屏上也可见
+                .setFullScreenIntent(pi, true)   // 锁屏全屏弹出;未授权时系统自动降级为横幅
                 .setAutoCancel(true);
         nm.notify(1001, b.build());
     }

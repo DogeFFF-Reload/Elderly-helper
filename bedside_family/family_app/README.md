@@ -29,8 +29,10 @@ CLOUD_BASE = ""                             // 中转站落地后填这里,填�
 
 ```powershell
 python family_app/build_app.py
-# 产出 family_app_v1.1.apk,自动同步桌面
+# 产出 family_app_v1.3.apk,自动同步桌面(家人留言v4.apk)
 ```
+
+> 版本沿革:v1.1(versionCode 2)首开即闪退(MainActivity 警报条对未挂载 View 取 LayoutParams 的 NPE,**javac/CI 抓不到运行期 NPE**)→ v1.2(3)删冗余行修复,真机验证前台警报闭环 PASS;但熄屏/退后台无提醒(Android 13+ 通知权限无权限时 `nm.notify()` 静默丢弃 + 无电池优化白名单 + 无锁屏弹出能力)→ v1.3(4)=后台提醒修复:权限提醒条+电池白名单引导+锁屏全屏意图+API29+ 显式 dataSync 前台服务类型;真机四轮熄屏仍无响应(用户已开通知/省电/自启动/WLAN 休眠全套开关)→ **v1.4(5)=闹钟级拉活链:`setAlarmClock` 每 10s 挂一拍系统精确闹钟(内核计时,无需特殊权限),进程被 ROM 杀掉也会被 PaceReceiver 重新拉起——闹钟/电话类 App 的标准存活方式;另加"守护自检行"(lastPoll 轮询年龄+通知/后台权限一览),熄屏测试后开 App 一瞄即分清"服务死了"还是"通知被丢"**。同签名升级覆盖安装。桌面交付别名:v2=broken v1.1,v3=v1.2,v4=v1.3,v5=v1.4。
 
 | 依赖 | 值 | 坑 |
 |---|---|---|
