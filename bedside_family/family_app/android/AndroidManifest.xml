@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.mocen.caremate.family"
-    android:versionCode="4"
-    android:versionName="1.3">
+    android:versionCode="5"
+    android:versionName="1.4">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34"/>
 
@@ -36,5 +36,7 @@
         <service android:name=".GuardService"
             android:exported="false"
             android:foregroundServiceType="dataSync"/>
+        <receiver android:name=".PaceReceiver"
+            android:exported="false"/>
     </application>
 </manifest>

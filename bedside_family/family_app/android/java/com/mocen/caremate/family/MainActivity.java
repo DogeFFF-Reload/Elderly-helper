@@ -82,6 +82,7 @@ public class MainActivity extends Activity {
     private LinearLayout permBar;                // 琥珀色权限提醒条(通知权限/后台常驻)
     private TextView permText;
     private boolean notifAsked = false;          // 本次进程只自动弹一次通知权限
+    private TextView guardLine;                  // 守护自检行:轮询年龄+权限状态,熄屏测试后一瞄即知服务死活
 
     static class Msg { String id, time; double dur; boolean own; }
     static class Alarm { String id, time, src; boolean acked; }
@@ -164,6 +165,13 @@ public class MainActivity extends Activity {
         permBar.addView(permText);
         permBar.addView(pb);
         root.addView(permBar);
+
+        // 守护自检行:熄屏测完回来一瞄,"轮询 3 秒前 ✓"=服务活着只是通知没弹;"停了?"=被杀/冻结/断网
+        guardLine = text("守护: 自检中…", 11, GRAY, false);
+        guardLine.setPadding(dp(4), dp(3), dp(4), 0);
+        guardLine.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(guardLine);
 
         // 顶部
         LinearLayout header = new LinearLayout(this);
@@ -575,6 +583,7 @@ public class MainActivity extends Activity {
             try { requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 9); }
             catch (Exception e) {}
         }
+        refreshGuardLine();
     }
 
     private void openPermSettings() {
@@ -590,6 +599,35 @@ public class MainActivity extends Activity {
             try { startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                     android.net.Uri.parse("package:" + getPackageName()))); } catch (Exception e2) {}
         }
+    }
+
+    /** 守护自检:GuardService 每次成功轮询 /alarms 都会刷新 lastPoll(首次 4s,此后 10s 一拍)。
+     *  熄屏测完打开 App 一瞄:"轮询 3 秒前 ✓"=服务活着、只是通知没弹(权限/通知通道层问题);
+     *  "轮询 5 分钟前 · 停了?"=熄屏时服务被杀或断网(ROM 层)。两种结论走完全不同的修复路线。 */
+    private void refreshGuardLine() {
+        try {
+            android.content.SharedPreferences pf = getSharedPreferences("alarm", 0);
+            long last = pf.getLong("lastPoll", 0L);
+            String poll;
+            if (last == 0L) poll = "轮询还没跑过";
+            else {
+                long age = (System.currentTimeMillis() - last) / 1000;
+                poll = "轮询 " + age + " 秒前" + (age <= 30 ? " ✓" : " · 停了?");
+            }
+            boolean notif = true;
+            if (Build.VERSION.SDK_INT >= 33)
+                notif = checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                        == PackageManager.PERMISSION_GRANTED;
+            boolean bat = true;
+            try {
+                android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                bat = pm.isIgnoringBatteryOptimizations(getPackageName());
+            } catch (Exception e) {}
+            boolean bad = poll.contains("停了") || poll.contains("还没跑过") || !notif || !bat;
+            guardLine.setText("守护: " + poll + " · 通知权限 " + (notif ? "✓" : "✗")
+                    + " · 后台常驻 " + (bat ? "✓" : "✗"));
+            guardLine.setTextColor(bad ? RED : GREEN);
+        } catch (Exception e) {}
     }
 
     /* ================= 播放 ================= */

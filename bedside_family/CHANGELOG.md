@@ -23,10 +23,11 @@
 - `tools/flash_s3.ps1`(预编译直烧/源码编译双模式+自动找串口)、`tools/flash_t5ai.ps1`(兼容 T5AI 工具链"BUILD SUCCESS 却 exit 1"奇癖)。
 
 ### 家属 App(family_app)
-- **v1.3**(versionCode 4;后台提醒生死线修复):真机实测熄屏/退后台完全无提醒——①Android 13+ 通知权限无权限时 `nm.notify()` **静默丢弃**(前台红条不依赖该权限,故"前台响、后台没影");②无电池优化白名单,国产 ROM 清后台/熄屏冻结守护服务;③无锁屏弹出能力。修复:**琥珀色权限提醒条**(缺哪样亮哪样、一键去开)+电池白名单引导+`CATEGORY_ALARM`/`VISIBILITY_PUBLIC`+**锁屏全屏意图**(未授权自动降级横幅)+API29+ 显式 `dataSync` 前台服务类型。
+- **v1.4**(versionCode 5;闹钟级拉活链):v1.3 权限三连修后真机四轮熄屏仍无响应(用户已开通知/省电无限制/自启动/WLAN 休眠全套开关)→ 引入 ROM 级对抗:**`GuardService.paceNext()` 每轮挂一拍 `AlarmManager.setAlarmClock` 10s 精确闹钟**(系统内核计时触发、无需任何特殊权限),`PaceReceiver`(manifest 静态注册)收到闹钟即重新拉起守护服务——进程被杀服务也能复活,闹钟/电话类 App 的标准存活方式;新增**守护自检行**(guardLine):显示 lastPoll 轮询年龄(首次 4s/此后 10s 一拍)+通知权限+后台常驻状态,熄屏测试后打开 App 一瞄即分清"服务死了"(ROM 层,走 ROM 白名单/adb 路线)还是"通知被丢"(权限/通知层,走权限路线)。
+- **v1.3**(versionCode 4;后台提醒生死线修复):①Android 13+ 通知权限缺失时 `nm.notify()` 静默丢弃(前台红条不依赖该权限,故"前台响、后台没影");②无电池优化白名单,国产 ROM 清后台/熄屏冻结守护服务;③无锁屏弹出能力。修复:琥珀色权限提醒条(缺哪样亮哪样、一键去开)+电池白名单引导+`CATEGORY_ALARM`/`VISIBILITY_PUBLIC`+锁屏全屏意图(未授权自动降级横幅)+API29+ 显式 `dataSync` 前台服务类型。
 - **v1.2**(versionCode 3):修复 v1.1 首开闪退(警报条对未挂载 View 取 `getLayoutParams()` 的 NPE);真机验证前台警报闭环 PASS。
 - **v1.1 追回**:从未真机跑通——一开即闪退(编译期合法、CI 抓不到,真机首开现形)。**教训:APK 交付前必须在真机点开一次,且必须真实跑一遍熄屏场景。**
-- 桌面交付别名:家人留言v2.apk=broken v1.1,v3.apk=v1.2,v4.apk=v1.3。
+- 桌面交付别名:家人留言v2.apk=broken v1.1,v3.apk=v1.2,v4.apk=v1.3,v5.apk=v1.4。
 - 手工工具链 aapt2→javac→d8→zipalign→apksigner;build-tools 35.0.0(34 的 d8 写 dex NPE 勿用);签名密钥本地保管不入库,换签名=必先卸载重装。
 - 4G 全域预案:中转站地址到手填 `Cfg.CLOUD_BASE` 重打包即升级(无需改板端)。
 
