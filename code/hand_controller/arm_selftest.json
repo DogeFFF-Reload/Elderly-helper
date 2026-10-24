@@ -1,0 +1,31 @@
+{
+  "_说明": "真臂自检动作（上电后、示教前用）：动作名和 arm_skills.json 一样，但点位都是离 rest 很近的小角度（抬 20°、左右转 15°），离桌面、禁区都远。用法：ARM_SKILLS_FILE=hand_controller/arm_selftest.json 起 arm_service，再发 home / press_sos / deliver_medicine。验的是执行端这条路（moveJ、到位、停住保持、/stop、夹爪、退出回 rest），不是演示动作。",
+  "tool_length": {
+    "_说明": "法兰到末端的距离（m）：gripper = Panthera 自带夹爪中心（URDF）；hand1 = 手#1 装在法兰上之后的手心，装好再量",
+    "gripper": 0.166,
+    "hand1": 0.22
+  },
+  "speed": {
+    "_说明": "自检比正式动作更慢（约 9°/s，刚开机第一段约 6°/s）；首次动作测试实测约 5°/s 全部到位",
+    "max_joint_vel": 0.15,
+    "near_person_vel": 0.1,
+    "min_seconds": 2.0
+  },
+  "floor_z": 0.03,
+  "keep_out": [
+    {"name": "老人头面部（示意，现场量）", "min": [0.35, 0.25, 0.0], "max": [0.9, 0.9, 0.8]}
+  ],
+  "points": {
+    "rest": {"q": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "taught": true, "note": "零位 = 收拢姿态；断电、阻尼时最稳，开关机都停在这里"},
+    "lift": {"q": [0.0, 0.35, 0.35, 0.0, 0.0, 0.0], "taught": true, "torque_scale": 0.5, "note": "J2、J3 各 20°：小臂平着抬高约 9 cm；力矩一半（首次动作测试用的 [10,18,18,10,5,5]）"},
+    "turn_l": {"q": [0.26, 0.35, 0.35, 0.0, 0.0, 0.0], "taught": true, "torque_scale": 0.5, "note": "抬起后 J1 向左 15°；力矩一半（首次动作测试用的 [10,18,18,10,5,5]）"},
+    "turn_r": {"q": [-0.26, 0.35, 0.35, 0.0, 0.0, 0.0], "taught": true, "torque_scale": 0.5, "note": "抬起后 J1 向右 15°；力矩一半（首次动作测试用的 [10,18,18,10,5,5]）"}
+  },
+  "skills": {
+    "_说明": "home = 回 rest；press_sos = 抬起、左转、停 1 秒、回 rest（用来试 /stop 和保命动作插队）；deliver_medicine = 加上夹爪开合、左右各转一次；sign_family_received = 抬起停住",
+    "home": [["grip", "relax"], ["move", "rest"]],
+    "deliver_medicine": [["grip", "open"], ["move", "lift"], ["grip", "close"], ["wait", 1.0], ["move", "turn_l"], ["move", "turn_r"], ["move", "lift"], ["grip", "open"], ["wait", 1.0], ["move", "rest"]],
+    "press_sos": [["move", "lift"], ["move", "turn_l"], ["wait", 1.0], ["move", "rest"]],
+    "sign_family_received": [["move", "lift"]]
+  }
+}

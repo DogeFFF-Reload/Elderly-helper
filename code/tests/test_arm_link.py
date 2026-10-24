@@ -8,6 +8,7 @@ from unittest import mock
 from helpers import FakeArm, events, make_bus
 
 from hand_controller import arm_service
+from hand_controller.arm_backend import MockArm
 from master_service import ArmClient
 
 
@@ -101,15 +102,17 @@ class ArmClientTest(unittest.TestCase):
         self.assertEqual(arm.status()["done"], 2)
 
     def test_kit_aliases_stay_on_our_single_service(self):
-        """kit 的验收命令可以打到仓库服务，但内部仍记录规范动作名。"""
+        """kit 的验收命令可以打到仓库服务，但内部仍记录规范动作名。thumbs_up 只是点赞手势，不动臂。"""
+        worker = arm_service.use_arm(arm_service.ArmWorker(MockArm(time_scale=0)))
+        self.addCleanup(worker.stop)
         for path in ("/press_sos", "/pose/comfort_rhythm?hand=2", "/handover_med",
                      "/pose/rock", "/pose/thumbs_up?hand=1"):
             req = Request(self.url + path, data=b"", method="POST")
             with urlopen(req, timeout=1) as response:
                 self.assertEqual(response.status, 200)
+            self.assertTrue(worker.wait_idle(3.0))   # 手#1 装在臂上：臂做完才接手#1 的手势
         self.assertEqual([h["pose"] for h in arm_service.HISTORY],
-                         ["press_sos", "gentle_hold", "deliver_medicine", "rps_rock",
-                          "sign_family_received"])
+                         ["press_sos", "gentle_hold", "deliver_medicine", "rps_rock", "thumbs_up"])
         self.assertEqual([h["requested"] for h in arm_service.HISTORY],
                          ["press_sos", "comfort_rhythm", "handover_med", "rock", "thumbs_up"])
 

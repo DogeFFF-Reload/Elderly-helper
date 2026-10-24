@@ -19,6 +19,7 @@ from hand_controller import arm_service, poses
 from hand_controller import rh56_register_map
 from hand_controller import rh56_register_map as RM
 from hand_controller import rh56f2_driver
+from hand_controller.arm_backend import MockArm
 from hand_controller.rh56f2_driver import HandError, RH56F2, checksum, frame_read, frame_write, pack_shorts
 from master_service import ArmClient
 
@@ -471,10 +472,13 @@ class ServiceTest(unittest.TestCase):
         rh56f2_driver._PORTS.clear()
         arm_service._HANDS.clear()
         arm_service.HISTORY.clear()
+        arm_service.use_arm(arm_service.ArmWorker(MockArm(time_scale=0)))
         self.url, stop = start_arm()
         self.addCleanup(stop)
 
     def tearDown(self):
+        arm_service.arm().stop()
+        arm_service.arm().wait_idle(1.0)
         current = list(arm_service._HANDS.values())
         for w in current:
             w.stop()
@@ -597,6 +601,7 @@ class ServiceTest(unittest.TestCase):
         clock.advance(6, bus)
         bus.family_ack("daughter")
         bus.arm.drain()
+        self.assertTrue(arm_service.arm().wait_idle(3.0), arm_service.arm().status())
         for w in arm_service.hands().values():
             w.drain()
 
@@ -615,14 +620,15 @@ class ServiceTest(unittest.TestCase):
         fresh_hands(mock_driver(1), mock_driver(2))
         lines = []
         self.assertTrue(arm_service.probe(out=lines.append))
-        self.assertEqual(len(lines), 2)
-        for line in lines:
+        self.assertEqual(len(lines), 3)
+        for line in lines[:2]:
             self.assertIn("实际角度", line)
+        self.assertIn("关节角", lines[2])
 
         fresh_hands(mock_driver(1), RH56F2("", 2, mock=False))
         lines = []
         self.assertFalse(arm_service.probe(out=lines.append))
-        self.assertEqual(len(lines), 2)
+        self.assertEqual(len(lines), 3)
         self.assertTrue(any("读不到" in line for line in lines), lines)
 
     # ---- 急停写真机 ----

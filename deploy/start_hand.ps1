@@ -5,7 +5,7 @@ param(
     [string]$Hand1Port = "COM5",
     [string]$Hand2Port = "COM6",
     [switch]$ConfirmRegisterMap,
-    [ValidateSet("mock", "vendor_sdk")]
+    [ValidateSet("mock", "panthera")]
     [string]$ArmBackend = "mock"
 )
 
