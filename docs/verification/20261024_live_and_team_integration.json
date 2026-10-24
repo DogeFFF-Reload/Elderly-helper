@@ -1,0 +1,89 @@
+{
+  "date": "2026-10-24",
+  "code_commit": "7a0c787f619ca2ac61d43b5bacf96886457d241b",
+  "regression": {
+    "suites": 31,
+    "tests": 415,
+    "result": "ALL PASS",
+    "exit_code": 0,
+    "duration_s": 54.24
+  },
+  "recorded_full_demo": {
+    "checks": {
+      "health_and_medicine": true,
+      "visual_input_usable": true,
+      "normal_keeps_idle": true,
+      "cancel_before_sos": true,
+      "visual_rescue": true,
+      "cancel_after_rescue": true,
+      "exercise": true,
+      "single_sos": true,
+      "all_visual_receipts": true,
+      "no_driver_failures": true
+    },
+    "passed": true,
+    "normal_confirmed": true,
+    "input_sha256": "b0e261c58b0a06d896afc822aec540edbdcfd879a695a7dc60746e7e417aaac8",
+    "visual_events_by_input": [
+      0,
+      1,
+      1
+    ],
+    "mock_sos_count": 1,
+    "final_state": "IDLE"
+  },
+  "offline_rule_scenarios": {
+    "count": 12,
+    "passed": true,
+    "source": "synthetic"
+  },
+  "live_input_tests": {
+    "phone": "authenticated loopback MJPEG with simulated pose estimator",
+    "pc": "in-memory capture replacement; bounded timestamps and resource cleanup",
+    "failure_cases": [
+      "disconnect",
+      "no usable pose",
+      "suspected event",
+      "window close",
+      "invalid limits"
+    ]
+  },
+  "launcher_help_from_unrelated_directory": {
+    "START_FULL_VISION_DEMO.bat": {
+      "exit_code": 0,
+      "help_shown": true
+    },
+    "START_LIVE_VISION_DEMO.bat": {
+      "exit_code": 0,
+      "help_shown": true
+    },
+    "START_PC_CAMERA.bat": {
+      "exit_code": 0,
+      "help_shown": true
+    }
+  },
+  "bash_syntax": {
+    "start.sh": true,
+    "install_services.sh": true,
+    "setup_x5.sh": true
+  },
+  "ui_layout": {
+    "verified": true,
+    "source": "software-generated frame and skeleton; no camera or native window opened"
+  },
+  "this_run": {
+    "physical_camera_opened": false,
+    "real_actuator_connected": false,
+    "device_scan": false,
+    "audio_recorded_or_played": false,
+    "external_notifications": false,
+    "firmware_compiled": false,
+    "firmware_flashed": false
+  },
+  "limits": [
+    "New live routes have software verification only; real PC and iPhone acceptance pending.",
+    "Synthetic fall and software tests do not establish real fall accuracy.",
+    "Firmware compiler is absent locally; no firmware build claim.",
+    "Physical hardware results from teammate remain separately attributed."
+  ]
+}
