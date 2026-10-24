@@ -39,6 +39,9 @@ compile 退出码 1 但打印 BUILD SUCCESS 也算过。串口日志：COM9，11
 
 ## X5 那边
 
-- `arm_service` 以 root 的 systemd 服务 `arm_service.service` 跑（`--host 0.0.0.0`），臂 `ARM_BACKEND=mock` 直到点位示教完。
+- `arm_service` 以 root 的 systemd 服务 `arm_service.service` 跑（`--host 0.0.0.0`），代码在 `~sunrise/caremate_t5ai`（`~/Elderly-helper` 的 git worktree，分支 hardware/t5ai-screen），
+  环境在 `/root/caremate/unit.env`；臂 `ARM_BACKEND=mock` 直到点位示教完。kit 版的服务 / 环境留着 `.kit.bak`，代码还在 `/root/caremate/hand_controller`。
 - vosk：系统 python3 `pip install vosk`（0.3.45），模型 `vosk-model-small-cn-0.22` 解压在 `/root/caremate/vosk-cn`（`VOSK_MODEL` 可改）。
+  小模型词表里没有「递药」「还药」「按铃」，grammar 里切成「递 药」；闲聊会被硬凑成关键词，所以 [unk] 占说话时长一半以上不算指令。
+  2026-10-24 用 edge-tts 两个声音实测：13 条指令全对、2 条闲聊都没动，每条约 0.4 秒。
 - 安全：应急停 = 拔 24V；手的上电顺序 USB → 20 秒 → 24V。
