@@ -116,8 +116,8 @@ class RH56F2:
                 self.ser.reset_input_buffer()
                 self.ser.write(req)
                 resp = self.ser.read(expect_len)
-                if resp[:len(req)] == req:    # 有的 USB-RS485 转换器会把自己发的字节回显一遍：跳过
-                    resp = resp[len(req):] + self.ser.read(len(req))
+                if resp[:2] == HEAD_TX:       # 有的 USB-RS485 转换器会把自己发的字节回显一遍：读完回显再取回包
+                    resp = (resp + self.ser.read(len(req) + expect_len - len(resp)))[len(req):]
         except Exception as e:  # noqa: BLE001 串口层出错 = 线断了
             self._drop("串口 %s 出错：%s" % (self.port, e))
             raise HandError(self.error)
@@ -205,9 +205,9 @@ class RH56F2:
         self.write_shorts(RM.REG_ANGLE_SET, [-1] * 6)
 
     def read_angles(self):
-        """读 ANGLE_ACT，返回 {关节: 开合度 0~100}。只读，探测就用它。"""
+        """读 ANGLE_ACT，返回 {关节: 开合度 0~100}；读回 -1（0xFFFF，没有值）的关节给 None。只读，探测就用它。"""
         raw = self.read_shorts(RM.REG_ANGLE_ACT, 6)
-        return {j: round(v * 100.0 / RM.VALUE_MAX, 1) for j, v in zip(RM.JOINT_ORDER, raw)}
+        return {j: None if v < 0 else round(v * 100.0 / RM.VALUE_MAX, 1) for j, v in zip(RM.JOINT_ORDER, raw)}
 
     def status(self):
         return {"port": self.port, "id": self.slave, "mock": self.mock,

@@ -121,6 +121,7 @@ class ArmClient:
         self.on_link = None
         self.online = None
         self.mock = None          # 执行端 /status 自报的 mock：True 时手和臂不会真动，大屏不能写“真机同步”
+        self._fail_seen = {}      # 执行端每只手后台失败的序号（/status 的 fail_seq），涨了就补报一次
         self.last_ok = None       # 执行端最近一次有回应的时间
         self.last_error = None
         self.counts = {"done": 0, "failed": 0, "dropped": 0}
@@ -163,9 +164,22 @@ class ArmClient:
 
     def _note_status(self, body):
         try:
-            self.mock = bool(json.loads(body.decode("utf-8")).get("mock"))
+            st = json.loads(body.decode("utf-8"))
         except Exception:  # noqa: BLE001 老版执行端或非 JSON：不知道就当不知道
             self.mock = None
+            return
+        self.mock = bool(st.get("mock"))
+        # 执行端收到就回 200、动作在后台做：做到一半失败（串口断了、臂后端报错）只能从这里知道
+        for hand, h in (st.get("hands") or {}).items():
+            seq = h.get("fail_seq") if isinstance(h, dict) else None
+            if not isinstance(seq, int):
+                continue
+            seen = self._fail_seen.get(hand)
+            self._fail_seen[hand] = seq
+            if seen is not None and seq > seen and h.get("fail_pose") and self.on_result:
+                self.counts["failed"] += 1
+                self.last_error = h.get("last_error")
+                _safe_call(self.on_result, h["fail_pose"], int(hand), False, "failed", h.get("last_error") or "")
 
     def status(self):
         ago = None if self.last_ok is None else round(self.clock() - self.last_ok, 1)
@@ -432,13 +446,14 @@ class Bus:
         type=system：操作台看得到、大屏不显示。通知家属走的是软件通道，不靠臂，照常送达。"""
         with self.lock:
             h = self.hands.get(str(hand))
-            if h and h["pose"] == pose and h["status"] == "sent":
+            if h and h["pose"] == pose and (h["status"] == "sent" or not ok):
                 h["status"] = "ok" if ok else why
         if ok:
             self.arm_down_noted = False
             return
         reason = {"offline": "执行端连不上", "rejected": "执行端拒绝：%s" % detail,
-                  "stale": "%s没发出去，按断链保护丢弃" % detail, "estop": "软件急停，已丢弃"}.get(why, why)
+                  "stale": "%s没发出去，按断链保护丢弃" % detail, "estop": "软件急停，已丢弃",
+                  "failed": "执行端做到一半出错：%s" % detail}.get(why, why)
         with self.lock:
             if pose in SAFETY_POSES:
                 self.events.add("system", "保命动作没做成：%s；%s。通知家属走软件通道，照常送达；现场可切 Plan B" % (

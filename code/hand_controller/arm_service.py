@@ -75,6 +75,8 @@ class HandWorker:
         self.current = None             # 最近一次开始做的动作名
         self.done = 0
         self.last_error = None
+        self.fail_seq = 0               # 后台做动作失败的次数：主脑探测 /status 时按它补报"没做成"
+        self.fail_pose = None
         self._mu = threading.Lock()
         threading.Thread(target=self._run, daemon=True).start()
 
@@ -127,6 +129,8 @@ class HandWorker:
                 self.done += 1
             except Exception as e:  # noqa: BLE001 一个动作出错不能弄死这只手的线程
                 self.last_error = "%s：%s" % (pose, e)
+                self.fail_pose = pose
+                self.fail_seq += 1
                 print("[手#%d] %s 没做成：%s" % (self.hand, label(pose), e), flush=True)
             finally:
                 self.running = None
@@ -134,7 +138,8 @@ class HandWorker:
 
     def status(self):
         return dict(self.driver.status(), current=self.current, busy=self.running is not None,
-                    queued=self.q.qsize(), done=self.done, last_error=self.last_error)
+                    queued=self.q.qsize(), done=self.done, last_error=self.last_error,
+                    fail_seq=self.fail_seq, fail_pose=self.fail_pose)
 
 
 _HANDS = {}
@@ -207,6 +212,21 @@ def _execute(pose, hand):
     print("[手#%d%s] %s" % (hand, " mock" if w.driver.mock else "", label(pose)), flush=True)
 
 
+def _stop_arm():
+    """急停时也叫臂停：vendor_sdk 后端提供 stop() 或 hold() 就调（尽力而为，失败只打印）。"""
+    if ARM_BACKEND != "vendor_sdk":
+        return
+    try:
+        from hand_controller import arm_backend_vendor
+        stop = getattr(arm_backend_vendor, "stop", None) or getattr(arm_backend_vendor, "hold", None)
+        if stop:
+            stop()
+        else:
+            print("[臂] arm_backend_vendor 没有 stop()/hold()，急停只停了手；拍物理急停", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print("[臂] 急停时臂没停住：%s（拍物理急停）" % e, flush=True)
+
+
 def _mock_all():
     return all(w.driver.mock for w in hands().values()) and ARM_BACKEND == "mock"
 
@@ -234,6 +254,7 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/stop":
             for w in hands().values():
                 w.stop()
+            _stop_arm()
             print("[执行端] 急停 /stop：清掉排队、打断节拍", flush=True)
             _record_history({"ts": time.time(), "pose": "stop", "hand": 0})
             return self._json(200, {"ok": True, "stopped": True, "mock": _mock_all()})
