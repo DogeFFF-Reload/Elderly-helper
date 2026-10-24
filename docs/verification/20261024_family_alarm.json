@@ -173,5 +173,11 @@
     "Direct watcher has bounded retries and journaled ids; cross-process retry is explicit, not automatic.",
     "Receiver dedup retention remains bounded by existing in-memory and persisted alarm history.",
     "No browser layout inspection, Android APK rebuild, or hardware validation in this task."
-  ]
+  ],
+  "verified_feature_commit": "138559ee230aa617b0984143e2f1df9d47e6aa04",
+  "post_verification_merge": {
+    "team_commit": "f02e670e56a776c71a0cbd567a97de61148a67f5",
+    "runtime_source_hashes_unchanged": true,
+    "scope": "Preserved teammate firmware headers, audio assets, deployment helpers and documentation. Resolved duplicate-history add/add conflicts; tested runtime files preserved byte-for-byte. Newly added hardware helpers were not executed."
+  }
 }
