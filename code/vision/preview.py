@@ -17,12 +17,19 @@ class Preview:
         self.size = size
 
     def show(self, frame, kp, detector):
+        img = self.render(frame, kp, detector)
+        cv2.imshow(WINDOW, img)
+        return (cv2.waitKey(1) & 0xFF) not in (ord("q"), 27)
+
+    def render(self, frame, kp, detector, *, diagnostics=True):
+        """Render in memory; the headless web monitor never calls imshow/waitKey."""
         img = frame.copy() if frame is not None else np.zeros((self.size[1], self.size[0], 3), np.uint8)
         h, w = img.shape[:2]
         color = COLORS.get(detector.state, (200, 200, 200))
         for z in detector.rules["bed_zones"]:
             cv2.rectangle(img, (int(z[0] * w), int(z[1] * h)), (int(z[2] * w), int(z[3] * h)), (200, 160, 60), 2)
-            cv2.putText(img, "bed", (int(z[0] * w) + 4, int(z[1] * h) + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 160, 60), 1)
+            if diagnostics:
+                cv2.putText(img, "bed", (int(z[0] * w) + 4, int(z[1] * h) + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 160, 60), 1)
         if kp:
             pts = {k: (int(p[0] * w), int(p[1] * h)) for k, p in kp.items()
                    if p is not None and (len(p) < 3 or p[2] >= detector.rules["min_visibility"])}
@@ -35,6 +42,8 @@ class Preview:
             for p in pts.values():
                 cv2.circle(img, p, 4, (255, 255, 255), -1, cv2.LINE_AA)
 
+        if not diagnostics:
+            return img
         last = detector.last or {}
         f = last.get("f")
         lines = ["state: %s  input: %s" % (detector.state, getattr(detector, "input_status", "observing"))]
@@ -51,8 +60,7 @@ class Preview:
         cv2.rectangle(img, (0, 0), (w, 22 * len(lines) + 10), (0, 0, 0), -1)
         for i, text in enumerate(lines):
             cv2.putText(img, text, (10, 24 + 22 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color if i == 0 else (230, 230, 230), 1, cv2.LINE_AA)
-        cv2.imshow(WINDOW, img)
-        return (cv2.waitKey(1) & 0xFF) not in (ord("q"), 27)
+        return img
 
     def close(self):
         cv2.destroyAllWindows()

@@ -143,6 +143,21 @@ class FamilyWatchTest(unittest.TestCase):
             self.assertEqual(report["status"], "link_checked")
             self.assertEqual(receiver.alarms, [])
 
+    def test_missing_model_system_exit_is_recorded_as_input_error_without_raw_message(self):
+        class MissingModel:
+            def __enter__(self):
+                raise SystemExit("secret-model-path")
+
+            def __exit__(self, *_args):
+                pass
+
+        args = self.args("--phone-stream", "http://phone.invalid/stream")
+        report = watch.execute(args, live_factory=lambda **kw: MissingModel(), log=lambda _: None)
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["status"], "error")
+        self.assertEqual(report["error_type"], "SystemExit")
+        self.assertNotIn("secret-model-path", json.dumps(report))
+
     def test_explicit_interface_test_can_reuse_failed_event_id(self):
         with AlarmReceiver() as receiver:
             for suffix in ("first", "retry"):

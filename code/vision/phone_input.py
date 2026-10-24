@@ -22,15 +22,18 @@ def decode_frame(jpeg):
     return frame
 
 
-def phone_source(camera, estimator, *, duration=60.0, fps=10.0, max_frames=0, frame_timeout=3.0):
+def phone_source(camera, estimator, *, duration=60.0, fps=10.0, max_frames=0, frame_timeout=3.0,
+                 continuous=False):
     """Use fresh frames and actual receipt times; inference never queues MJPEG."""
     if not all(math.isfinite(n) and n > 0 for n in (duration, fps, frame_timeout)) or max_frames < 0:
         raise ValueError("时长、帧率和超时必须为正数，帧数不得为负数")
+    if type(continuous) is not bool:
+        raise ValueError("continuous须为布尔值")
     interval = 1.0 / fps
     reader = LatestFrame(camera, interval)
     reader.start()
     started = time.monotonic()
-    deadline, due = started + duration, started
+    deadline, due = (math.inf if continuous else started + duration), started
     sequence, count = 0, 0
     try:
         while True:

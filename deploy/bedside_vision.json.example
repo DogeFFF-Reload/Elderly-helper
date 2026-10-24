@@ -1,0 +1,14 @@
+{
+  "phone_stream": "",
+  "mode": "off",
+  "family": "http://127.0.0.1:8013",
+  "src": "bedside-vision",
+  "room": "卧室",
+  "fps_cap": 10,
+  "continuous": true,
+  "duration": 300,
+  "monitor_host": "127.0.0.1",
+  "monitor_port": 8015,
+  "rules_file": null,
+  "output_root": "../code/data/bedside_vision"
+}

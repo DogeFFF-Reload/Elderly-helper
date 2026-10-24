@@ -1,4 +1,4 @@
-"""Bounded PC/phone pose input for the isolated mock demo.
+"""Lazy PC/phone pose input; bounded unless continuous is explicitly selected.
 
 Opening devices is lazy: importing this module or showing CLI help opens nothing.
 Only coordinates are persisted by the caller; frames remain in memory.
@@ -10,7 +10,7 @@ import time
 
 class LiveInput:
     def __init__(self, *, camera=None, phone_stream=None, username=None, password=None,
-                 duration=60, fps=10, estimator_factory=None, capture_factory=None):
+                 duration=60, fps=10, continuous=False, estimator_factory=None, capture_factory=None):
         if (camera is None) == (phone_stream is None):
             raise ValueError("请选择电脑摄像头或手机 MJPEG 中的一种输入")
         if camera is not None and camera < 0:
@@ -19,9 +19,12 @@ class LiveInput:
             raise ValueError("实时观察时长须大于0且不超过600秒")
         if not math.isfinite(fps) or not 0 < fps <= 60:
             raise ValueError("处理帧率须大于0且不超过60")
+        if type(continuous) is not bool:
+            raise ValueError("continuous须为布尔值")
         self.camera, self.phone_stream = camera, phone_stream
         self.username, self.password = username, password
         self.duration, self.fps = duration, fps
+        self.continuous = continuous
         self.estimator_factory, self.capture_factory = estimator_factory, capture_factory
         self.kind = "pc_camera" if camera is not None else "phone_mjpeg"
         self.source_name = "pc_camera:%d" % camera if camera is not None else "phone:mjpeg"
@@ -54,7 +57,8 @@ class LiveInput:
                 self.source = self._pc_frames()
             else:
                 from vision.phone_input import phone_source
-                self.source = phone_source(phone, self.estimator, duration=self.duration, fps=self.fps)
+                self.source = phone_source(phone, self.estimator, duration=self.duration, fps=self.fps,
+                                           continuous=self.continuous)
             return self
         except BaseException:
             self.close()
@@ -62,7 +66,7 @@ class LiveInput:
 
     def _pc_frames(self):
         started = due = time.monotonic()
-        deadline = started + self.duration
+        deadline = math.inf if self.continuous else started + self.duration
         while time.monotonic() < deadline:
             remaining = min(due, deadline) - time.monotonic()
             if remaining > 0:

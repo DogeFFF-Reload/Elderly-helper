@@ -98,6 +98,15 @@ class PhonePoseTest(unittest.TestCase):
                 self.assertNotIn(sensitive, text)
         self.assertEqual(len(list(Path(self.temp.name).iterdir())), 2)
 
+    def test_explicit_continuous_phone_keeps_timestamps_past_demo_duration(self):
+        camera = PhoneFrameSource(self.base, mjpeg=True, username="collector_user", password="collector_secret")
+        with patch("cv2.VideoCapture", side_effect=AssertionError("No camera")):
+            frames = list(phone_input.phone_source(camera, FakeEstimator(), duration=.01,
+                                                   fps=20, continuous=True, max_frames=4))
+        self.assertEqual(len(frames), 4)
+        self.assertGreater(frames[-1][0], .01)
+        self.assertTrue(all(b[0] > a[0] for a, b in zip(frames, frames[1:])))
+
     def test_authenticated_loopback_phone_feeds_complete_isolated_mock_demo(self):
         import master_service
         from vision.integrated_demo import run_full_demo

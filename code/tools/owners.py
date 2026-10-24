@@ -67,6 +67,8 @@ TESTS = {
     "test_fall_detector": ("demo",),
     "test_family_alarm": ("demo",),
     "test_family_watch": ("demo",),
+    "test_web_monitor": ("demo",),
+    "test_bedside_watch": ("demo",),
     "test_bedside_core": ("hardware",),
     "test_family_alarm_bridge": ("demo",),
     "test_phone_fall_watch": ("demo",),

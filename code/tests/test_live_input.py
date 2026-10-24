@@ -65,6 +65,16 @@ class LiveInputTest(unittest.TestCase):
                 self.assertTrue(self.released)
                 self.assertTrue(self.estimator_closed)
 
+    def test_explicit_continuous_input_crosses_original_deadline_then_closes(self):
+        self.live.continuous = True
+        with patch("vision.live_input.time.monotonic", side_effect=lambda: self.now), \
+                patch("vision.live_input.time.sleep", side_effect=self.advance):
+            with self.live:
+                source = iter(self.live)
+                frames = [next(source) for _ in range(8)]
+        self.assertGreater(frames[-1][0], self.live.duration)
+        self.assertTrue(self.released and self.estimator_closed)
+
     def test_validation_and_import_do_not_load_camera_or_pose_model(self):
         for options in ({}, {"camera": 0, "phone_stream": "http://invalid/"},
                         {"camera": 0, "duration": float("inf")}, {"camera": 0, "fps": -1}):

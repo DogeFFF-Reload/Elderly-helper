@@ -1,0 +1,43 @@
+name: vision-monitor-ci
+
+on:
+  push:
+    paths:
+      - "code/vision/**"
+      - "code/gesture/**"
+      - "code/camera/**"
+      - "code/tests/**"
+      - "code/tools/owners.py"
+      - "bedside_family/service_handboard/arm_service.py"
+      - "deploy/install_bedside_vision.sh"
+      - "run_*vision.py"
+      - "run_family_alarm.py"
+      - ".github/workflows/vision-monitor-ci.yml"
+  pull_request:
+    paths:
+      - "code/**"
+      - "deploy/install_bedside_vision.sh"
+      - "run_*vision.py"
+      - "run_family_alarm.py"
+      - ".github/workflows/vision-monitor-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Image libraries only - models and hardware drivers are not loaded
+        run: python -m pip install numpy opencv-python-headless Pillow
+      - name: Fake input and loopback-only alarm and monitor tests
+        run: python -X utf8 code/tests/run_all.py web_monitor bedside_watch live_input phone_pose family_watch family_alarm
