@@ -33,12 +33,10 @@
 #include <HTTPClient.h>      /* TuyaOpen HTTPClient 库 */
 #include "http_client_interface.h"   /* 底层 HTTP（PCM 裸流长度自填，绕 strlen） */
 #include "Audio.h"           /* 板载 codec 录音/放音（T5AI 专用，AudioRecorder 例程同源） */
+#include "caremate_local.h"  // Copy caremate_local.example.h before compiling.
 #include "t5ai_bitmaps.h"    /* 自动生成：中文按钮/状态条位图 */
 
 /* ══════════ 现场校正区 ══════════ */
-#define WIFI_SSID     "Mocen_Bear"
-#define WIFI_PASS     "Mocen_0219"
-#define ARM_HOST      "10.153.47.251"      /* X5-B（臂+手#1），Mocen_Bear 热点里的静态地址 */
 #define ARM_PORT      8013
 /* TODO·授权三件套（涂鸦群免费领后填入；仅接涂鸦云需要，局域网链路不需要） */
 #define TUYA_DEVICE_UUID    "uuidxxxxxxxxxxxxxxxx"

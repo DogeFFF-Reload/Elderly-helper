@@ -1,10 +1,12 @@
 """臂（Panthera-HT）：正运动学、物理安全（限位 / 限速 / 禁区 / 按压限力）、臂线程的排队与打断、
 示教文件、Panthera 后端对 SDK 的调用、kit 路由映射、和主脑端到端。全部 mock，不碰硬件。"""
 import io
+from http.client import HTTPConnection
 import json
 import math
 import os
 import shutil
+import socket
 import sys
 import tempfile
 import threading
@@ -1014,6 +1016,51 @@ class ServiceTest(unittest.TestCase):
             w.writeframes(pcm)
         self.assertEqual(voice_cmd.strip_wav(buf.getvalue()), pcm)
         self.assertEqual(voice_cmd.strip_wav(pcm), pcm)
+
+    def test_voice_bad_lengths_and_incomplete_upload_never_reach_recognition(self):
+        from urllib.parse import urlsplit
+        url = urlsplit(self.url)
+        for value in ("invalid", "-1", str(voice_cmd.MAX_BYTES + 1)):
+            with self.subTest(length=value), mock.patch.object(voice_cmd, "handle", side_effect=AssertionError("No recognition")):
+                conn = HTTPConnection(url.hostname, url.port, timeout=2)
+                try:
+                    conn.request("POST", "/voice_cmd", body=b"", headers={"Content-Length": value})
+                    response = conn.getresponse()
+                    self.assertIn(response.status, (400, 413))
+                    response.read()
+                finally:
+                    conn.close()
+        with mock.patch.object(voice_cmd, "handle", side_effect=AssertionError("No recognition")):
+            conn = HTTPConnection(url.hostname, url.port, timeout=2)
+            try:
+                conn.request("POST", "/voice_cmd", body=b"\0" * 8000, headers={"Content-Length": "16000"})
+                conn.sock.shutdown(socket.SHUT_WR)
+                response = conn.getresponse()
+                self.assertEqual(response.status, 400)
+                response.read()
+            finally:
+                conn.close()
+        self.assertEqual(arm_service.HISTORY, [])
+
+    def test_voice_wrong_wav_format_or_partial_pcm_does_not_dispatch(self):
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as recording:
+            recording.setnchannels(1)
+            recording.setsampwidth(2)
+            recording.setframerate(8000)
+            recording.writeframes(b"\0" * 16000)
+        for body in (buffer.getvalue(), b"RIFF" + b"\0" * 16000, b"\0" * 8001):
+            with mock.patch.object(voice_cmd, "recognize", side_effect=AssertionError("Invalid audio")):
+                code, result = post_body(self.url, "/voice_cmd", body)
+                self.assertEqual(code, 400, result)
+        self.assertEqual(arm_service.HISTORY, [])
+
+    def test_voice_recognizer_failure_returns_error_without_any_action(self):
+        with mock.patch.object(voice_cmd, "recognize", side_effect=RuntimeError("private_model_detail")):
+            code, body = post_body(self.url, "/voice_cmd", b"\0" * 16000)
+        self.assertEqual(code, 503)
+        self.assertNotIn("private_model_detail", body["error"])
+        self.assertEqual(arm_service.HISTORY, [])
 
     # ---- 真臂自检脚本（这里用 mock 臂按真实节奏的 1/10 跑） ----
 

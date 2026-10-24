@@ -480,10 +480,24 @@ class Handler(BaseHTTPRequestHandler):
             name, hand = KIT_ROUTES[url.path]
             return self._pose(name, str(hand), alias_of=url.path)
         if url.path == "/voice_cmd":
-            n = int(self.headers.get("Content-Length") or 0)
+            lengths = self.headers.get_all("Content-Length", [])
+            if len(lengths) != 1 or not lengths[0].isascii() or not lengths[0].isdigit():
+                return self._json(400, {"ok": False, "error": "录音请求需要一个有效的 Content-Length"})
+            if self.headers.get("Transfer-Encoding"):
+                return self._json(400, {"ok": False, "error": "录音请求不支持分块编码"})
+            if len(lengths[0]) > 10:
+                return self._json(413, {"ok": False, "error": "录音太长"})
+            n = int(lengths[0])
             if n > voice_cmd.MAX_BYTES:
                 return self._json(413, {"ok": False, "error": "录音太长（%d 字节）" % n})
-            return self._json(*voice_cmd.handle(self.rfile.read(n), dispatch))
+            self.connection.settimeout(5)
+            try:
+                body = self.rfile.read(n)
+            except (TimeoutError, OSError):
+                return self._json(408, {"ok": False, "error": "录音上传中断或超时"})
+            if len(body) != n:
+                return self._json(400, {"ok": False, "error": "录音上传不完整"})
+            return self._json(*voice_cmd.handle(body, dispatch))
         self._json(404, {"ok": False})
 
     def _pose(self, name, hand_text, alias_of=None):

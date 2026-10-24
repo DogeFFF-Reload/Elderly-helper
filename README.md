@@ -5,8 +5,7 @@
 - **交互端**（§2–§6）：语音链路（ASR / TTS）、三块屏、健康口述、回声风格档案、教学库、scripted 台词。
 - **主脑与安全内核**（§10）：总线、状态机、supervisor、llm 超时回落、演示参数配置化、`demo_driver`、回归与合并工具。
 
-> ⚠️ 本机没有找到团队代码仓，所以按 v2.5 文档的接口**从零重建**了一个能跑的最小总线（stand-in），让交互端可以独立开发、端到端演示。
-> 合并进真仓库时：**交互端文件直接用这里的；stand-in 文件以队友的正式版为准**（见文末「合并说明」）。
+> 当前为团队合并仓库。执行端统一使用仓库 `code/hand_controller/arm_service.py`，不用 kit 同名服务。最新分工与剩余验收见 `docs/26_field_handoff_vision_phone_debug.md`、`docs/27_计划执行结果与剩余验收.md`；模拟流程通过和设备现场验收分别记录。
 
 ## 1. 跑起来
 
@@ -14,7 +13,7 @@
 
 ```powershell
 cd code
-python tests/run_all.py                  # 回归，必须 ALL PASS（当前 29 套 390 条）
+python tests/run_all.py                  # 回归，必须 ALL PASS（当前 31 套 415 条）
 python -m master_service                 # 主脑 :8000（含三块屏）
 python -m demo_driver --pause            # 按 §3 主线一段一段走演示（另开终端，见 §10）
 python -m hand_controller.arm_service    # 臂+双手 mock :8013（另开终端，可不开）
@@ -430,7 +429,7 @@ CareMate 联调自检 · http://127.0.0.1:8000
 | ④ | 2 块 X5 环境与开机脚本 | 脚本已写；两板最终视觉链路、性能、网络和重启恢复待现场验收，队友的单模块实测不等于全链完成 | `deploy/` |
 | — | 猜拳手势识别 | 代码与回归已完成；真人手势整局验收待补 | `gesture/rps_engine.py`、`vision/rps_bridge.py` |
 
-回归：`python tests/run_all.py` 合并 main 后 16 套 132 条（视觉新增 `test_fall_detector`，`test_rps_engine` 改为只测视觉一侧；`test_fall_detector` 的负责人登记在 `software/rps-hook` 里）。本分支只改视觉文件，`master_service.py` 等软件文件一行没动。
+视觉规则、猜拳、手机输入、实时输入、完整模拟演示均有已登记负责人的测试。当前全量回归数字见 §1；早期分支的16套132条属于历史记录。
 
 ### 11.1 跑起来
 

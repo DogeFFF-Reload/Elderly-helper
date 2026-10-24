@@ -7,11 +7,13 @@ vosk 离线识别 → 按关键词（长词优先）找动作 → 和按键走�
 模型：VOSK_MODEL（默认 /root/caremate/vosk-cn，vosk-model-small-cn-0.22），第一次用到才加载；
 加载不了只让 /voice_cmd 回 503，别的接口照常。依赖：pip install vosk（X5 上装在系统 python3）。
 """
+import io
 import json
 import os
 import random
 import threading
 import time
+import wave
 
 MODEL_DIR = os.environ.get("VOSK_MODEL", "/root/caremate/vosk-cn")
 RATE = 16000
@@ -111,16 +113,19 @@ def recognize(pcm):
 
 
 def strip_wav(data):
-    """带 WAV 头的也收（测试时直接发 .wav）：跳到 data 块。"""
-    if data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+    """Raw PCM or a complete 16kHz/16bit/mono PCM WAV, never other formats."""
+    if data[:4] != b"RIFF":
         return data
-    i = 12
-    while i + 8 <= len(data):
-        size = int.from_bytes(data[i + 4:i + 8], "little")
-        if data[i:i + 4] == b"data":
-            return data[i + 8:i + 8 + size]
-        i += 8 + size + (size & 1)
-    return b""
+    try:
+        with wave.open(io.BytesIO(data), "rb") as recording:
+            if (recording.getnchannels(), recording.getsampwidth(), recording.getframerate(), recording.getcomptype()) != (1, 2, RATE, "NONE"):
+                raise ValueError("WAV 必须是16kHz、16bit、单声道 PCM")
+            pcm = recording.readframes(recording.getnframes())
+            if len(pcm) != recording.getnframes() * 2:
+                raise ValueError("WAV 数据不完整")
+            return pcm
+    except (wave.Error, EOFError) as exc:
+        raise ValueError("无效的 WAV 录音") from exc
 
 
 def match(text):
@@ -133,7 +138,14 @@ def match(text):
 
 def handle(body, dispatch):
     """/voice_cmd 的正文 → (HTTP 码, 回包)。dispatch(动作名, hand_text, alias_of, requested) 和按键同一条路。"""
-    pcm = strip_wav(body)
+    if len(body) > MAX_BYTES:
+        return 413, {"ok": False, "error": "录音太长"}
+    try:
+        pcm = strip_wav(body)
+    except ValueError as exc:
+        return 400, {"ok": False, "error": str(exc)}
+    if len(pcm) % 2:
+        return 400, {"ok": False, "error": "16bit PCM 录音字节数必须为偶数"}
     if len(pcm) < MIN_BYTES:
         return 400, {"ok": False, "error": "录音太短（%d 字节）" % len(pcm)}
     started = time.monotonic()
@@ -141,6 +153,8 @@ def handle(body, dispatch):
         heard, unk = recognize(pcm)
     except VoiceError as e:
         return 503, {"ok": False, "error": "语音识别用不了：%s" % e}
+    except Exception as exc:
+        return 503, {"ok": False, "error": "语音识别失败（%s），本次不执行动作" % type(exc).__name__}
     LAST.clear()
     LAST.update(ts=time.time(), heard=heard, unk=round(unk, 2), seconds=round(time.monotonic() - started, 2))
     kw = match(heard)
