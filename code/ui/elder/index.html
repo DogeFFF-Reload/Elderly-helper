@@ -1,0 +1,834 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>CareMate 床头屏</title>
+<style>
+  :root {
+    --bg: #f6f1ea; --bg2: #efe7dc; --card: #ffffff; --ink: #1c1b19; --muted: #6b645c; --faint: #a39a8f; --line: #e9e1d6;
+    --green: #1f9d55; --green-d: #137a3f; --blue: #2f6feb; --blue-d: #1f53c1; --amber: #e08a00; --amber-d: #b86e00;
+    --red: #d93a3a; --red-d: #a8201f; --shadow: 0 1px 2px rgba(60, 40, 20, .06), 0 8px 28px rgba(60, 40, 20, .08);
+    --ease: cubic-bezier(.2, .8, .2, 1); --spring: cubic-bezier(.34, 1.56, .64, 1);
+    font-family: "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+    font-size: clamp(17px, 1.55vw, 24px);
+    color-scheme: light;
+  }
+  body[data-theme="night"] {
+    --bg: #121010; --bg2: #191615; --card: #201c1a; --ink: #f2ece4; --muted: #b0a69a; --faint: #7d746a; --line: #2f2a27;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 10px 30px rgba(0, 0, 0, .35);
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body { margin: 0; background: radial-gradient(1200px 700px at 10% -10%, var(--bg2), var(--bg)); color: var(--ink);
+         font-variant-numeric: tabular-nums; overflow: hidden; user-select: none; transition: background .8s var(--ease), color .8s; }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; touch-action: manipulation; }
+  svg { width: 1em; height: 1em; display: block; }
+
+  #app { height: 100vh; display: grid; grid-template-rows: auto 1fr; gap: 1.1rem; padding: 1.4rem 1.6rem 1.6rem; }
+
+  /* 顶栏：问候 + 大钟 */
+  .top { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; }
+  .greet { font-size: 1.7rem; font-weight: 700; letter-spacing: .02em; }
+  .date { color: var(--muted); font-size: 1.05rem; margin-top: .15rem; }
+  .clock { font-size: 4.2rem; font-weight: 750; letter-spacing: .02em; line-height: 1; }
+  .clock .colon { animation: blink 2s steps(1) infinite; }
+  .status { justify-self: end; display: flex; gap: .5rem; align-items: center; }
+  .pill { display: inline-flex; align-items: center; gap: .45rem; background: var(--card); border-radius: 999px; padding: .45rem .9rem;
+          font-size: .85rem; color: var(--muted); box-shadow: var(--shadow); white-space: nowrap; }
+  .pill i { width: .6rem; height: .6rem; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 20%, transparent); }
+  .pill.off i { background: var(--red); box-shadow: 0 0 0 4px color-mix(in srgb, var(--red) 20%, transparent); }
+
+  main { display: grid; grid-template-columns: 1.55fr 1fr; gap: 1.2rem; min-height: 0; }
+  .left { display: grid; grid-template-rows: 1fr auto; gap: 1rem; min-height: 0; }
+
+  /* 四个大块 */
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 1rem; min-height: 0; }
+  .tile { position: relative; overflow: hidden; background: var(--card); border-radius: 1.6rem; box-shadow: var(--shadow); text-align: left;
+          padding: 1.3rem 1.4rem; display: grid; grid-template-rows: auto 1fr auto; gap: .4rem; min-height: 9.5rem;
+          transition: transform .25s var(--spring), box-shadow .25s var(--ease), background .4s; }
+  .tile:active { transform: scale(.97); }
+  .tile .ico { width: 3.6rem; height: 3.6rem; border-radius: 1.1rem; display: grid; place-items: center; font-size: 1.9rem; color: #fff;
+               background: linear-gradient(145deg, var(--c), var(--cd)); box-shadow: 0 8px 20px color-mix(in srgb, var(--c) 35%, transparent); }
+  .tile .t { font-size: 2.1rem; font-weight: 750; align-self: end; letter-spacing: .04em; }
+  .tile .s { color: var(--muted); font-size: 1.02rem; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; min-height: 1.6em; }
+  .tile.call { --c: var(--green); --cd: var(--green-d); }
+  .tile.voice { --c: var(--blue); --cd: var(--blue-d); }
+  .tile.med { --c: var(--amber); --cd: var(--amber-d); }
+  .tile.sos { --c: var(--red); --cd: var(--red-d); }
+  [hidden] { display: none !important; }
+  .tile .badge { position: absolute; top: 1.1rem; right: 1.2rem; min-width: 1.9rem; height: 1.9rem; padding: 0 .55rem; border-radius: 999px;
+                 background: var(--red); color: #fff; font-weight: 700; font-size: 1rem; display: grid; place-items: center; }
+  .tile.med.due { background: linear-gradient(150deg, #fff6e5, var(--card)); animation: nudge 2.4s var(--ease) infinite; }
+  body[data-theme="night"] .tile.med.due { background: linear-gradient(150deg, #3a2a10, var(--card)); }
+  .tile.med.due .s { color: var(--amber-d); font-weight: 700; }
+  .dotline { display: inline-flex; align-items: center; gap: .35rem; }
+  .dotline i { width: .55rem; height: .55rem; border-radius: 50%; background: var(--faint); }
+  .dotline i.on { background: var(--green); }
+
+  /* 长按确认：按住时一圈填满 */
+  .hold { --p: 0; }
+  .hold::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--c) 18%, transparent) calc(var(--p) * 100%), transparent 0);
+                 pointer-events: none; transition: opacity .2s; }
+  .hold .ring { position: absolute; right: 1.2rem; bottom: 1.1rem; width: 3rem; height: 3rem; opacity: 0; transition: opacity .2s; }
+  .hold.pressing .ring { opacity: 1; }
+  .ring circle { fill: none; stroke-width: 4; }
+  .ring .bg { stroke: color-mix(in srgb, var(--c) 18%, transparent); }
+  .ring .fg { stroke: var(--c); stroke-linecap: round; stroke-dasharray: 100; stroke-dashoffset: calc(100 - var(--p) * 100); transform: rotate(-90deg); transform-origin: 50% 50%; }
+
+  /* 一键 120 长条 */
+  .bar120 { --c: var(--red); --cd: var(--red-d); position: relative; overflow: hidden; display: flex; align-items: center; gap: 1rem; border-radius: 1.3rem;
+            padding: .9rem 1.3rem; color: #fff; background: linear-gradient(120deg, #e34848, #b42323); box-shadow: 0 10px 28px rgba(200, 40, 40, .28);
+            transition: transform .25s var(--spring); }
+  .bar120:active { transform: scale(.985); }
+  .bar120 .big { font-size: 1.6rem; font-weight: 800; letter-spacing: .06em; }
+  .bar120 .s { opacity: .9; font-size: 1rem; margin-left: auto; }
+  .bar120 .ico { font-size: 1.9rem; }
+  .bar120.hold::after { background: linear-gradient(90deg, rgba(255, 255, 255, .28) calc(var(--p) * 100%), transparent 0); }
+  .bar120 .ring .bg { stroke: rgba(255, 255, 255, .3); } .bar120 .ring .fg { stroke: #fff; }
+  .bar120 .ring { position: static; width: 2.4rem; height: 2.4rem; }
+
+  /* 家人留言 */
+  .inbox { background: var(--card); border-radius: 1.6rem; box-shadow: var(--shadow); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .inbox h2 { margin: 0; padding: 1.2rem 1.4rem .7rem; font-size: 1.35rem; display: flex; align-items: center; gap: .6rem; }
+  .inbox h2 .n { margin-left: auto; font-size: .9rem; color: #fff; background: var(--red); border-radius: 999px; padding: .1rem .65rem; }
+  .list { list-style: none; margin: 0; padding: 0 .8rem 1rem; overflow-y: auto; flex: 1; scroll-behavior: smooth; }
+  .msg { display: grid; grid-template-columns: auto 1fr; gap: .8rem; padding: .85rem .6rem; border-radius: 1.1rem; position: relative;
+         animation: rise .5s var(--ease) both; }
+  .msg + .msg { border-top: 1px solid var(--line); }
+  .msg.fresh { background: color-mix(in srgb, var(--blue) 7%, transparent); }
+  .av { width: 3rem; height: 3rem; border-radius: 50%; display: grid; place-items: center; font-weight: 750; font-size: 1.25rem; color: #6a3a0f;
+        background: linear-gradient(140deg, #ffe0b3, #f6b06e); }
+  .av.son { background: linear-gradient(140deg, #cfe3ff, #8db6f5); color: #183c74; }
+  .av.me { background: linear-gradient(140deg, #e3dbd0, #c9bdae); color: #4b4036; }
+  .who { font-weight: 700; font-size: 1.05rem; display: flex; align-items: baseline; gap: .6rem; }
+  .who time { color: var(--faint); font-weight: 400; font-size: .85rem; }
+  .txt { font-size: 1.3rem; line-height: 1.5; margin: .3rem 0 .45rem; }
+  .act { display: inline-flex; align-items: center; gap: .45rem; font-size: 1rem; color: var(--blue); background: color-mix(in srgb, var(--blue) 9%, transparent);
+         padding: .4rem .85rem; border-radius: 999px; font-weight: 600; transition: transform .2s var(--spring); }
+  .act:active { transform: scale(.95); }
+  .act.green { color: var(--green-d); background: color-mix(in srgb, var(--green) 12%, transparent); }
+  .unread { position: absolute; right: .9rem; top: 1.1rem; width: .75rem; height: .75rem; border-radius: 50%; background: var(--red);
+            box-shadow: 0 0 0 4px color-mix(in srgb, var(--red) 20%, transparent); }
+  .msg.mine { grid-template-columns: 1fr auto; text-align: right; }
+  .msg.mine .who { justify-content: flex-end; }
+  .msg.mine .meta { color: var(--muted); font-size: .95rem; margin-top: .3rem; }
+  .ok-tick { color: var(--green); font-weight: 700; }
+  .empty { text-align: center; color: var(--faint); padding: 3rem 1rem; font-size: 1.1rem; line-height: 1.8; }
+  .empty b { display: block; font-size: 2.6rem; }
+
+  /* 语音条 */
+  .vb { display: inline-flex; align-items: center; gap: .7rem; padding: .55rem 1rem .55rem .55rem; margin-top: .35rem; border-radius: 999px;
+        background: color-mix(in srgb, var(--blue) 10%, transparent); color: var(--blue-d); min-width: 13rem; max-width: 100%;
+        transition: transform .2s var(--spring), background .3s; }
+  body[data-theme="night"] .vb { color: #9dbbff; }
+  .vb:active { transform: scale(.97); }
+  .vb .pp { width: 2.6rem; height: 2.6rem; border-radius: 50%; background: var(--blue); color: #fff; display: grid; place-items: center; font-size: 1.1rem; flex: none;
+            box-shadow: 0 6px 14px color-mix(in srgb, var(--blue) 35%, transparent); }
+  .vb .wave { display: flex; align-items: center; gap: 3px; height: 1.8rem; flex: 1; --prog: 0; }
+  .vb .wave span { flex: 1; min-width: 3px; border-radius: 3px; background: currentColor; opacity: .3; transition: opacity .2s; }
+  .vb .dur { font-weight: 700; font-size: 1rem; }
+  .vb.playing { background: color-mix(in srgb, var(--blue) 18%, transparent); }
+  .vb.playing .pp { animation: pulse 1.4s var(--ease) infinite; }
+
+  /* 字幕：CareMate 正在说的话 */
+  .caption { position: fixed; left: 50%; bottom: 1.4rem; transform: translate(-50%, 160%); max-width: min(64rem, 92vw); display: flex; gap: .9rem; align-items: center;
+             background: rgba(28, 27, 25, .92); color: #fff; border-radius: 1.4rem; padding: .95rem 1.4rem; font-size: 1.3rem; line-height: 1.45;
+             box-shadow: 0 18px 40px rgba(0, 0, 0, .25); transition: transform .5s var(--ease); z-index: 30; backdrop-filter: blur(10px); }
+  .caption.show { transform: translate(-50%, 0); }
+  .eq { display: flex; gap: 3px; align-items: flex-end; height: 1.3rem; flex: none; }
+  .eq span { width: 4px; border-radius: 2px; background: #7fd3a0; animation: eq 1s ease-in-out infinite; }
+  .eq span:nth-child(2) { animation-delay: -.3s; } .eq span:nth-child(3) { animation-delay: -.6s; } .eq span:nth-child(4) { animation-delay: -.15s; }
+
+  /* 底部弹层：选人打电话 / 录语音 */
+  .scrim { position: fixed; inset: 0; background: rgba(20, 16, 12, .38); backdrop-filter: blur(4px); opacity: 0; pointer-events: none; transition: opacity .35s var(--ease); z-index: 40; }
+  .scrim.show { opacity: 1; pointer-events: auto; }
+  .sheet { position: fixed; left: 50%; bottom: 0; width: min(56rem, 100%); transform: translate(-50%, 105%); background: var(--card); z-index: 41;
+           border-radius: 2rem 2rem 0 0; padding: 1.1rem 2rem 2rem; box-shadow: 0 -20px 50px rgba(0, 0, 0, .18); transition: transform .45s var(--ease); }
+  .sheet.show { transform: translate(-50%, 0); }
+  .grab { width: 3.4rem; height: .38rem; border-radius: 99px; background: var(--line); margin: 0 auto 1rem; }
+  .sheet h3 { margin: 0 0 1.2rem; font-size: 1.8rem; display: flex; align-items: center; }
+  .sheet .x { margin-left: auto; width: 3rem; height: 3rem; border-radius: 50%; background: var(--bg); font-size: 1.4rem; color: var(--muted); }
+  .people { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 1rem; }
+  .person { display: flex; align-items: center; gap: 1rem; padding: 1.1rem 1.2rem; border-radius: 1.4rem; background: var(--bg); text-align: left;
+            transition: transform .25s var(--spring), background .2s; border: 2px solid transparent; }
+  .person:active { transform: scale(.97); }
+  .person .av { width: 4.2rem; height: 4.2rem; font-size: 1.7rem; }
+  .person b { font-size: 1.7rem; display: block; }
+  .person small { color: var(--muted); font-size: .95rem; }
+  .person .go { margin-left: auto; width: 3.4rem; height: 3.4rem; border-radius: 50%; background: var(--green); color: #fff; display: grid; place-items: center; font-size: 1.5rem; }
+  .person.sel { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 8%, var(--card)); }
+  .rec { display: grid; justify-items: center; gap: 1rem; padding: 1.2rem 0 .4rem; }
+  .talk { --lvl: 0; position: relative; width: 12rem; height: 12rem; border-radius: 50%; color: #fff; font-size: 4rem; display: grid; place-items: center;
+          background: radial-gradient(circle at 35% 30%, #5b8ff5, var(--blue-d)); box-shadow: 0 18px 40px color-mix(in srgb, var(--blue) 40%, transparent);
+          transition: transform .3s var(--spring), background .3s; touch-action: none; }
+  .talk::before, .talk::after { content: ""; position: absolute; inset: -1rem; border-radius: 50%; border: 3px solid color-mix(in srgb, var(--blue) 35%, transparent);
+          transform: scale(calc(1 + var(--lvl) * .35)); opacity: 0; transition: transform .08s linear, opacity .3s; }
+  .talk::after { inset: -2.2rem; border-width: 2px; transform: scale(calc(1 + var(--lvl) * .6)); }
+  .talk.rec-on { transform: scale(1.06); }
+  .talk.rec-on::before, .talk.rec-on::after { opacity: 1; }
+  .talk.cancel { background: radial-gradient(circle at 35% 30%, #f07272, var(--red-d)); }
+  .talk.cancel::before, .talk.cancel::after { border-color: color-mix(in srgb, var(--red) 35%, transparent); }
+  .talk.done { background: radial-gradient(circle at 35% 30%, #4cc37f, var(--green-d)); }
+  .rec .hint { font-size: 1.5rem; font-weight: 700; min-height: 2.2rem; }
+  .rec .sub { color: var(--muted); font-size: 1.05rem; min-height: 1.6rem; }
+  .rec .timer { font-size: 2.2rem; font-weight: 750; min-height: 2.6rem; }
+  .rec .row { display: flex; gap: 1rem; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: .6rem; padding: 1rem 1.8rem; border-radius: 1.2rem; font-weight: 700; font-size: 1.3rem;
+         background: var(--bg); transition: transform .2s var(--spring); }
+  .btn:active { transform: scale(.96); }
+  .btn.primary { background: var(--blue); color: #fff; }
+  .seg { display: inline-flex; background: var(--bg); border-radius: 999px; padding: .3rem; gap: .2rem; }
+  .seg button { padding: .6rem 1.4rem; border-radius: 999px; font-size: 1.2rem; font-weight: 600; color: var(--muted); transition: background .25s, color .25s; }
+  .seg button.on { background: var(--card); color: var(--ink); box-shadow: var(--shadow); }
+
+  /* 全屏：来电 / 通话 / 摔倒询问 / 吃药 */
+  .ov { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; color: #fff; opacity: 0; pointer-events: none;
+        transition: opacity .45s var(--ease); background: var(--ovbg, #0e2a1f); }
+  .ov.show { opacity: 1; pointer-events: auto; }
+  .ov .in { display: grid; justify-items: center; gap: 1.1rem; text-align: center; transform: translateY(16px) scale(.98); transition: transform .55s var(--ease); width: min(60rem, 92vw); }
+  .ov.show .in { transform: none; }
+  .ov.green { --ovbg: radial-gradient(1000px 700px at 50% 20%, #1d6b48, #0a2a1d); }
+  .ov.slate { --ovbg: radial-gradient(1000px 700px at 50% 20%, #2c3e57, #0f1724); }
+  .ov.red { --ovbg: radial-gradient(1000px 700px at 50% 20%, #b3302e, #3d0c0c); }
+  .ov.amber { --ovbg: radial-gradient(1000px 700px at 50% 20%, #b9770b, #3a2304); }
+  .ov.calm { --ovbg: radial-gradient(1000px 700px at 50% 20%, #24705a, #0b2a22); }
+  .ov .kicker { font-size: 1.3rem; opacity: .85; letter-spacing: .08em; }
+  .ov .title { font-size: 4rem; font-weight: 800; letter-spacing: .05em; line-height: 1.15; }
+  .ov .note { font-size: 1.4rem; opacity: .9; line-height: 1.55; max-width: 46rem; }
+  .ov .warn { background: rgba(255, 255, 255, .14); padding: .55rem 1.1rem; border-radius: 999px; font-size: 1.05rem; }
+  .big-av { --lvl: 0; position: relative; width: 11rem; height: 11rem; border-radius: 50%; display: grid; place-items: center; font-size: 4.6rem; font-weight: 800;
+            color: #6a3a0f; background: linear-gradient(140deg, #ffe0b3, #f6b06e); margin-bottom: .6rem; box-shadow: 0 20px 50px rgba(0, 0, 0, .3); }
+  .big-av.son { background: linear-gradient(140deg, #cfe3ff, #8db6f5); color: #183c74; }
+  .big-av .rip, .big-av .lvl { position: absolute; inset: 0; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .5); }
+  .big-av .rip { animation: ripple 2.4s var(--ease) infinite; }
+  .big-av .rip:nth-child(2) { animation-delay: .8s; } .big-av .rip:nth-child(3) { animation-delay: 1.6s; }
+  .big-av .lvl { inset: -.8rem; border: 6px solid rgba(255, 255, 255, .35); transform: scale(calc(1 + var(--lvl) * .22)); transition: transform .08s linear; }
+  .ov .acts { display: flex; gap: 4.5rem; margin-top: 1.6rem; align-items: flex-start; }
+  .round { display: grid; justify-items: center; gap: .8rem; font-size: 1.35rem; font-weight: 700; }
+  .round .c { width: 7.6rem; height: 7.6rem; border-radius: 50%; display: grid; place-items: center; font-size: 3rem; color: #fff;
+              transition: transform .25s var(--spring); box-shadow: 0 16px 36px rgba(0, 0, 0, .3); }
+  .round:active .c { transform: scale(.92); }
+  .round.accept .c { background: #22c55e; animation: wiggle 1.6s ease-in-out infinite; }
+  .round.decline .c { background: #ef4444; }
+  .round.decline .c svg { transform: rotate(135deg); }
+  .round.mute .c { background: rgba(255, 255, 255, .16); width: 6.2rem; height: 6.2rem; font-size: 2.4rem; }
+  .round.mute.on .c { background: #fff; color: #1c1b19; }
+  .timer-big { font-size: 2.6rem; font-weight: 750; letter-spacing: .04em; }
+  .dots::after { content: ""; animation: dots 1.5s steps(4) infinite; }
+  .ov .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4rem; width: min(52rem, 90vw); margin-top: 1.4rem; }
+  .ov .pair .btn { padding: 1.6rem 1rem; font-size: 1.9rem; border-radius: 1.6rem; color: #1c1b19; background: #fff; box-shadow: 0 16px 36px rgba(0, 0, 0, .25); }
+  .ov .pair .btn.ok { background: #22c55e; color: #fff; }
+  .ov .pair .btn.help { background: rgba(255, 255, 255, .14); color: #fff; border: 2px solid rgba(255, 255, 255, .4); box-shadow: none; }
+  .ov .link { color: #fff; opacity: .8; font-size: 1.2rem; text-decoration: underline; text-underline-offset: 4px; margin-top: .4rem; padding: .6rem; }
+  .countdown { position: relative; width: 8rem; height: 8rem; }
+  .countdown svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .countdown circle { fill: none; stroke-width: 7; }
+  .countdown .bg { stroke: rgba(255, 255, 255, .2); }
+  .countdown .fg { stroke: #fff; stroke-linecap: round; stroke-dasharray: 289; transition: stroke-dashoffset .25s linear; }
+  .countdown b { position: absolute; inset: 0; display: grid; place-items: center; font-size: 2.6rem; }
+
+  /* 首次：点一下开声音 */
+  .start { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; background: radial-gradient(900px 600px at 50% 30%, #fffaf3, #efe5d6);
+           color: #1c1b19; transition: opacity .5s var(--ease); text-align: center; }
+  .start.hide { opacity: 0; pointer-events: none; }
+  .start .hand { font-size: 5rem; animation: tap 1.8s var(--ease) infinite; }
+  .start h1 { font-size: 3rem; margin: 1rem 0 .4rem; }
+  .start p { color: #6b645c; font-size: 1.3rem; margin: 0; }
+
+  .toast { position: fixed; left: 50%; top: 1.4rem; transform: translate(-50%, -160%); background: var(--ink); color: var(--bg); padding: .9rem 1.5rem; border-radius: 1.2rem;
+           font-size: 1.25rem; font-weight: 600; z-index: 95; transition: transform .45s var(--ease); box-shadow: 0 14px 30px rgba(0, 0, 0, .2); max-width: 90vw; }
+  .toast.show { transform: translate(-50%, 0); }
+
+  @keyframes blink { 50% { opacity: .25; } }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+  @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--blue) 45%, transparent); } 50% { box-shadow: 0 0 0 10px transparent; } }
+  @keyframes nudge { 0%, 100% { box-shadow: var(--shadow); } 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--amber) 22%, transparent), var(--shadow); } }
+  @keyframes ripple { from { transform: scale(1); opacity: .7; } to { transform: scale(1.9); opacity: 0; } }
+  @keyframes wiggle { 0%, 70%, 100% { transform: rotate(0); } 75% { transform: rotate(-12deg); } 80% { transform: rotate(12deg); } 85% { transform: rotate(-8deg); } 90% { transform: rotate(6deg); } }
+  @keyframes eq { 0%, 100% { height: 25%; } 50% { height: 100%; } }
+  @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+  @keyframes tap { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-14px); } }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition-duration: .01ms !important; } }
+
+  /* 竖屏 / 小屏：上下排，能滚动 */
+  @media (max-aspect-ratio: 1/1), (max-width: 900px) {
+    body { overflow: auto; }
+    #app { height: auto; min-height: 100vh; }
+    .top { grid-template-columns: 1fr auto; } .top .status { display: none; }
+    .clock { font-size: 3.4rem; }
+    main { grid-template-columns: 1fr; }
+    .tiles { grid-template-rows: auto auto; }
+    .inbox { min-height: 24rem; }
+    .ov .title { font-size: 3rem; } .ov .acts { gap: 2.4rem; }
+  }
+</style>
+</head>
+<body data-theme="day">
+<div id="app">
+  <header class="top">
+    <div><div class="greet" id="greet">您好</div><div class="date" id="date"></div></div>
+    <div class="clock" id="clock">--:--</div>
+    <div class="status"><span class="pill" id="net"><i></i><span id="netText">已连接</span></span></div>
+  </header>
+  <main>
+    <div class="left">
+      <section class="tiles">
+        <button class="tile call" id="tCall"><span class="ico"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25c1.1.37 2.3.57 3.6.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1L6.6 10.8z"/></svg></span>
+          <span class="t">打电话</span><span class="s" id="tCallSub">给家人打语音电话</span></button>
+        <button class="tile voice" id="tVoice"><span class="ico"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 0 0-7 0v6A3.5 3.5 0 0 0 12 15zm6-3.5a1 1 0 1 0-2 0 4 4 0 0 1-8 0 1 1 0 1 0-2 0 6 6 0 0 0 5 5.9V20H8.5a1 1 0 1 0 0 2h7a1 1 0 1 0 0-2H13v-2.6a6 6 0 0 0 5-5.9z"/></svg></span>
+          <span class="t">语音留言</span><span class="s">按一下，说给家人听</span><span class="badge" id="voiceBadge" hidden></span></button>
+        <button class="tile med" id="tMed"><span class="ico"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4.2 13.3l9.1-9.1a4.5 4.5 0 0 1 6.4 6.4l-9.1 9.1a4.5 4.5 0 0 1-6.4-6.4zm1.4 1.4a2.5 2.5 0 0 0 3.5 3.5l3.9-3.9-3.5-3.5-3.9 3.9z"/></svg></span>
+          <span class="t">吃药</span><span class="s" id="tMedSub">让机械臂把药递给您</span></button>
+        <button class="tile sos hold" id="tSos"><span class="ico"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a1 1 0 0 1 1 1v1.06A8 8 0 0 1 20 12v5l1.7 1.7a1 1 0 0 1-.7 1.7H3a1 1 0 0 1-.7-1.7L4 17v-5a8 8 0 0 1 7-7.94V3a1 1 0 0 1 1-1zm-2 19h4a2 2 0 0 1-4 0z"/></svg></span>
+          <span class="t">紧急呼叫</span><span class="s" id="tSosSub">按住 2 秒，马上呼叫家人</span>
+          <svg class="ring" viewBox="0 0 36 36"><circle class="bg" cx="18" cy="18" r="15.9"/><circle class="fg" cx="18" cy="18" r="15.9" pathLength="100"/></svg></button>
+      </section>
+      <button class="bar120 hold" id="t120"><span class="ico">🚑</span><span class="big">一键 120</span>
+        <svg class="ring" viewBox="0 0 36 36"><circle class="bg" cx="18" cy="18" r="15.9"/><circle class="fg" cx="18" cy="18" r="15.9" pathLength="100"/></svg>
+        <span class="s" id="t120Sub">按住 2 秒拨打急救电话</span></button>
+    </div>
+    <section class="inbox">
+      <h2>💌 家人的留言<span class="n" id="unreadN" hidden></span></h2>
+      <ul class="list" id="list"></ul>
+    </section>
+  </main>
+</div>
+
+<div class="caption" id="caption"><div class="eq"><span></span><span></span><span></span><span></span></div><div id="captionText"></div></div>
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="sheet"></div>
+<div class="ov" id="ov"><div class="in" id="ovIn"></div></div>
+<div class="toast" id="toast"></div>
+<div class="start" id="start"><div><div class="hand">👆</div><h1>点一下屏幕，开始使用</h1><p>打开声音和麦克风，家人来电话时才能听到铃声</p></div></div>
+
+<script src="/ui/shared/bus.js"></script>
+<script src="/ui/shared/comms.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = UI.esc;
+const ICON = {
+  phone: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25c1.1.37 2.3.57 3.6.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1L6.6 10.8z"/></svg>',
+  mic: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 0 0-7 0v6A3.5 3.5 0 0 0 12 15zm6-3.5a1 1 0 1 0-2 0 4 4 0 0 1-8 0 1 1 0 1 0-2 0 6 6 0 0 0 5 5.9V20H8.5a1 1 0 1 0 0 2h7a1 1 0 1 0 0-2H13v-2.6a6 6 0 0 0 5-5.9z"/></svg>',
+  micOff: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.3 2.3a1 1 0 0 0-1.4 1.4l18 18a1 1 0 0 0 1.4-1.4l-4.5-4.5A6 6 0 0 0 18 11.5a1 1 0 1 0-2 0c0 .6-.13 1.17-.37 1.68l-1.2-1.2c.04-.16.07-.32.07-.48v-6a3.5 3.5 0 0 0-6.9-.8L3.3 2.3zM6 11.5a1 1 0 1 1 2 0 4 4 0 0 0 4.9 3.9l1.5 1.5c-.44.2-.9.35-1.4.43V20h2.5a1 1 0 1 1 0 2h-7a1 1 0 1 1 0-2H11v-2.6a6 6 0 0 1-5-5.9z"/></svg>',
+  play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.1v13.8a1 1 0 0 0 1.5.86l11-6.9a1 1 0 0 0 0-1.72l-11-6.9A1 1 0 0 0 8 5.1z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h3v14H7zM14 5h3v14h-3z"/></svg>',
+};
+
+let S = null;            // 最新快照
+let ready = false;       // 点过“开始”
+const ring = Comms.ringer();
+Comms.loadPrefs("elder");
+const call = Comms.callClient({ party: "elder", onChange: () => renderOverlay() });
+
+// ---------- 小工具 ----------
+let toastTimer = 0;
+function toast(text, ms = 2600) {
+  $("toast").textContent = text;
+  $("toast").classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $("toast").classList.remove("show"), ms);
+}
+function name(id) { return id === "elder" ? (S ? S.elder_title : "我") : UI.contactName(S, id); }
+function initial(id) { return (name(id) || "家").slice(0, 1); }
+function avClass(id) { return id === "son" ? "son" : id === "elder" ? "me" : ""; }
+function offset() { return S && S.med && S.med.utc_offset != null ? S.med.utc_offset : 8; }
+function wall(ts) { return new Date((ts ?? Date.now() / 1000) * 1000 + offset() * 3600 * 1000); }   // 读 UTC 字段 = 北京时间
+const pad = (n) => String(n).padStart(2, "0");
+const hhmm = (ts) => { const d = wall(ts); return pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()); };
+async function post(path, body) { try { return await Bus.post(path, body); } catch (e) { toast("连不上主机，请稍后再试"); return { ok: false }; } }
+
+// ---------- 顶栏：时钟、问候（按北京时间） ----------
+function tickClock() {
+  const d = wall();
+  const h = d.getUTCHours();
+  $("clock").innerHTML = pad(h) + '<span class="colon">:</span>' + pad(d.getUTCMinutes());
+  $("date").textContent = (d.getUTCMonth() + 1) + "月" + d.getUTCDate() + "日 · 星期" + "日一二三四五六"[d.getUTCDay()];
+  const g = h < 5 ? "夜深了，早点休息" : h < 11 ? "早上好" : h < 13 ? "中午好" : h < 18 ? "下午好" : "晚上好";
+  $("greet").textContent = g + (h >= 5 ? "，" + (S ? S.elder_title : "") : "");
+}
+setInterval(tickClock, 1000);
+tickClock();
+
+// ---------- 首次点一下：解锁声音、先要一次麦克风权限 ----------
+async function begin() {
+  if (ready) return;
+  ready = true;
+  Comms.audio();
+  $("start").classList.add("hide");
+  try { const s = await Comms.openMic(); s.getTracks().forEach((t) => t.stop()); }
+  catch (e) { toast(Comms.micError(e), 4200); }
+}
+$("start").addEventListener("pointerdown", begin);
+setTimeout(() => { if (Comms.audio().state === "running") begin(); }, 300);   // 启动脚本带了自动播放参数就不用点
+
+// ---------- 底部弹层 ----------
+let sheetKind = null, talk = null, talkTo = null;
+function openSheet(kind, html) {
+  sheetKind = kind;
+  $("sheet").innerHTML = '<div class="grab"></div>' + html;
+  $("sheet").classList.add("show");
+  $("scrim").classList.add("show");
+}
+function closeSheet() {
+  if (talk) talk.cancel();
+  talk = null; sheetKind = null;
+  $("sheet").classList.remove("show");
+  $("scrim").classList.remove("show");
+}
+$("scrim").onclick = closeSheet;
+
+function contactsHtml(mode) {
+  const on = (S && S.comms && S.comms.online) || {};
+  return S.contacts.map((c) => {
+    const sub = mode === "call"
+      ? (on[c.id] ? "在线，马上能接" : "没打开手机，打过去会让" + esc(c.pron) + "回电")
+      : "留言会推送给" + esc(c.pron);
+    return `<button class="person${mode === "voice" && c.id === talkTo ? " sel" : ""}" data-id="${c.id}">
+      <span class="av ${avClass(c.id)}">${esc(c.name.slice(0, 1))}</span>
+      <span><b>${esc(c.name)}</b><small>${sub}</small></span>
+      ${mode === "call" ? '<span class="go">' + ICON.phone + "</span>" : ""}</button>`;
+  }).join("");
+}
+
+$("tCall").onclick = () => {
+  if (!S) return;
+  if (S.contacts.length === 1) return dial(S.contacts[0].id);
+  openSheet("call", `<h3>给谁打电话？<button class="x" aria-label="关闭">✕</button></h3><div class="people" id="people">${contactsHtml("call")}</div>`);
+  $("sheet").querySelector(".x").onclick = closeSheet;
+  $("people").querySelectorAll(".person").forEach((b) => (b.onclick = () => { closeSheet(); dial(b.dataset.id); }));
+};
+async function dial(to, emergency = false) {
+  const r = await call.start(to, { emergency });
+  if (!r.ok) toast(r.error || "现在打不出去");
+}
+
+$("tVoice").onclick = () => {
+  if (!S) return;
+  talkTo = talkTo || S.contacts[0].id;
+  openSheet("voice", `<h3>给家人留句话<button class="x" aria-label="关闭">✕</button></h3>
+    <div class="people" id="people">${contactsHtml("voice")}</div>
+    <div class="rec">
+      <button class="talk" id="talkBtn" aria-label="按住说话">${ICON.mic}</button>
+      <div class="timer" id="recTimer"></div>
+      <div class="hint" id="recHint">按住说话，松开发送</div>
+      <div class="sub" id="recSub">也可以点一下开始，说完再点一下</div>
+    </div>`);
+  $("sheet").querySelector(".x").onclick = closeSheet;
+  $("people").querySelectorAll(".person").forEach((b) => (b.onclick = () => {
+    talkTo = b.dataset.id;
+    $("people").querySelectorAll(".person").forEach((x) => x.classList.toggle("sel", x === b));
+  }));
+  const btn = $("talkBtn");
+  talk = Comms.talkButton(btn, {
+    send: (clip) => Comms.sendVoice("elder", talkTo, clip),
+    onState(st, info) {
+      if (!$("talkBtn")) return;
+      const recOn = st === "hold" || st === "toggle";
+      btn.classList.toggle("rec-on", recOn);
+      btn.classList.toggle("cancel", st === "hold" && info.cancel);
+      btn.classList.toggle("done", st === "sent");
+      btn.style.setProperty("--lvl", recOn ? info.level.toFixed(2) : 0);
+      btn.innerHTML = st === "sent" ? "✓" : ICON.mic;
+      const left = Math.max(0, info.max - info.secs);
+      $("recTimer").textContent = recOn ? Comms.mmss(info.secs) : "";
+      const who = name(talkTo);
+      const [hint, sub] = {
+        idle: ["按住说话，松开发送", "也可以点一下开始，说完再点一下"],
+        arming: ["正在打开麦克风…", ""],
+        hold: info.cancel ? ["松开手，这段不发", "手指移回按钮上就继续"] : ["正在听，说完松开", left < 10 ? `还能说 ${Math.ceil(left)} 秒` : "手指移开按钮可以取消"],
+        toggle: ["说完点一下按钮发送", left < 10 ? `还能说 ${Math.ceil(left)} 秒` : "最长 1 分钟"],
+        sending: ["正在发给" + who + "…", ""],
+        sent: ["发给" + who + "了 ✓", who + "那边会收到提醒"],
+        error: [info.error || "没发出去", "再试一次"],
+      }[st];
+      $("recHint").textContent = hint;
+      $("recSub").textContent = sub;
+      if (st === "sent") setTimeout(() => { if (sheetKind === "voice" && talk && talk.state() === "idle") closeSheet(); }, 1300);
+    },
+  });
+};
+
+$("tMed").onclick = () => {
+  if (!S) return;
+  const m = S.med;
+  if (m && m.enabled && m.pending) { medDismissed = null; renderOverlay(); return; }
+  Bus.voice("把药递给我");
+  toast("好的，正在把药递给您");
+};
+
+// 长按确认（紧急呼叫、120）：按满 2 秒才算，中途松手不算
+function holdButton(el, ms, onDone, onShort) {
+  let raf = 0, t0 = 0, pid = null;
+  const reset = () => { cancelAnimationFrame(raf); el.classList.remove("pressing"); el.style.setProperty("--p", 0); pid = null; };
+  el.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    Comms.audio();
+    pid = e.pointerId;
+    try { el.setPointerCapture(pid); } catch (err) {}
+    t0 = performance.now();
+    el.classList.add("pressing");
+    if (navigator.vibrate) navigator.vibrate(30);
+    const step = () => {
+      const p = Math.min(1, (performance.now() - t0) / ms);
+      el.style.setProperty("--p", p.toFixed(3));
+      if (p >= 1) { reset(); if (navigator.vibrate) navigator.vibrate([60, 40, 120]); onDone(); return; }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+  });
+  const stop = (e) => { if (e.pointerId !== pid) return; const held = performance.now() - t0; reset(); if (held < ms) onShort(held); };
+  el.addEventListener("pointerup", stop);
+  el.addEventListener("pointercancel", stop);
+  el.addEventListener("contextmenu", (e) => e.preventDefault());
+}
+holdButton($("tSos"), 2000, () => {
+  if (!S) return;
+  dial(S.contacts[0].id, true);
+}, () => toast("要按住 2 秒才会呼叫"));
+holdButton($("t120"), 2000, async () => {
+  const r = await post("/api/dial120", { by: "elder", via: "床头屏" });
+  if (r.ok) {
+    toast("已拨打 120，也通知了家人", 4000);
+    // 手机 / 平板有电话功能时，顺便打开系统拨号盘（已填好 120，要自己按拨出）
+    if (/Android|iPhone|iPad|HarmonyOS/i.test(navigator.userAgent)) location.href = "tel:120";
+  }
+}, () => toast("要按住 2 秒才会拨打 120"));
+
+// ---------- 留言列表 ----------
+let listKey = "", seenMsgs = null, unheard = [];
+function inboxItems(s) {
+  const items = [];
+  for (const m of s.messages) {
+    if (m.to === "elder") items.push({ kind: m.kind === "voice" ? "voice" : "text", m, ts: m.ts });
+    else if (m.from === "elder") items.push({ kind: "mine", m, ts: m.ts });
+  }
+  for (const c of (s.comms && s.comms.history) || []) {
+    if (c.to === "elder" && !c.answered_ts) items.push({ kind: "missed", c, ts: c.ts });
+  }
+  return items.sort((a, b) => b.ts - a.ts).slice(0, 30);
+}
+function voiceBubble(m) {
+  const n = Math.max(10, Math.min(26, Math.round(8 + m.dur * 1.2)));
+  const bars = Comms.bars(m.voice_id, n).map((h) => `<span style="height:${h}%"></span>`).join("");
+  return `<button class="vb" data-voice="${m.voice_id}" data-dur="${m.dur}"><span class="pp">${ICON.play}</span>
+    <span class="wave">${bars}</span><span class="dur">${Comms.mmss(m.dur)}</span></button>`;
+}
+function renderInbox(s) {
+  const items = inboxItems(s);
+  unheard = items.filter((i) => i.kind === "voice" && !i.m.heard).map((i) => i.m);
+  const key = JSON.stringify(items.map((i) => [i.kind, i.ts, i.m && i.m.heard, i.c && i.c.id]));
+  const n = unheard.length;
+  $("unreadN").hidden = !n; $("unreadN").textContent = n + " 条没听";
+  $("voiceBadge").hidden = true;
+  if (key === listKey) return;
+  const fresh = new Set(items.filter((i) => seenMsgs && !seenMsgs.has(i.ts + i.kind)).map((i) => i.ts + i.kind));
+  listKey = key;
+  $("list").innerHTML = items.length ? items.map((i) => {
+    const isFresh = fresh.has(i.ts + i.kind) ? " fresh" : "";
+    if (i.kind === "missed") {
+      return `<li class="msg${isFresh}"><span class="av ${avClass(i.c.from)}">${esc(initial(i.c.from))}</span><div>
+        <div class="who">${esc(name(i.c.from))}打来过电话<time>${hhmm(i.ts)}</time></div>
+        <button class="act green" data-call="${i.c.from}">${ICON.phone} 回拨</button></div></li>`;
+    }
+    const m = i.m;
+    if (i.kind === "mine") {
+      const what = m.kind === "voice" ? voiceBubble(m) : `<div class="txt">${esc(m.text)}</div>`;
+      const st = m.kind === "voice" ? (m.heard ? '<span class="ok-tick">✓ 已听</span>' : "还没听") : "已送到";
+      return `<li class="msg mine${isFresh}"><div><div class="who">我发给${esc(name(m.to))}<time>${hhmm(m.ts)}</time></div>${what}
+        <div class="meta">${st}</div></div><span class="av me">我</span></li>`;
+    }
+    const body = i.kind === "voice" ? voiceBubble(m)
+      : `<div class="txt">${esc(m.text)}</div><button class="act" data-read="${m.ts}">🔊 读给我听</button>`;
+    return `<li class="msg${isFresh}"><span class="av ${avClass(m.from)}">${esc(initial(m.from))}</span><div>
+      <div class="who">${esc(name(m.from))}<time>${hhmm(m.ts)}</time></div>${body}</div>
+      ${i.kind === "voice" && !m.heard ? '<i class="unread"></i>' : ""}</li>`;
+  }).join("") : `<li class="empty"><b>💌</b>还没有留言<br>家人发来的话会出现在这里，还会念给您听</li>`;
+  seenMsgs = new Set(items.map((i) => i.ts + i.kind));
+  markPlaying(Comms.player.current());
+}
+$("list").addEventListener("click", (e) => {
+  const v = e.target.closest("[data-voice]"), r = e.target.closest("[data-read]"), c = e.target.closest("[data-call]");
+  if (v) playVoice(Number(v.dataset.voice));
+  if (r) readAloud(Number(r.dataset.read));
+  if (c) dial(c.dataset.call);
+});
+
+// ---------- 播放 / 朗读 ----------
+function markPlaying(id) {
+  document.querySelectorAll(".vb").forEach((b) => {
+    const on = Number(b.dataset.voice) === id;
+    b.classList.toggle("playing", on);
+    b.querySelector(".pp").innerHTML = on ? ICON.pause : ICON.play;
+  });
+}
+Comms.player.on(markPlaying);
+(function progress() {   // 放到哪儿，波形就亮到哪儿
+  const id = Comms.player.current();
+  document.querySelectorAll(".vb").forEach((b) => {
+    const on = Number(b.dataset.voice) === id;
+    const p = on ? Comms.player.position() / (Number(b.dataset.dur) || 1) : 0;
+    const bars = b.querySelectorAll(".wave span");
+    bars.forEach((s, i) => (s.style.opacity = on && i / bars.length <= p ? 1 : 0.3));
+  });
+  requestAnimationFrame(progress);
+})();
+async function playVoice(id) {
+  if (call.phase !== "idle") return toast("通话中，先不放留言");
+  try {
+    await Comms.player.play(id, { onEnd: (vid) => post("/api/voice_msg/heard", { id: vid, party: "elder" }) });
+  } catch (e) { toast("这条留言放不出来"); }
+}
+function readAloud(ts) {
+  const m = S && S.messages.find((x) => x.ts === ts && x.to === "elder" && x.text);
+  if (!m) return;
+  if (S.comms.online.speaker) post("/api/elder/reread", { ts });   // 喇叭在线：和收到时一样由喇叭念
+  else { Comms.speak(`您${name(m.from)}给您留言：${m.text}`); showCaption(`您${name(m.from)}给您留言：${m.text}`); }
+}
+
+// 新留言：家属的文字留言喇叭会念（喇叭不在线时页面自己念）；语音留言由主脑点名“播放端”，是本页就自动放
+let playSeq = null, readSeen = null;
+function autoMessages(s) {
+  const texts = s.messages.filter((m) => m.to === "elder" && m.text);
+  if (readSeen === null) readSeen = new Set(texts.map((m) => m.ts));
+  for (const m of texts) {
+    if (readSeen.has(m.ts)) continue;
+    readSeen.add(m.ts);
+    Comms.chime("message");
+    if (!s.comms.online.speaker && call.phase === "idle") {
+      const line = `您${name(m.from)}给您留言：${m.text}`;
+      setTimeout(() => { Comms.speak(line); showCaption(line); }, 700);
+    }
+  }
+  const req = s.comms.play;
+  if (!req) return;
+  if (playSeq === null) playSeq = req.seq - (s.now - req.ts < 30 ? 1 : 0);   // 刚打开页面：旧请求不补放
+  if (req.seq <= playSeq) return;
+  playSeq = req.seq;
+  if (req.target !== "page") return;
+  Comms.chime("message");
+  const go = () => playVoice(req.id);
+  if (!req.auto) return go();
+  if (s.comms.online.speaker) return setTimeout(go, 3800);   // 等喇叭念完“女儿发来一段语音留言，我放给您听”
+  const from = name((s.messages.find((m) => m.voice_id === req.id) || {}).from);
+  const line = `您${from}发来一段语音留言，我放给您听。`;
+  showCaption(line);
+  Comms.speak(line).then(go);
+}
+
+// ---------- 字幕：CareMate 说了什么（耳背也看得见） ----------
+let capTimer = 0, lastSayId = null;
+function showCaption(text) {
+  $("captionText").textContent = text;
+  $("caption").classList.add("show");
+  clearTimeout(capTimer);
+  capTimer = setTimeout(() => $("caption").classList.remove("show"), Math.max(5000, text.length * 260));
+}
+
+// ---------- 全屏层：通话 > 摔倒 > 吃药 ----------
+let ovKey = "", medDismissed = null, fallDismissed = null, fallDeadline = 0;
+function setOverlay(key, cls, html, bind) {
+  if (key === ovKey) return false;
+  ovKey = key;
+  const ov = $("ov");
+  if (!key) { ov.classList.remove("show"); return true; }
+  if (sheetKind) closeSheet();
+  ov.className = "ov " + cls;
+  $("ovIn").innerHTML = html;
+  requestAnimationFrame(() => ov.classList.add("show"));
+  if (bind) bind();
+  return true;
+}
+function bigAv(id, extra = "") {
+  return `<div class="big-av ${avClass(id)}" id="bigAv">${extra}<span>${esc(initial(id))}</span></div>`;
+}
+const RIPPLES = '<i class="rip"></i><i class="rip"></i><i class="rip"></i>';
+
+function endText(e) {
+  const peer = name(e.mine ? e.call.to : e.call.from);
+  const c = S && S.contacts.find((x) => x.id === (e.mine ? e.call.to : e.call.from));
+  return ({
+    declined: e.mine ? `${peer}现在不方便接` : "已挂断",
+    cancelled: e.mine ? "已取消" : `${peer}已挂断`,
+    missed: e.mine ? `${peer}暂时没接，已经让${c ? c.pron : "家人"}回电话` : "没接到",
+    dropped: "连接断开了", offline: `${peer}那边断开了`, replaced: "已转给下一位家人", reset: "通话已结束",
+    elsewhere: "已在别处接听",
+  })[e.reason] || (e.secs ? "通话结束 · " + Comms.mmss(e.secs) : "通话结束");
+}
+
+function renderCall() {
+  const p = call.phase, c = call.call;
+  if (p === "idle") return false;
+  if (p === "ended") {
+    const e = call.ended;
+    ring.stop();
+    setOverlay("ended" + e.call.id, e.call.emergency ? "red" : "slate",
+      `${bigAv(call.peer())}<div class="title">${esc(endText(e))}</div>${e.secs ? `<div class="note">通话 ${Comms.mmss(e.secs)}</div>` : ""}`);
+    return true;
+  }
+  const peer = call.peer(), pn = esc(call.peerName());
+  if (p === "incoming") {
+    ring.start(c.emergency || c.auto_answer ? "urgent" : "gentle");
+    if (c.auto_answer || c.answer_req) {
+      setOverlay("auto" + c.id, "green", `${bigAv(peer, RIPPLES)}<div class="kicker">紧急情况 · 自动接通</div>
+        <div class="title">${pn}来电</div><div class="note dots">正在接通</div>`);
+    } else {
+      setOverlay("in" + c.id, "green", `${bigAv(peer, RIPPLES)}<div class="kicker">语音来电</div><div class="title">${pn}</div>
+        <div class="note">点绿色的按钮接听</div>
+        <div class="acts"><button class="round decline" id="decline"><span class="c">${ICON.phone}</span>挂断</button>
+        <button class="round accept" id="accept"><span class="c">${ICON.phone}</span>接听</button></div>`,
+        () => { $("accept").onclick = () => { ring.stop(); call.accept(); }; $("decline").onclick = () => call.hangup(); });
+    }
+    return true;
+  }
+  ring.stop();
+  const emergency = c && c.emergency;
+  const cls = emergency ? "red" : p === "outgoing" ? "slate" : "green";
+  if (p === "outgoing" || p === "connecting") {
+    setOverlay(p + c.id, cls, `${bigAv(peer, RIPPLES)}<div class="kicker">${emergency ? "🚨 紧急呼叫" : "语音电话"}</div>
+      <div class="title">${p === "outgoing" ? "正在呼叫" + pn : pn}</div>
+      <div class="note dots">${p === "outgoing" ? "等" + pn + "接听" : "正在接通"}</div>
+      <div class="acts"><button class="round decline" id="hang"><span class="c">${ICON.phone}</span>${p === "outgoing" ? "不打了" : "挂断"}</button></div>`,
+      () => ($("hang").onclick = () => call.hangup()));
+    return true;
+  }
+  // active
+  setOverlay("active" + c.id, cls, `${bigAv(peer, '<i class="lvl"></i>')}<div class="kicker">${emergency ? "🚨 紧急通话中" : "通话中"}</div>
+    <div class="title">${pn}</div><div class="timer-big" id="callTimer">0:00</div>
+    ${call.micOk ? "" : `<div class="warn">${esc(call.micError || "麦克风不可用")}，${pn}听不到您</div>`}
+    <div class="acts"><button class="round mute" id="mute"><span class="c">${ICON.mic}</span>静音</button>
+    <button class="round decline" id="hang"><span class="c">${ICON.phone}</span>挂断</button></div>`,
+    () => {
+      $("hang").onclick = () => call.hangup();
+      $("mute").onclick = () => { call.setMuted(!call.muted); $("mute").classList.toggle("on", call.muted); $("mute").querySelector(".c").innerHTML = call.muted ? ICON.micOff : ICON.mic; };
+    });
+  return true;
+}
+
+function renderFall(g) {
+  if (g.state === "IDLE") { fallDismissed = null; return false; }
+  const who = name(g.contact || (S.contacts[0] || {}).id);
+  if (g.state === "ASKING") {
+    fallDeadline = Date.now() + (g.remaining || 0) * 1000;
+    setOverlay("ask" + g.room, "amber", `<div class="countdown" id="cd"><svg viewBox="0 0 100 100"><circle class="bg" cx="50" cy="50" r="46"/>
+      <circle class="fg" id="cdFg" cx="50" cy="50" r="46"/></svg><b id="cdN"></b></div>
+      <div class="title">您还好吗？</div><div class="note">${esc(g.room || "")}好像有人摔倒了。没事的话点“我没事”，或者说“我没事”。<br>家人已经收到提醒了。</div>
+      <div class="pair"><button class="btn ok" id="ok">我没事</button><button class="btn help" id="help">我需要帮助</button></div>`,
+      () => {
+        $("ok").onclick = () => post("/mock/button", { key: "ok" });
+        $("help").onclick = () => Bus.voice("我需要帮助");
+      });
+    fallTick(g.wait || 5);
+    return true;
+  }
+  if (fallDismissed === g.state) return false;
+  if (g.state === "SOS") {
+    setOverlay("sos", "red", `<div class="big-av ${avClass(g.contact)}">${RIPPLES}<span>${esc(initial(g.contact))}</span></div>
+      <div class="kicker">已经按了求助键</div><div class="title">别怕，正在叫${esc(who)}</div>
+      <div class="note">我一直在您身边。${esc(who)}确认以后，屏幕上会告诉您。</div>
+      <div class="pair"><button class="btn ok" id="ok">我没事了</button><button class="btn help" id="callNow">${ICON.phone} 给${esc(who)}打电话</button></div>`,
+      () => { $("ok").onclick = () => post("/mock/button", { key: "ok" }); $("callNow").onclick = () => dial(g.contact, true); });
+    return true;
+  }
+  if (g.state === "HELP_COMING") {
+    const by = name(g.acked_by);
+    setOverlay("coming" + g.acked_by, "calm", `<div class="big-av ${avClass(g.acked_by)}"><span>${esc(initial(g.acked_by))}</span></div>
+      <div class="kicker">💚 家人已经收到</div><div class="title">${esc(by)}马上就到</div><div class="note">您先别乱动，我在这儿陪着您。</div>
+      <div class="pair"><button class="btn ok" id="ok">我没事了</button><button class="btn help" id="hide">知道了</button></div>`,
+      () => { $("ok").onclick = () => post("/mock/button", { key: "ok" }); $("hide").onclick = () => { fallDismissed = "HELP_COMING"; renderOverlay(); }; });
+    return true;
+  }
+  return false;
+}
+function fallTick(total) {
+  const fg = $("cdFg"), n = $("cdN");
+  if (!fg) return;
+  const left = Math.max(0, (fallDeadline - Date.now()) / 1000);
+  n.textContent = Math.ceil(left);
+  fg.style.strokeDashoffset = 289 * (1 - left / (total || 1));
+}
+setInterval(() => { if (ovKey.startsWith("ask")) fallTick(S && S.guard.wait); }, 200);
+
+function renderMed(m) {
+  if (!m || !m.enabled || !m.pending) { medDismissed = null; return false; }
+  const p = m.pending;
+  if (medDismissed === p.id + p.state) return false;
+  if (p.state === "delivered") {
+    setOverlay("medD" + p.id, "amber", `<div class="title" style="font-size:5rem">💊</div><div class="title">药递过来了</div>
+      <div class="note">${esc(m.name)}吃完点一下“我吃了”，${esc(name(S.contacts[0].id))}那边就放心了。</div>
+      <div class="pair"><button class="btn ok" id="taken">我吃了</button><button class="btn help" id="later">等会儿</button></div>`, bindMed(p));
+  } else {
+    setOverlay("medR" + p.id, "amber", `<div class="title" style="font-size:5rem">💊</div><div class="kicker">${esc(p.slot)} 的药</div>
+      <div class="title">该吃${esc(m.name)}了</div><div class="note">要我把药递给您吗？</div>
+      <div class="pair"><button class="btn ok" id="give">把药递给我</button><button class="btn help" id="taken">我已经吃了</button></div>
+      <button class="link" id="later">等会儿再吃</button>`, bindMed(p));
+  }
+  return true;
+}
+function bindMed(p) {
+  return () => {
+    if ($("give")) $("give").onclick = () => Bus.voice("把药递给我");
+    $("taken").onclick = () => Bus.voice("吃了");
+    $("later").onclick = () => { Bus.voice("等会再吃"); medDismissed = p.id + p.state; renderOverlay(); };
+  };
+}
+
+function renderOverlay() {
+  if (!S) return;
+  if (renderCall()) return;
+  if (renderFall(S.guard)) return;
+  if (renderMed(S.med)) return;
+  setOverlay("", "", "");
+}
+
+// 通话中的光圈、计时
+(function liveCall() {
+  if (call && call.phase === "active") {
+    const t = $("callTimer"), av = $("bigAv");
+    if (t) t.textContent = Comms.mmss(call.seconds());
+    if (av) av.style.setProperty("--lvl", call.levels().remote.toFixed(2));
+  }
+  requestAnimationFrame(liveCall);
+})();
+
+// ---------- 四个块的副标题 ----------
+function renderTiles(s) {
+  const on = s.comms.online;
+  $("tCallSub").innerHTML = s.contacts.map((c) => `<span class="dotline"><i class="${on[c.id] ? "on" : ""}"></i>${esc(c.name)}</span>`).join("");
+  const m = s.med;
+  const due = m && m.enabled && m.pending;
+  $("tMed").classList.toggle("due", !!due);
+  if (due) $("tMedSub").textContent = m.pending.state === "delivered" ? "药递过来了，吃完点这里" : "该吃" + m.name + "了，点这里";
+  else if (m && m.enabled) {
+    const now = hhmm();
+    const next = m.times.find((t) => t > now) || m.times[0];
+    $("tMedSub").textContent = "下一顿 " + next + " · 点一下递药";
+  } else $("tMedSub").textContent = "让机械臂把药递给您";
+  $("tSosSub").textContent = "按住 2 秒，马上呼叫" + s.contacts[0].name;
+  document.body.dataset.theme = s.night.active ? "night" : "day";
+}
+
+// ---------- 主循环 ----------
+Bus.on(({ state, online }) => {
+  $("net").classList.toggle("off", !online);
+  $("netText").textContent = online ? "已连接" : "连接中断…";
+  if (!online) return;
+  S = state;
+  call.update(state.comms.call);
+  if (state.last_say && state.last_say.id !== lastSayId) {
+    const first = lastSayId === null;
+    lastSayId = state.last_say.id;
+    if (!first && state.now - state.last_say.ts < 15) showCaption(state.last_say.text);
+  }
+  const playReq = state.comms.play;
+  if (playReq && playReq.target === "page" && call.phase !== "idle") playSeq = Math.max(playSeq || 0, playReq.seq);   // 通话中不插播
+  renderTiles(state);
+  renderInbox(state);
+  autoMessages(state);
+  renderOverlay();
+});
+Bus.start({ client: "elder" });
+</script>
+</body>
+</html>
