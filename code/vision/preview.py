@@ -40,7 +40,7 @@ class Preview:
 
         last = detector.last or {}
         f = last.get("f")
-        lines = ["state: %s" % detector.state]
+        lines = ["state: %s  input: %s" % (detector.state, getattr(detector, "input_status", "observing"))]
         if f:
             drop = ""
             if detector.standing_hip is not None and detector.standing_len:
@@ -50,7 +50,7 @@ class Preview:
             flags = [n for n in ("upright", "lying", "low", "in_bed") if last.get(n)]
             lines.append("flags: " + (" ".join(flags) or "-"))
         else:
-            lines.append("no person")
+            lines.append("pose unavailable (check shoulders/hips)" if kp else "no person")
         cv2.rectangle(img, (0, 0), (w, 22 * len(lines) + 10), (0, 0, 0), -1)
         for i, text in enumerate(lines):
             cv2.putText(img, text, (10, 24 + 22 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color if i == 0 else (230, 230, 230), 1, cv2.LINE_AA)
