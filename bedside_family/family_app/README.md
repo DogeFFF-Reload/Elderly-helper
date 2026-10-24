@@ -32,6 +32,9 @@ python family_app/build_app.py
 # 产出 family_app_v1.1.apk,自动同步桌面
 ```
 
+> 交付别名勘误:桌面"家人留言v2.apk"与 family_app_v1.1.apk 为**同一构建**(字节哈希一致),v2 只是给家属的易读叫法。
+> CI 版:仓库的 `family-app-ci` 用同样流水线产出**临时 debug 签名**的冒烟 APK(Artifact 可下载);稳定签名密钥永不进 CI/仓库。
+
 | 依赖 | 值 | 坑 |
 |---|---|---|
 | JDK | 17+(实测 OpenJDK 25) | |
