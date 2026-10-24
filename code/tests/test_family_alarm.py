@@ -56,6 +56,16 @@ class FamilyAlarmTest(unittest.TestCase):
             self.assertEqual([r["event_id"] for r in receiver.requests], ["lost-response"] * 2)
             self.assertEqual(len(receiver.alarms), 1)
 
+    def test_detector_to_family_poll_and_ack_for_fast_slow_and_normal_inputs(self):
+        from verify_fall_chain import check_case
+        for scenario in ("fall", "slow_floor", "sit"):
+            with self.subTest(scenario=scenario):
+                result = check_case(scenario)
+                self.assertTrue(result["ok"])
+                self.assertEqual(result["simulated_family_poll_count"], 0 if scenario == "sit" else 1)
+                self.assertIsNone(result["phone_received"])
+                self.assertFalse(result["real_phone_notification_verified"])
+
     def test_timeout_after_storage_also_keeps_the_same_id(self):
         with AlarmReceiver() as receiver:
             count = 0
