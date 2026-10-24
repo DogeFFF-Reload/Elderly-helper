@@ -14,7 +14,7 @@
 
 ```powershell
 cd code
-python tests/run_all.py                  # 回归，必须 ALL PASS（当前 23 套 216 条）
+python tests/run_all.py                  # 回归，必须 ALL PASS（当前 24 套 225 条）
 python -m master_service                 # 主脑 :8000（含三块屏）
 python -m demo_driver --pause            # 按 §3 主线一段一段走演示（另开终端，见 §10）
 python -m hand_controller.arm_service    # 臂+双手 mock :8013（另开终端，可不开）
@@ -406,7 +406,6 @@ bash deploy/start.sh vision                  # 手动起单个服务调试：vis
 pip install -r code/requirements-phonecam.txt
 cd code
 python -m camera.phone_fall_watch --phone http://<手机IP>:8080 --arm 0
-python -m camera.phone_fall_watch --phone http://<手机IP>:8080 --master http://127.0.0.1:8000 --thresh 38 --cooldown 30 --arm 1 --room 客厅
 ```
 
 `--arm 0` 用于现场校准，`--arm 1` 才会真正上报；`--conn` 控制连续超阈值帧数。手机和主脑必须处于同一网络，手机应保持插电并关闭省电策略。X5 部署可在 `deploy/x5.env` 设置 `PHONE_URL` 和 `PHONE_ARGS`，然后运行 `bash deploy/start.sh phone`；执行 `bash deploy/install_services.sh a` 时若已配置 `PHONE_URL`，会在 X5-A 上安装手机哨兵 systemd 服务。完整交接步骤见 `docs/21_交接_手机摄像头组.md`。
@@ -462,3 +461,17 @@ python code/camera/phone_calibrate.py --sound-check
 Ctrl+C 会保存部分数据。断线、画面停更、解码失败会结束并标为 `error`，Ctrl+C 为 `interrupted`；样本数不足或间隔过大为 `insufficient`。只有全部阶段采集完毕且通过采样检查才为 `complete`。这些状态只描述采集过程：标签由定时计划给出，程序不能核实是否有人、全身是否入镜、动作是否做对，或手机是否被移动。做错动作、没听清提示、碰动手机时重新采集；变更机位/镜头/光照后也重新采集。
 
 本包全部是正常活动样本，只用于检查连接、正常动作的数值分布和误报风险，**不能据此证明能识别跌倒、测漏报率或自动选出可靠的跌倒阈值**。完成三轮后先分析这包数据，发现具体问题再安排针对性补测。
+
+### 12.2 离线复核采集结果
+
+`camera/phone_calibration_report.py` 只读取已保存的 CSV、摘要、阶段日志和旁边的 ZIP，核对源帧序号、时间、基准样本、逐段统计和文件一致性；不连接摄像头、主脑或机械手，不播放声音。示例（轮次必须按现场实际情况填写）：
+
+```powershell
+python code/camera/phone_calibration_report.py "code/data/phone_calibration/批次目录" --fixed-rounds 3 --moving-rounds 1 2 --output "code/data/phone_analysis/批次目录/analysis.json"
+```
+
+`--fixed-rounds` 和 `--moving-rounds` 是操作人员陈述，程序不能根据能量自动判断手机是否移动。未指定的轮次记为未确认。移动过手机的轮次排除固定机位基准，保留作干扰分析；标签仍是计划动作。用固定机位数据离线试算阈值时只模拟事件，不实际发送报警，也不把这批正常动作样本当成跌倒验证。
+
+测试前先固定机位、确认全身和走动路线能入镜；测试中人只在画面内活动，不挪动手机去追拍。机位和镜头与已有有效轮次一致时可用 `--rounds 2` 补两轮；重新摆放机位或换镜头后，按新场景重新采集和分析。
+
+阶段结束前剩余时间不足 `--frame-timeout` 时，等待最后一帧到期只代表阶段到时；程序仍检查源错误、画面新鲜度和本段采样质量。不会因阶段到时本身误报连接失败，也不会隐藏真实连接错误。

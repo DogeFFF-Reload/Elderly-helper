@@ -368,6 +368,62 @@ class CalibrationCollectionTest(unittest.TestCase):
         self.assertTrue(all(p["status"] == "insufficient" for p in summary["phases"]))
         self.assertTrue(self.rows(archive))
 
+    def tail_timeout_session(self, source_error=False, full_timeout=False):
+        class Clock:
+            now = 0.0
+
+        clock = Clock()
+
+        class Reader:
+            calls = 0
+
+            def __init__(self, *_args):
+                pass
+
+            def start(self):
+                pass
+
+            def check(self, _timeout):
+                if source_error and self.calls >= 8:
+                    raise calibration.CollectionError("source disconnected")
+
+            def get(self, after=0, not_before=0.0, timeout=3.0):
+                self.calls += 1
+                if self.calls == (3 if full_timeout else 8):
+                    clock.now += timeout
+                    raise calibration.FrameWaitTimeout("wait expired")
+                clock.now = max(clock.now, not_before) + .0001
+                return self.calls, jpeg(0), clock.now, calibration.utc_now()
+
+            def close(self):
+                pass
+
+        def wait(deadline, *_args):
+            clock.now = max(clock.now, deadline)
+
+        with patch.object(calibration, "LatestFrame", Reader), \
+                patch.object(calibration.time, "monotonic", side_effect=lambda: clock.now), \
+                patch.object(calibration, "wait_until", side_effect=wait):
+            return self.collect(duration=1.2 if full_timeout else .24)
+
+    def test_phase_deadline_is_not_reported_as_camera_failure(self):
+        archive, summary = self.tail_timeout_session()
+        self.assertEqual(summary["status"], "complete", summary)
+        self.assertEqual(summary["phases"][0]["statistics"]["samples"], 6)
+        with zipfile.ZipFile(archive) as bundle:
+            events = next(name for name in bundle.namelist() if name.endswith("events.jsonl"))
+            self.assertIn(b"phase_tail_without_sample", bundle.read(events))
+
+    def test_tail_expiry_does_not_hide_source_error(self):
+        _, summary = self.tail_timeout_session(source_error=True)
+        self.assertEqual(summary["status"], "error")
+        self.assertIn("source disconnected", summary["message"])
+
+    def test_full_frame_timeout_still_aborts(self):
+        _, summary = self.tail_timeout_session(full_timeout=True)
+        self.assertEqual(summary["status"], "error")
+        self.assertEqual(summary["message"], "wait expired")
+
 
 if __name__ == "__main__":
     unittest.main()

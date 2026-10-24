@@ -34,7 +34,7 @@ else:
 
 STAGES = (
     ("stand", "站立不动", "站在画面内，保持自然站立"),
-    ("walk", "正常走动", "在画面内正常来回走动"),
+    ("walk", "正常走动", "手机保持固定，只在画面范围内正常来回走动"),
     ("sit_stand", "缓慢坐下再站起", "用稳固的椅子，慢慢坐下再站起，按自己的节奏重复"),
 )
 FIELDS = (
@@ -51,6 +51,10 @@ def utc_now():
 
 class CollectionError(Exception):
     """User-facing, credential-free error."""
+
+
+class FrameWaitTimeout(CollectionError):
+    """No new frame within this wait budget; source errors remain distinct."""
 
 
 def amplify_wave(wav_bytes, gain):
@@ -199,7 +203,7 @@ class LatestFrame:
                     return self.latest
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise CollectionError("未能及时收到新的摄像头画面，本次采集不完整。")
+                    raise FrameWaitTimeout("未能及时收到新的摄像头画面，本次采集不完整。")
                 self.condition.wait(min(remaining, 0.1))
 
     def close(self):
@@ -320,8 +324,8 @@ def collect(source, *, output=DEFAULT_OUTPUT, rounds=3, duration=20.0, prep=10.0
                 reader.check(frame_timeout)
 
         try:
-            say("语音提示已开启。请确认能听清。手机固定，全身入镜，椅子放稳。本次只做日常动作。"
-                if speaker else "[无语音] 请同伴按屏幕提示报时。手机固定，全身入镜，椅子放稳。")
+            say("语音提示已开启。请确认能听清。手机全程固定，不要追着人移动手机。人只在画面内活动，椅子放稳。本次只做日常动作。"
+                if speaker else "[无语音] 请同伴按屏幕提示报时。手机全程固定，不追拍；人只在画面内活动，椅子放稳。")
             reader.start()
             reader_started = True
             first = reader.get(timeout=frame_timeout + 5)
@@ -351,8 +355,17 @@ def collect(source, *, output=DEFAULT_OUTPUT, rounds=3, duration=20.0, prep=10.0
                     remaining = phase_end - time.monotonic()
                     if remaining <= 0:
                         break
-                    sequence, jpeg, received, received_utc = reader.get(
-                        after=last_sequence, not_before=due, timeout=min(frame_timeout, remaining))
+                    try:
+                        sequence, jpeg, received, received_utc = reader.get(
+                            after=last_sequence, not_before=due, timeout=min(frame_timeout, remaining))
+                    except FrameWaitTimeout:
+                        # The shortened wait may only mean the scheduled phase
+                        # ended, not that the camera exceeded frame_timeout.
+                        if time.monotonic() < phase_end:
+                            raise
+                        reader.check(frame_timeout)
+                        event("phase_tail_without_sample", round=phase["round"], stage=phase["stage"])
+                        break
                     if received >= phase_end:
                         break
                     gray = to_small_gray(jpeg)
