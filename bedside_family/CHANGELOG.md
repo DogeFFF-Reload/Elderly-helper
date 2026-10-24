@@ -7,6 +7,7 @@
 ### 服务(service_handboard/arm_service.py)
 - **v5.7 警报契约定版**:`POST /fall_alarm` 支持 `event_id` 网络重试去重(同号只响一次)、`{"dry":true}` 无扰测试、`GET /fall_alarm` 带版本健康检查;警报 id 毫秒化。响应队友视觉/桥接侧四问后新增。
 - **夜间热修·警报 id 同毫秒撞号**:同秒 50 连发实测只出 36 个不重复 id(同毫秒并发取号相撞)。加取号锁自旋"睡到下一毫秒";板上复验同秒并发 `403/499` 各拿各的,smoke ALL PASS。
+- **合并终版·取号原子化(合作版 5.7.1)**:Interphynity 以 `_alarm_lock`(RLock)+单调毫秒序列实现"时钟暂停也不忙等"的取号,id 格式不变;两版热修合流,**单测 15 例在任一实现上均全绿(测试的是契约而非实现)**;板端已同步 5.7.1 复验 ALL PASS。
 - **可测性重构**:开放语音两处重复的"长词优先"循环收敛为纯函数 `_voice_open_match`;词表补口语变体(拉个勾/拉个钩/勾一勾——vosk 常听成"拉个勾")。
 - 语音 agent 链:LLM 理解开放(糊转写还原)、执行封闭(白名单收口),词表只作离线兜底——白名单中文名完备性有硬断言(见 agent_tests)。
 
@@ -18,7 +19,7 @@
 
 ### 固件与烧录
 - S3 kiosk v5.4 已烧运行(六键留言/语音/姿态 + ES8311 播放链路当晚修通)。
-- 新增 `firmware_s3/prebuilt/`:预编译四件套 + flash_args,`esptool @flash_args` 免编译直烧(bin 含现场 WiFi 凭据,仅限队内,勿外传)。
+- ~~新增 `firmware_s3/prebuilt/`:预编译四件套直烧~~ → **深夜撤架**:bin 是"现场 WiFi 凭据烧死"的产物,不该进公开仓库;现场包由队内保管,自建走 `tools/flash_s3.ps1` 源码模式(占位密码,烧前改两行)。
 - `tools/flash_s3.ps1`(预编译直烧/源码编译双模式+自动找串口)、`tools/flash_t5ai.ps1`(兼容 T5AI 工具链"BUILD SUCCESS 却 exit 1"奇癖)。
 
 ### 家属 App(family_app)
