@@ -4,3 +4,4 @@
 *.jpg binary
 *.wav binary
 *.onnx binary
+*.bin binary
