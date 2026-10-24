@@ -307,6 +307,8 @@ CareMate 联调自检 · http://127.0.0.1:8000
 
 夜间模式和健康日报的“今天”按**本机时区**算。X5 装好 Ubuntu 默认 UTC，比北京时间慢 8 小时，晚上 8 点它以为是中午。自检会比对本机 UTC 偏移和 `expected_utc_offset`（默认 +8），不一致报 ⚠️：X5 上 `sudo timedatectl set-timezone Asia/Shanghai` 后重启主脑；演示的夜间段本来就用操作台开关，不依赖钟点。回归测试的假时钟也改成按本机时区取“上午 10 点”，在任何时区的机器上都能跑过。
 
+**演示机一律默认日间**：笔记本 `code/config.local.json` 写 `{"night_override": "off"}`，X5 在 `deploy/x5.env` 里 `export CAREMATE_NIGHT_OVERRIDE=off`（模板已带）。夜里那段由操作台“夜间模式”开关或 `demo_driver` 打开，重置后回到日间。`demo_driver` 的早上 / 中午两段也会先强制日间。
+
 ### 10.13 执行端接真手（RH56F2，按因时官方手册 V1.09）
 
 驱动按《因时机器人仿人五指灵巧手--RH56用户手册V1.09cn》§2.2 的 **EB 90 自有协议**重写（kit 里的 Modbus 版地址全是占位、和手册对不上）。**执行端接口没变**（`POST /pose?name=&hand=`、`/stop`、`/status`），主脑一行没改。
