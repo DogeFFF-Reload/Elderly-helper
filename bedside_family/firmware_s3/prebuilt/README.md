@@ -1,30 +1,27 @@
-# 预编译固件烧录包(免编译直烧)
+# 预编译固件烧录包(已撤架)
 
-不想装 Arduino/工具链?**esptool 一条命令把这四件烧进 S3**,十秒级:
+> **2026-10-24 深夜撤架说明**:本目录原本放着"现场构建直出"的四件套 bin(`app/bootloader/partitions/boot_app0` + `flash_args`)——但预编译 bin 把当时热点的**真实 WiFi 凭据烧死在里面**,不该进公开仓库,故撤下二进制;`.gitattributes` 的 `*.bin binary` 保护保留(后续若再放构建产物,同样先过脱敏关)。
 
-## 文件构成(2026-10-24 构建,S3 kiosk v5.4 真机验证版)
+## 免编译直烧的需求依旧成立,改两条路走
 
-| 文件 | 内容 |
-|---|---|
-| `bedside_s3_arm_kiosk.ino.bin` | 应用(1.7MB) |
-| `bedside_s3_arm_kiosk.ino.bootloader.bin` | 二级引导 |
-| `bedside_s3_arm_kiosk.ino.partitions.bin` | 分区表(huge_app) |
-| `boot_app0.bin` | OTA 数据分区占位(huge_app 无 OTA,按 flash_args 占位) |
-| `flash_args` | 官方烧录参数(地址+偏移,逐字从构建目录拷) |
-| `partitions.csv` | 分区表源(huge_app 3M app/9M spiffs…看文件) |
+1. **现场包队内保管(不入库)**:拿到队内持有的 bin 包后,一条命令十秒级:
 
-## 烧录命令
+   ```powershell
+   py -m pip install esptool      # 一次性
+   py -m esptool --chip esp32s3 --port COM7 --baud 921600 write_flash @flash_args
+   ```
 
-```powershell
-py -m pip install esptool          # 一次性
-py -m esptool --chip esp32s3 --port COM7 --baud 921600 `
-  write_flash @flash_args
-```
+   `@flash_args` 展开为 bootloader(0x0)/partitions(0x8000)/app(0x10000) 各自地址。
 
-`@flash_args` 会展开成四件套+各自的 offset(0x0 bootloader / 0x8000 partitions / 0x10000 app)。
+2. **自建(推荐进仓库的玩法)**:改好 `bedside_s3_arm_kiosk.ino` 顶部 `WIFI_SSID` / `WIFI_PASS`(仓库版是占位符 `YOUR_WIFI_PASSWORD`)后:
 
-## 注意
+   ```powershell
+   ..\..\tools\flash_s3.ps1          # 自动找串口,arduino-cli 编译+烧录
+   .\..\..\tools\flash_s3.ps1 -Prebuilt   # 队内拿到了 prebuilt 包时直烧
+   ```
 
-- **板端 WiFi 密码在这个预编译包里是"现场值"**,公开仓库的源码版已脱敏——`YOUR_WIFI_PASSWORD` 只存在于源码;此预编译 bin 是**现场烧的**,含当时热点的真实 SSID/密码,故**仅限本队现场复用,勿再外传 bin 本身**;
-- WiFi 改动请走源码重编(改 `WIFI_SSID/WIFI_PASS` → `../README.md` 烧录表);
-- COM 口以现场为准(插上 `Get-CimInstance Win32_PnPEntity | ? Name -match "COM\d"` 查),或直接 `tools/flash_s3.ps1` 自动找。
+## 板端 WiFi 凭据纪律
+
+- **仓库源码里 WiFi 密码一律占位符** `YOUR_WIFI_PASSWORD`;真实凭据只活在两处:板子上、队内保管的 bin/示教环境里;
+- T5AI 交接固件同理(`bedside_t5ai_arm.ino` 的 `WIFI_PASS` 已恢复占位);
+- 复审手感:任何合并后全库 grep 真实热点密码应 0 命中(文本层;二进制见上)。本 README 不再回显该字符串本身。
