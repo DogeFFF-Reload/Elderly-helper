@@ -76,6 +76,16 @@
   .k.fall, .k.\31 20 { background: #fde8e8; color: var(--danger); }
   .k.health { background: #fff4e0; color: var(--warn); }
   .k.cancel, .k.safe { background: #e6f7f0; color: var(--ok); }
+  .k.med { background: #e6f7f0; color: var(--ok); }
+  .k.med_missed { background: #fff4e0; color: var(--warn); }
+  /* 用药卡 */
+  .med-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px dashed var(--line, #e2e7ef); }
+  .med-row:first-of-type { border-top: 0; }
+  .med-row time { font-weight: 700; font-size: 15px; min-width: 3.2em; }
+  .med-row .chip { margin-left: auto; }
+  .chip.taken { background: #e6f7f0; color: var(--ok); }
+  .chip.missed { background: #fde8e8; color: var(--danger); }
+  .chip.waiting { background: #eef3ff; color: var(--primary); }
   .k.message, .k.call { background: #eaf1ff; color: var(--primary); }
   .k.mine { background: #f1f5f9; color: var(--muted); }
   .msgs li.mine .t { color: var(--muted); }
@@ -115,6 +125,7 @@
   </header>
 
   <div id="alert"></div>
+  <section class="card" id="med" hidden></section>
   <section class="card" id="health"></section>
 
   <section class="card">
@@ -137,7 +148,8 @@
 <script src="/ui/shared/bus.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
-const KIND = { fall: "跌倒", cancel: "已解除", "120": "120", health: "健康", message: "留言", safe: "报平安", call: "请回电", mine: "我" };
+const KIND = { fall: "跌倒", cancel: "已解除", "120": "120", health: "健康", message: "留言", safe: "报平安", call: "请回电", mine: "我",
+               med: "用药", med_missed: "漏服" };
 let S = null;
 let me = new URLSearchParams(location.search).get("as");
 if (!me) { try { me = localStorage.getItem("cm-family-as"); } catch (e) {} }
@@ -205,6 +217,21 @@ function renderHealth(s) {
     <div class="note">${UI.esc(t.note)} 数据由${UI.esc(s.elder_title)}口述、复述确认后记录。</div>`;
 }
 
+// 用药：开关打开才显示。今天每一顿：提醒时间、状态（等打卡 / 已递药 / 已服 / 漏服）
+function renderMed(s) {
+  const m = s.med, box = $("med");
+  box.hidden = !(m && m.enabled);
+  if (box.hidden) return;
+  const chip = (d) => d.state === "taken" ? `<span class="chip taken">✓ 已服 ${UI.esc(d.taken_at)}</span>`
+    : d.state === "missed" ? `<span class="chip missed">⚠ 漏服</span>`
+    : `<span class="chip waiting">${d.state === "delivered" ? "已递药，等打卡" : "已提醒，等打卡"}</span>`;
+  const rows = m.doses.length
+    ? [...m.doses].reverse().map((d) => `<div class="med-row"><time>${UI.esc(d.slot)}</time><span>${UI.esc(d.name)}</span>${chip(d)}</div>`).join("")
+    : `<div class="empty">今天还没到吃药时间</div>`;
+  $("med").innerHTML = `<h2>💊 用药<span class="sub">每天 ${m.times.map(UI.esc).join(" / ")}${m.utc_offset === 8 ? "（北京时间）" : ""}</span></h2>${rows}
+    <div class="note">到点 CareMate 提醒，${UI.esc(s.elder_title)}说“吃了”才打卡；提醒后 ${Math.round(m.missed_after / 60) || 1} 分钟没打卡会通知你。</div>`;
+}
+
 function renderMsgs(s) {
   const items = s.notifications.filter((n) => n.contact === me)
     .map((n) => ({ ts: n.ts, kind: n.kind, text: n.text }))
@@ -255,7 +282,7 @@ function render(s) {
   S = s;
   $("title").textContent = s.elder_title + "的 CareMate";
   $("avatar").textContent = s.elder_title.slice(0, 1);
-  renderSeg(s); renderAlert(s); renderHealth(s); renderMsgs(s); renderEcho(s);
+  renderSeg(s); renderAlert(s); renderMed(s); renderHealth(s); renderMsgs(s); renderEcho(s);
 }
 
 // 避免每 400ms 重绘打断点击：只有内容变了才重绘

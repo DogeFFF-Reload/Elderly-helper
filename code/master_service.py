@@ -30,6 +30,7 @@ from agent import intent
 from agent.device_helper import DeviceHelper
 from agent.health_tracker import HealthTracker
 from agent.llm_client import LLMClient
+from agent.med_reminder import MedReminder
 from agent.supervisor import Supervisor
 from agent.voice_profile import StyleProfile
 from hand_controller.poses import FINGER_MOVES, label as pose_label
@@ -338,6 +339,7 @@ class Bus:
         self.rng = random.SystemRandom()
         self.next_rps_id = 1
         self.estop = False   # 不放进 _reset_runtime：重置演示不能解除急停
+        self.med = MedReminder(self.cfg, clock)
         self._reset_runtime()
         channel = self.llm.mode
         if self.llm.mode == "llm":
@@ -355,6 +357,8 @@ class Bus:
         self.last_heard = None
         self.rps = None
         self.rps_last = None
+        if hasattr(self, "med"):
+            self.med.reset()
 
     # ---------- 工具 ----------
 
@@ -494,6 +498,7 @@ class Bus:
                 "dial_pending": g["dial_pending"],
                 "health_pending": self.health.pending is not None,
                 "exercise_active": self.exercise is not None,
+                "med_pending": self.med.enabled and self.med.pending is not None,
                 "contacts": self.cfg["contacts"],
             }
             name, slots = intent.classify(text, ctx)
@@ -536,9 +541,14 @@ class Bus:
         if name == "health_reject":
             return self.health.reject()
         if name == "deliver":
-            return [_ev("deliver", "老人要药 → 递药盒", "info", "system"),
+            acts = [_ev("deliver", "老人要药 → 递药盒", "info", "system"),
                     {"do": "arm", "pose": "deliver_medicine", "hand": 1},
                     _say("deliver_start")]
+            return acts + (self.med.on_delivered() if self.med.enabled else [])
+        if name == "med_taken":
+            return self.med.taken()
+        if name == "med_not_yet":
+            return self.med.not_yet()
         if name == "call_family":
             c = self.contact(slots["contact"])
             return [{"do": "notify", "contact": c["id"], "kind": "call",
@@ -774,6 +784,21 @@ class Bus:
                 self.events.add("estop", "急停已解除：臂和双手恢复接收指令（不补做急停期间的动作）", "ok")
             return {"ok": True, "estop": self.estop}
 
+    def med_remind(self):
+        """操作台“用药提醒”：当场提醒一次（演示不依赖钟点）。没开开关、保命链进行中都不提醒。"""
+        with self.lock:
+            if not self.med.enabled:
+                return {"ok": False, "error": "用药提醒没开：操作台打开开关，或 config med_reminder=on"}
+            if self.fsm.state != IDLE:
+                return {"ok": False, "error": "保命链进行中，先不提醒吃药"}
+            self._run(self.med.remind(source="console"))
+            return {"ok": True, "pending": self.med.snapshot()["pending"]}
+
+    def med_enable(self, on):
+        with self.lock:
+            self._run(self.med.set_enabled(on))
+            return {"ok": True, "enabled": self.med.enabled}
+
     def set_night(self, mode):
         with self.lock:
             if mode not in ("auto", "on", "off"):
@@ -833,7 +858,7 @@ class Bus:
 
     def tick(self):
         with self.lock:
-            acts = self.fsm.tick() + self.health.tick()
+            acts = self.fsm.tick() + self.health.tick() + self.med.tick(idle=self.fsm.state == IDLE)
             now = self.clock()
             ex = self.exercise
             if ex and now >= ex["next"]:
@@ -930,6 +955,7 @@ class Bus:
                 "teach": self.teach_card,
                 "exercise": {"active": ex is not None, "beat": ex["beat"] if ex else 0, "total": len(FINGER_MOVES)},
                 "rps": self._rps_view(),
+                "med": self.med.snapshot(),
                 "skeleton": self.skeleton,
                 "arm": self.arm.status(),
                 "hands": {k: dict(v) for k, v in self.hands.items()},
@@ -986,6 +1012,8 @@ def dispatch_post(bus, path, body, query=None):
         "/api/echo/revoke": lambda: bus.echo_revoke(arg("contact", bus.primary["id"])),
         "/api/night": lambda: bus.set_night(arg("mode", "auto")),
         "/api/estop": lambda: bus.set_estop(_truthy(arg("on", True))),
+        "/api/med/remind": lambda: bus.med_remind(),
+        "/api/med/enable": lambda: bus.med_enable(_truthy(arg("on", True))),
         "/api/params": lambda: bus.set_params(body or q),
         "/api/agent/propose": lambda: bus.agent_propose(arg("skill", "")),
         "/api/reset": lambda: bus.reset(clear_data=str(arg("all", "0")) == "1"),
