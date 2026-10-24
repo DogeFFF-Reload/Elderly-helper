@@ -368,14 +368,15 @@ function overlay(s) {
   const g = s.guard, items = [];
   const name = (id) => UI.contactName(s, id);
   if (g.state === "SOS") {
-    items.push({ key: "sos", cls: "banner sos", html: `🚨 已按下 SOS · 已通知${UI.esc(g.notified.map(name).join("、"))}
-      <small>等待家属确认 ${UI.secs(g.ack_remaining)}</small>` });
+    items.push({ key: "sos", cls: "banner sos", html: `🚨 求助中 · 家属演示页面已记录给${UI.esc(g.notified.map(name).join("、"))}的提醒
+      <small>${UI.esc(UI.actionStatus(s, 1, "press_sos", "SOS"))} · ${UI.esc(UI.actionStatus(s, 2, "gentle_hold", "轻握安抚"))}</small>
+      <small>等待家属确认 ${UI.secs(g.ack_remaining)} · 未接入外部通知</small>` });
   }
   if (g.state === "HELP_COMING") {
     items.push({ key: "coming", cls: "banner coming", html: `💚 ${UI.esc(name(g.acked_by))}已确认 · 马上就到` });
     items.push({ key: "placards", cls: "placards", html: `
-      <div class="placard"><small>手#1 举牌</small>家人已收到</div>
-      <div class="placard"><small>手#2 轻握 + 举牌</small>别怕，${UI.esc(name(g.acked_by))}马上到</div>` });
+      <div class="placard"><small>屏幕提示 · 手#1 请求举牌</small>家人已收到</div>
+      <div class="placard"><small>屏幕提示 · 手#2 请求举牌</small>别怕，${UI.esc(name(g.acked_by))}马上到</div>` });
   }
   items.push({ key: "grow", cls: "grow", html: "" });
   if (g.state === "ASKING") {
@@ -385,7 +386,7 @@ function overlay(s) {
   }
   if (g.dial_pending) {
     items.push({ key: "dial", cls: "card danger", html: `<h3>📞 拨打 120？<span class="count">${UI.secs(g.dial_remaining)}</span></h3>
-      <p>说“确认”才拨，说“取消”或超时都不拨（双重确认）</p>` });
+      <p>仅演示模拟：说“确认”才记录；说“取消”或超时不记录，不拨打真实电话</p>` });
   }
   const hp = s.health.pending;
   if (hp) {
@@ -417,7 +418,7 @@ function overlay(s) {
   }
   const mp = s.med && s.med.enabled && s.med.pending;
   if (mp) {
-    items.push({ key: "med-" + mp.id, cls: "card", html: `<h3>⏰ 到吃${UI.esc(mp.name)}的时间了<span class="count">${mp.state === "delivered" ? "已递药" : UI.esc(mp.slot)}</span></h3>
+    items.push({ key: "med-" + mp.id, cls: "card", html: `<h3>⏰ 到吃${UI.esc(mp.name)}的时间了<span class="count">${mp.state === "delivered" ? "已请求递药" : UI.esc(mp.slot)}</span></h3>
       <p>说“把药递给我”机械臂递药盒；吃完说“吃了”打卡，家属端同步</p>` });
   }
   if (s.exercise.active) {
@@ -629,7 +630,7 @@ requestAnimationFrame(twinFrame);
 
 function caption(id, text, status) {
   const st = { sent: "sent", ok: "ok", idle: "" }[status] ?? "fail";
-  const tip = { sent: "已发给执行端", ok: "真机已执行" }[status] || (st ? "执行端没做成：大屏代演" : "");
+  const tip = { sent: "动作请求已发出", ok: "执行端已接收，实物完成情况待确认" }[status] || (st ? "执行端没做成：大屏代演" : "");
   const html = UI.esc(text) + (st ? `<span class="st ${st}" title="${tip}"></span>` : "");
   if (twin.caps[id] === html) return;
   const fresh = twin.caps[id] !== undefined && twin.caps[id].split("<span")[0] !== html.split("<span")[0];
@@ -644,7 +645,7 @@ function twinStatus(s) {
   caption("twinH2Cap", SHAPE_TEXT[hs[2].pose] || strip(hs[2].label || hs[2].pose), hs[2].status);
   const stop = !!s.estop, on = s.arm && s.arm.online, mock = s.arm && s.arm.mock;
   const [cls, text] = stop ? ["stop", "急停中 · 臂和双手不动"] : on === true && mock ? ["off", "执行端模拟 · 大屏演示"]
-    : on === true ? ["on", "真机同步"]
+    : on === true ? ["on", "执行端在线 · 动作完成待现场确认"]
     : on === false ? ["off", "执行端离线 · 大屏演示"] : ["", "探测中"];
   $("twinLink").className = "twin-link " + cls; $("twinLink").querySelector("span").textContent = text;
   $("twin").classList.toggle("stopped", stop);

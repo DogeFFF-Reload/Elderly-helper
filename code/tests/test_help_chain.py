@@ -37,6 +37,73 @@ class Dial120Test(unittest.TestCase):
         bus.voice("确认")
         self.assertFalse(dialed(bus))
 
+    def test_confirm_at_or_after_deadline_without_tick(self):
+        for delta in (10.0, 10.1):
+            with self.subTest(delta=delta):
+                bus, clock, arm = make_bus()
+                bus.voice("帮我打120")
+                clock.advance(delta)  # reproduce input racing the periodic tick
+                bus.voice("确认")
+                self.assertFalse(dialed(bus))
+                self.assertFalse(bus.fsm.snapshot()["dial_pending"])
+                self.assertFalse(any(n["kind"] == "120" for n in bus.notifications))
+
+    def test_negative_confirmation_cancels(self):
+        for text in ("确认不要打", "确定不打了", "确认取消"):
+            with self.subTest(text=text):
+                bus, clock, arm = make_bus()
+                bus.voice("帮我打120")
+                self.assertEqual(bus.voice(text)["intent"], "dial_cancel")
+                self.assertFalse(dialed(bus))
+
+    def test_clearing_incident_disarms_old_dial_confirmation(self):
+        for stage in ("ASKING", "SOS", "HELP_COMING"):
+            for via in ("voice", "button"):
+                with self.subTest(stage=stage, via=via):
+                    bus, clock, arm = make_bus()
+                    bus.fall("客厅")
+                    if stage != "ASKING":
+                        clock.advance(5.2, bus)
+                    if stage == "HELP_COMING":
+                        bus.family_ack("daughter")
+                    bus.voice("帮我打120")
+                    if via == "voice":
+                        bus.voice("我没事")
+                    else:
+                        bus.button("ok")
+                    self.assertEqual(bus.fsm.state, "IDLE")
+                    self.assertIsNone(bus.fsm.dial_deadline)
+                    bus.voice("确认")
+                    self.assertFalse(dialed(bus))
+
+
+class AlarmReplyTest(unittest.TestCase):
+    def test_distress_or_negated_assurance_does_not_clear_alarm(self):
+        for stage in ("ASKING", "SOS"):
+            for text in ("我不是没事，我很疼", "我没事但起不来", "我哪里没事了", "还好但动不了"):
+                with self.subTest(stage=stage, text=text):
+                    bus, clock, arm = make_bus()
+                    bus.fall("客厅")
+                    if stage == "SOS":
+                        clock.advance(5.2, bus)
+                    bus.voice(text)
+                    self.assertEqual(bus.fsm.state, "SOS")
+                    self.assertFalse(events(bus, "ok"))
+
+    def test_unambiguous_assurance_still_clears(self):
+        bus, clock, arm = make_bus()
+        bus.fall("客厅")
+        bus.voice("我没事")
+        self.assertEqual(bus.fsm.state, "IDLE")
+
+    def test_notification_is_explicit_local_demo_record(self):
+        bus, clock, arm = make_bus()
+        bus.fall("客厅")
+        clock.advance(5.2, bus)
+        self.assertEqual(bus.notifications[-1]["delivery"], "local_demo_record")
+        self.assertIn("家属演示页面", said(bus)[-1])
+        self.assertTrue(any("未外部发送" in e["text"] for e in events(bus, "notify")))
+
 
 class CallFamilyTest(unittest.TestCase):
     def test_call_whitelisted_contacts(self):

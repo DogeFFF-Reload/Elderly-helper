@@ -21,6 +21,7 @@ EXERCISE_WORDS = ("手指操", "做操", "活动手指", "动动手")
 TEACH_HINTS = ("怎么", "咋", "教我", "不会", "如何", "怎样")
 MED_TAKEN = ("吃了", "吃过了", "吃完了", "吃好了", "服了", "吃过药", "药吃了")
 MED_NOT_YET = ("没吃", "还没", "等会", "待会", "一会儿吃")
+DISTRESS_WORDS = ("起不来", "动不了", "救命", "救救", "很疼", "好疼", "疼得", "很痛", "需要帮助", "需要帮忙")
 
 _PUNCT = re.compile(r"[\s，。？！,.?!~～、：:]")
 
@@ -37,6 +38,12 @@ def _has(text, words):
     return any(w in text for w in words)
 
 
+def _says_ok(text):
+    # A quoted/negated assurance or explicit distress must not cancel the alarm.
+    negated = re.search(r"(?:不是|并非|不算|哪里|哪儿).{0,3}(?:没事|挺好|还好|很好)", text)
+    return not negated and not _has(text, DISTRESS_WORDS) and _has(text, OK_WORDS)
+
+
 def find_contact(text, contacts):
     for c in contacts:
         if any(a in text for a in c.get("aliases", [c["name"]])):
@@ -49,13 +56,13 @@ def classify(text, ctx):
     contacts = ctx.get("contacts", [])
 
     if ctx.get("dial_pending"):
-        if _starts(core, CONFIRM_WORDS) or core in ("对", "是", "是的"):
-            return "dial_confirm", {}
         if _has(core, CANCEL_WORDS):
             return "dial_cancel", {}
+        if _starts(core, CONFIRM_WORDS) or core in ("对", "是", "是的"):
+            return "dial_confirm", {}
 
     if ctx.get("asking"):
-        if _has(core, OK_WORDS):
+        if _says_ok(core):
             return "elder_ok", {}
         return "elder_distress", {"dial": _has(core, EMERGENCY)}
 
@@ -105,7 +112,7 @@ def classify(text, ctx):
         who = m.group(1) if m and m.group(1) not in ("我", "人") else "陌生号码"
         return "call_blocked", {"who": who}
 
-    if _has(core, OK_WORDS):
+    if _says_ok(core):
         return "elder_ok", {}
 
     if parse_reading(text) is not None:

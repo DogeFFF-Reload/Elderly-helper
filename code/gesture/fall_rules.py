@@ -58,6 +58,51 @@ DEFAULT_RULES = {
 _TORSO = ("neck", "l_shoulder", "r_shoulder", "l_hip", "r_hip")
 
 
+def _finite_number(value):
+    try:
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def validate_rules(overrides=None):
+    """校验后返回独立的完整规则；拒绝会让计时失效或除零的配置。"""
+    if overrides is not None and not isinstance(overrides, dict):
+        raise ValueError("跌倒规则必须是 JSON 对象")
+    rules = dict(DEFAULT_RULES)
+    if overrides:
+        unknown = set(overrides) - set(DEFAULT_RULES)
+        if unknown:
+            raise ValueError("未知跌倒参数：%s" % ", ".join(sorted(map(str, unknown))))
+        rules.update(overrides)
+    for key, value in rules.items():
+        if key == "bed_zones":
+            continue
+        if not _finite_number(value):
+            raise ValueError("%s 必须是有限数字" % key)
+        if key in ("upright_angle", "lying_angle"):
+            if not 0 <= value <= 90:
+                raise ValueError("%s 必须在 0~90 度内" % key)
+        elif key in ("floor_y", "min_visibility"):
+            if not 0 <= value <= 1:
+                raise ValueError("%s 必须在 0~1 内" % key)
+        elif value <= 0:
+            raise ValueError("%s 必须大于 0" % key)
+    if rules["upright_angle"] >= rules["lying_angle"]:
+        raise ValueError("upright_angle 必须小于 lying_angle")
+    zones = rules["bed_zones"]
+    if not isinstance(zones, (list, tuple)):
+        raise ValueError("bed_zones 必须是矩形列表")
+    for z in zones:
+        if not isinstance(z, (list, tuple)) or len(z) != 4 or not all(
+                _finite_number(v) and 0 <= v <= 1 for v in z):
+            raise ValueError("床区必须是 0~1 内的 [x1,y1,x2,y2]")
+        if z[0] >= z[2] or z[1] >= z[3]:
+            raise ValueError("床区必须满足 x1<x2 且 y1<y2")
+    rules["bed_zones"] = [list(z) for z in zones]
+    return rules
+
+
 def _vis(p):
     return p[2] if len(p) > 2 else 1.0
 
@@ -81,11 +126,15 @@ def is_fallen(kp, angle_threshold=60.0, hip_floor=0.70):
 
 def features(kp, aspect=1.0, min_visibility=0.4):
     """单帧特征；躯干关键点看不全返回 None。aspect = 画面宽/高，用来还原真实角度。"""
-    if not kp:
+    if not isinstance(kp, dict) or not kp or not _finite_number(aspect) or aspect <= 0:
         return None
     pts = {}
     for name, p in kp.items():
-        if p is not None and _vis(p) >= min_visibility:
+        # Model coordinates may be outside the image; require finite values,
+        # not an in-frame clamp. Malformed joints are simply unavailable.
+        if (isinstance(p, (list, tuple)) and len(p) in (2, 3)
+                and all(_finite_number(v) for v in p)
+                and 0 <= _vis(p) <= 1 and _vis(p) >= min_visibility):
             pts[name] = p
     if "neck" not in pts and "l_shoulder" in pts and "r_shoulder" in pts:
         pts["neck"] = _mid(pts["l_shoulder"], pts["r_shoulder"])
@@ -94,7 +143,7 @@ def features(kp, aspect=1.0, min_visibility=0.4):
     hip = _mid(pts["l_hip"], pts["r_hip"])
     neck = pts["neck"]
     length = math.hypot((hip[0] - neck[0]) * aspect, hip[1] - neck[1])
-    if length < 1e-3:
+    if not all(math.isfinite(v) for v in (*hip, *neck, length)) or length < 1e-3:
         return None
     return {
         "angle": torso_angle(pts, aspect),
@@ -113,9 +162,9 @@ class FallDetector:
     WATCH, CANDIDATE, FALLEN = "WATCH", "CANDIDATE", "FALLEN"
 
     def __init__(self, rules=None, aspect=4 / 3):
-        self.rules = dict(DEFAULT_RULES)
-        if rules:
-            self.rules.update(rules)
+        self.rules = validate_rules(rules)
+        if not _finite_number(aspect) or aspect <= 0:
+            raise ValueError("画面宽高比必须是有限正数")
         self.aspect = aspect
         self.reset()
 

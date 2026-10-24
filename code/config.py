@@ -107,7 +107,7 @@ def _coerce(key, value):
             return int(f)
         if isinstance(default, float):
             return float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise ConfigError("%s=%r 不是合法的%s" % (key, value, "整数" if isinstance(default, int) else "数字"))
     return value if isinstance(default, (list, dict)) else str(value)
 

@@ -9,11 +9,13 @@
 
 ## 1. 跑起来
 
-只需 Python 3.8+，核心零依赖。
+最新报警链路修复、35 套 470 条回归及 Gemini 一次网页复核的交接见 [修复与复核说明](docs/28_报警链路修复与Gemini一次复核.md)。家属通知是本地演示记录；尚未接入短信、微信或真实拨号，动作接收回执不等于实物完成。
+
+核心服务只需 Python 3.8+，零第三方依赖。完整回归的 UI JavaScript 检查还需 Node.js 在 PATH 中（本次已用本机 Node 执行）。
 
 ```powershell
 cd code
-python tests/run_all.py                  # 回归，必须 ALL PASS（当前 34 套 449 条）
+python tests/run_all.py                  # 回归，必须 ALL PASS（当前 35 套 470 条）
 python -m master_service                 # 主脑 :8000（含三块屏）
 python -m demo_driver --pause            # 按 §3 主线一段一段走演示（另开终端，见 §10）
 python -m hand_controller.arm_service    # 臂+双手 mock :8013（另开终端，可不开）

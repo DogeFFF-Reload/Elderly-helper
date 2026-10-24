@@ -54,6 +54,21 @@ const UI = {
   secs(x) {
     return x == null ? "" : Math.ceil(x) + "s";
   },
+  armStatusKey(s) {
+    return [s.estop, s.arm?.mock, s.arm?.online,
+      ...["1", "2"].map((id) => [s.hands?.[id]?.pose, s.hands?.[id]?.status])];
+  },
+  actionStatus(s, hand, pose, label) {
+    if (s.estop) return label + "：急停，未执行";
+    const h = s.hands?.[String(hand)];
+    if (!h || h.pose !== pose) return label + "：暂无当前动作回执";
+    if (["offline", "rejected", "stale", "estop", "failed"].includes(h.status)) {
+      return label + "：未执行或执行失败，请现场检查";
+    }
+    if (s.arm?.mock === true) return label + "：模拟动作";
+    if (h.status === "ok") return label + "：执行端已接收，完成情况待确认";
+    return label + "：等待执行端回执";
+  },
   // 事件图标：大屏和操作台共用
   icon(ev) {
     return ({

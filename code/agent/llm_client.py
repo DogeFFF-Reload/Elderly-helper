@@ -21,9 +21,9 @@ from pathlib import Path
 LINES_PATH = Path(__file__).resolve().parent / "lines.json"
 
 LLM_KEYS = frozenset({
-    "cancel_ok", "call_family", "deliver_start", "deliver_unknown",
+    "cancel_ok", "deliver_start", "deliver_unknown",
     "exercise_start", "exercise_done", "exercise_stop", "rps_booth",
-    "message_sent", "message_empty", "safe_report", "echo_off",
+    "message_empty", "echo_off",
     "water_saved", "elder_ok_idle", "chitchat",
 })
 

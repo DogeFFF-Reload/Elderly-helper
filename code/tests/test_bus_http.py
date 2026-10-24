@@ -1,9 +1,11 @@
 """HTTP 层：中文编码、三块屏可访问、家属端接口、路径穿越防护。"""
 import http.client
+import io
 import json
 import threading
 import unittest
 import urllib.parse
+from types import SimpleNamespace
 
 from helpers import make_bus
 
@@ -98,6 +100,54 @@ class HttpTest(unittest.TestCase):
         self.post("/api/echo/revoke", {"contact": "daughter"})
         self.assertFalse(self.bus.style.is_authorized("daughter"))
         self.assertTrue(self.post("/api/night", {"mode": "on"})["night"])
+
+    def test_invalid_body_cannot_acknowledge_sos(self):
+        for body in (b"{broken", b"[]", b"null", b'{"contact": NaN}', b'{"contact": Infinity}'):
+            with self.subTest(body=body):
+                self.post("/mock/fall", {"room": "客厅"})
+                self.bus.voice("起不来")
+                status, data = self.req("POST", "/api/family/ack", body)
+                self.assertEqual(status, 400)
+                self.assertFalse(json.loads(data)["ok"])
+                self.assertEqual(self.bus.fsm.state, "SOS")
+                self.bus.reset()
+
+    def test_ack_requires_explicit_valid_contact(self):
+        self.post("/mock/fall", {"room": "客厅"})
+        self.bus.voice("起不来")
+        for body in ({}, {"contact": "unknown"}):
+            self.assertFalse(self.post("/api/family/ack", body)["ok"])
+            self.assertEqual(self.bus.fsm.state, "SOS")
+        self.assertTrue(self.post("/api/family/ack", {"contact": "daughter"})["ok"])
+        self.assertEqual(self.bus.fsm.state, "HELP_COMING")
+
+    def test_oversized_body_rejected(self):
+        status, data = self.req("POST", "/api/family/ack", b" " * (master_service.MAX_JSON_BYTES + 1))
+        self.assertEqual(status, 413)
+        self.assertFalse(json.loads(data)["ok"])
+
+    def test_bad_cursor_returns_json_error_and_server_survives(self):
+        for endpoint in ("/api/poll", "/api/events"):
+            for since in ("bad", "-1", "1.2"):
+                status, data = self.req("GET", endpoint + "?since=" + since)
+                self.assertEqual(status, 400)
+                self.assertFalse(json.loads(data)["ok"])
+        self.assertEqual(self.req("GET", "/api/state")[0], 200)
+
+
+class BodyReadTest(unittest.TestCase):
+    def test_bad_lengths_rejected_before_read(self):
+        for length, status in (("no", 400), ("-1", 400), (str(master_service.MAX_JSON_BYTES + 1), 413)):
+            handler = SimpleNamespace(headers={"Content-Length": length}, rfile=io.BytesIO(b"{}"))
+            with self.assertRaises(master_service.RequestBodyError) as cm:
+                master_service._read_json(handler)
+            self.assertEqual(cm.exception.status, status)
+            self.assertEqual(handler.rfile.tell(), 0)
+
+    def test_truncated_body_rejected(self):
+        handler = SimpleNamespace(headers={"Content-Length": "10"}, rfile=io.BytesIO(b"{}"))
+        with self.assertRaises(master_service.RequestBodyError):
+            master_service._read_json(handler)
 
 
 if __name__ == "__main__":

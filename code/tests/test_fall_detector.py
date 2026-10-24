@@ -1,5 +1,7 @@
 """跌倒规则（时序）+ 骨架录制回放 + 视觉桥发总线。"""
 import os
+import math
+import json
 import tempfile
 import threading
 import time
@@ -47,6 +49,29 @@ class ScenarioTest(unittest.TestCase):
 
 
 class FeatureTest(unittest.TestCase):
+    def test_bad_required_point_is_unavailable_not_a_crash(self):
+        for point in ([], [0.5], "bad", 4, [float("nan"), 0.5], [0.5, float("inf")],
+                      [0.5, 0.5, float("nan")], [0.5, 0.5, -0.1], [True, 0.5], [10 ** 500, 0.5]):
+            with self.subTest(point=point):
+                kp = dict(STANDING, l_hip=point)
+                self.assertIsNone(features(kp))
+
+    def test_unrelated_bad_joint_does_not_hide_valid_torso(self):
+        kp = dict(STANDING, l_wrist=[], head=[float("nan"), 0.5])
+        self.assertIsNotNone(features(kp))
+        self.assertIsNone(features(kp)["head_y"])
+
+    def test_bad_pose_does_not_poison_next_valid_frame(self):
+        d = FallDetector()
+        d.update(0.0, STANDING)
+        for t, kp in ((0.1, ["bad"]), (0.2, dict(STANDING, l_hip=[float("nan"), 0.5]))):
+            self.assertIsNone(d.update(t, kp))
+            self.assertIsNone(d.last["f"])
+            self.assertEqual(d.state, d.WATCH)
+        d.update(0.3, STANDING)
+        self.assertTrue(math.isfinite(d.last["f"]["hip_y"]))
+        self.assertTrue(math.isfinite(d.standing_hip))
+
     def test_neck_from_shoulders_and_visibility(self):
         kp = {k: [x, y, 0.9] for k, (x, y) in STANDING.items()}
         del kp["neck"]
@@ -75,6 +100,32 @@ class FeatureTest(unittest.TestCase):
 
 
 class RecordingTest(unittest.TestCase):
+    def test_invalid_rule_values_fail_before_processing(self):
+        bad = ({"hip_smooth": 0}, {"confirm_hold": -1}, {"slow_hold": float("nan")},
+               {"fall_window": float("inf")}, {"cancel_hold": "x"}, {"recover_hold": True},
+               {"min_visibility": 2}, {"floor_y": -0.1}, {"lying_angle": 100},
+               {"upright_angle": 60, "lying_angle": 50}, {"bed_zones": "bad"},
+               {"bed_zones": [[0.8, 0.2, 0.4, 0.5]]}, {"bed_zones": [[0, 0, 2, 1]]},
+               {"bed_zones": [[0, 0, 0.5]]}, {"unknown": 1})
+        for rules in bad:
+            with self.subTest(rules=rules), self.assertRaises(ValueError):
+                FallDetector(rules)
+        for aspect in (0, -1, float("nan"), float("inf"), "bad"):
+            with self.subTest(aspect=aspect), self.assertRaises(ValueError):
+                FallDetector(aspect=aspect)
+
+    def test_cli_invalid_rules_fail_clearly(self):
+        for sets, beds in ((["hip_smooth=0"], None), (["slow_hold=NaN"], None),
+                           (None, ["0.8,0.2,0.4,0.5"]), (None, ["bad,0,1,1"])):
+            with self.subTest(sets=sets, beds=beds), self.assertRaises(SystemExit):
+                load_rules(sets=sets, beds=beds)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "rules.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump([], f)
+            with self.assertRaises(SystemExit):
+                load_rules(path)
+
     def test_roundtrip_has_no_images(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "fall_01.jsonl")

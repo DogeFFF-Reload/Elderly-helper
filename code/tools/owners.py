@@ -43,6 +43,7 @@ TESTS = {
     "test_agent_supervisor": ("software",),
     "test_help_chain": ("software",),
     "test_bus_http": ("software",),
+    "test_ui_safety": ("captain",),
     "test_llm_fallback": ("software",),
     "test_config_params": ("software",),
     "test_demo_driver": ("software",),

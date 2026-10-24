@@ -124,12 +124,8 @@ class GuardFSM:
         ]
 
     def _clear_guard(self):
-        self.state = IDLE
-        self.room = None
-        self.deadline = None
-        self.ack_deadline = None
-        self.acked_by = None
-        self.contact_idx = 0
+        # A cleared incident must not leave an old emergency confirmation armed.
+        self.reset()
 
     # ---------- 打 120 双重确认 ----------
 
@@ -144,6 +140,9 @@ class GuardFSM:
     def confirm_dial(self):
         if self.dial_deadline is None:
             return []
+        if self.clock() >= self.dial_deadline:
+            self.dial_deadline = None
+            return [event("dial", "确认窗超时，未拨 120", "info"), say("dial_timeout")]
         self.dial_deadline = None
         c = self.contacts[0]
         return [

@@ -60,6 +60,15 @@ class LoadTest(unittest.TestCase):
 
 
 class ApplyParamsTest(unittest.TestCase):
+    def test_nonfinite_integer_rejected_without_partial_update(self):
+        cfg = config.load(use_local=False)
+        before = dict(cfg)
+        for value in (float("inf"), float("-inf"), float("nan")):
+            changed, errors = config.apply_params(cfg, {"ask_wait_day": 8, "night_start_hour": value})
+            self.assertEqual(changed, {})
+            self.assertTrue(errors)
+            self.assertEqual(cfg, before)
+
     def test_all_or_nothing(self):
         cfg = config.load(use_local=False)
         changed, errors = config.apply_params(cfg, {"ask_wait_day": "8", "ask_wait_night": -1})

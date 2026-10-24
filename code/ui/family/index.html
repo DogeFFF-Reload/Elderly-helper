@@ -125,6 +125,7 @@
   </header>
 
   <div id="alert"></div>
+  <p class="note">本页显示演示通知，尚未接入短信、微信或真实拨号。动作回执不代表实物已完成。</p>
   <section class="card" id="med" hidden></section>
   <section class="card" id="health"></section>
 
@@ -174,25 +175,30 @@ function renderSeg(s) {
 
 // 紧急卡只在“状态”变化时重建；倒计时只改文字，保证按钮元素稳定、不吞点击
 let alertKey = "";
+const armStatusKey = (s) => UI.armStatusKey(s);
+const actionStatus = (s, hand, pose, label) => UI.actionStatus(s, hand, pose, label);
+
 function renderAlert(s) {
   const g = s.guard, title = s.elder_title, myName = UI.contactName(s, me);
   const notified = g.notified.includes(me);
-  const key = JSON.stringify([me, g.state, notified, g.room, g.acked_by]);
+  const fallNote = [...s.notifications].reverse().find((n) => n.contact === me && n.kind === "fall");
+  const key = JSON.stringify([me, g.state, notified, g.room, g.wait, g.acked_by, title, myName,
+    fallNote?.id, fallNote?.ts, armStatusKey(s)]);
   if (key === alertKey) return;
   alertKey = key;
   if (g.state === "SOS" && notified) {
-    const fallNote = [...s.notifications].reverse().find((n) => n.contact === me && n.kind === "fall");
     $("alert").innerHTML = `<section class="card alert">
       <h2>🚨 ${UI.esc(title)}在${UI.esc(g.room || "家里")}可能摔倒了</h2>
       <p>${fallNote ? UI.time(fallNote.ts, false) + " · " : ""}询问${g.wait ? " " + g.wait + " 秒" : ""}没有得到“没事”的回应</p>
-      <div class="steps"><span>✓ 机械臂已按下 SOS</span><span>✓ 手#2 正在轻握安抚</span><span>⏳ 等你确认</span></div>
+      <div class="steps"><span>${UI.esc(actionStatus(s, 1, "press_sos", "SOS"))}</span><span>${UI.esc(actionStatus(s, 2, "gentle_hold", "轻握安抚"))}</span><span>⏳ 等你确认</span></div>
       <button id="ackBtn">我收到了，马上到</button>
       <p style="margin-top:10px;font-size:12px">点了之后，${UI.esc(title)}那边会显示“${UI.esc(myName)}马上到”。<span id="ackLeft"></span></p>
     </section>`;
     $("ackBtn").onclick = (e) => act("/api/family/ack", { contact: me }, e.target);
   } else if (g.state === "HELP_COMING" && g.acked_by === me) {
     $("alert").innerHTML = `<section class="card done"><h2>✓ 你已确认，正在赶去</h2>
-      <p>${UI.esc(title)}那边：手#1 举牌“家人已收到”，手#2 轻握并举牌“别怕，${UI.esc(myName)}马上到”。路上可以先打个电话。</p></section>`;
+      <p>已向${UI.esc(title)}那边发出“家人已收到”和“${UI.esc(myName)}马上到”的显示请求。路上可以先打个电话。</p>
+      <p>${UI.esc(actionStatus(s, 1, "sign_family_received", "确认牌"))}；${UI.esc(actionStatus(s, 2, "sign_coming", "到达提示牌"))}</p></section>`;
   } else if (g.state === "HELP_COMING" && notified) {
     $("alert").innerHTML = `<section class="card info"><h2>${UI.esc(UI.contactName(s, g.acked_by))}已确认前往</h2>
       <p style="margin:0;font-size:14px">${UI.esc(title)}在${UI.esc(g.room || "家里")}可能摔倒了，已有家人在路上。</p></section>`;
@@ -224,7 +230,7 @@ function renderMed(s) {
   if (box.hidden) return;
   const chip = (d) => d.state === "taken" ? `<span class="chip taken">✓ 已服 ${UI.esc(d.taken_at)}</span>`
     : d.state === "missed" ? `<span class="chip missed">⚠ 漏服</span>`
-    : `<span class="chip waiting">${d.state === "delivered" ? "已递药，等打卡" : "已提醒，等打卡"}</span>`;
+    : `<span class="chip waiting">${d.state === "delivered" ? "已请求递药，等打卡" : "已提醒，等打卡"}</span>`;
   const rows = m.doses.length
     ? [...m.doses].reverse().map((d) => `<div class="med-row"><time>${UI.esc(d.slot)}</time><span>${UI.esc(d.name)}</span>${chip(d)}</div>`).join("")
     : `<div class="empty">今天还没到吃药时间</div>`;
@@ -275,7 +281,7 @@ function renderEcho(s) {
 
 function renderCountdown(s) {
   const el = $("ackLeft"), left = s.guard.ack_remaining;
-  if (el) el.textContent = left != null ? Math.ceil(left) + " 秒内没人确认会通知下一位家人。" : "其他家人也已收到通知。";
+  if (el) el.textContent = left != null ? Math.ceil(left) + " 秒内没人确认会提醒下一位家人。" : "联系人提醒已记录，仍未确认，请现场联系家属。";
 }
 
 function render(s) {
@@ -292,7 +298,8 @@ Bus.on(({ state, online }) => {
   $("liveText").textContent = online ? "实时连接" : "连接中断，正在重连…";
   if (!online) return;
   const g = state.guard;
-  const key = JSON.stringify([me, g.state, g.notified, g.acked_by, state.health.today, state.notifications, state.messages, state.echo]);
+  const key = JSON.stringify([me, g.state, g.room, g.wait, g.notified, g.acked_by, state.elder_title, state.contacts,
+    state.health.today, state.notifications, state.messages, state.echo, state.med, armStatusKey(state)]);
   if (key !== lastKey) { lastKey = key; render(state); }
   renderCountdown(state);
 });

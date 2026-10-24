@@ -170,6 +170,8 @@ class HealthTracker:
     def confirm(self):
         if not self.pending:
             return []
+        if self.clock() >= self.pending["deadline"]:
+            return self.tick()
         r = self.pending["reading"]
         self.pending = None
         flag = classify_bp(r["sys"], r["dia"])

@@ -1,0 +1,191 @@
+{
+  "schema_version": 1,
+  "verified_at_utc": "2026-10-24T14:09:32.860254+00:00",
+  "base_commit": "fe0091ee8c804a0e39f26ccf8af6a06be8cd3880",
+  "workflow": "Codex development and offline verification, then one manual Gemini web review",
+  "gemini_review_received": false,
+  "regression": {
+    "suites": 35,
+    "tests": 470,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "added_test_methods": 21
+  },
+  "regression_duration_s": 61.747,
+  "full_mock": {
+    "passed": 10,
+    "total": 10,
+    "final_state": "IDLE",
+    "mock_sos_actions": 1,
+    "normal_confirmed": true,
+    "camera_opened": false
+  },
+  "visual_cases": [
+    {
+      "name": "synthetic:fall",
+      "source_kind": "synthetic",
+      "expected_events": 1,
+      "events": 1,
+      "status": "pass",
+      "frames": 129,
+      "usable_pose_frames": 129
+    },
+    {
+      "name": "synthetic:stumble",
+      "source_kind": "synthetic",
+      "expected_events": 0,
+      "events": 0,
+      "status": "pass",
+      "frames": 112,
+      "usable_pose_frames": 112
+    },
+    {
+      "name": "synthetic:sit",
+      "source_kind": "synthetic",
+      "expected_events": 0,
+      "events": 0,
+      "status": "pass",
+      "frames": 270,
+      "usable_pose_frames": 270
+    },
+    {
+      "name": "synthetic:chair_fall",
+      "source_kind": "synthetic",
+      "expected_events": 1,
+      "events": 1,
+      "status": "pass",
+      "frames": 130,
+      "usable_pose_frames": 130
+    },
+    {
+      "name": "synthetic:bend",
+      "source_kind": "synthetic",
+      "expected_events": 0,
+      "events": 0,
+      "status": "pass",
+      "frames": 309,
+      "usable_pose_frames": 309
+    },
+    {
+      "name": "synthetic:bed",
+      "source_kind": "synthetic",
+      "expected_events": 0,
+      "events": 0,
+      "status": "pass",
+      "frames": 450,
+      "usable_pose_frames": 450
+    },
+    {
+      "name": "synthetic:slow_floor",
+      "source_kind": "synthetic",
+      "expected_events": 1,
+      "events": 1,
+      "status": "pass",
+      "frames": 330,
+      "usable_pose_frames": 330
+    },
+    {
+      "name": "synthetic:fall_occluded",
+      "source_kind": "synthetic",
+      "expected_events": 1,
+      "events": 1,
+      "status": "pass",
+      "frames": 120,
+      "usable_pose_frames": 45
+    },
+    {
+      "name": "synthetic:refall",
+      "source_kind": "synthetic",
+      "expected_events": 2,
+      "events": 2,
+      "status": "pass",
+      "frames": 250,
+      "usable_pose_frames": 250
+    },
+    {
+      "name": "stand.jsonl",
+      "source_kind": "recorded",
+      "expected_events": 0,
+      "events": 0,
+      "status": "pass",
+      "frames": 119,
+      "usable_pose_frames": 119
+    },
+    {
+      "name": "walk.jsonl",
+      "source_kind": "recorded",
+      "expected_events": 0,
+      "events": 0,
+      "status": "pass",
+      "frames": 120,
+      "usable_pose_frames": 120
+    },
+    {
+      "name": "sit_stand.jsonl",
+      "source_kind": "recorded",
+      "expected_events": 0,
+      "events": 0,
+      "status": "pass",
+      "frames": 119,
+      "usable_pose_frames": 111
+    }
+  ],
+  "syntax": {
+    "python": 97,
+    "json": 9,
+    "javascript": 2
+  },
+  "original_keypoints_sha256_unchanged": "b0e261c58b0a06d896afc822aec540edbdcfd879a695a7dc60746e7e417aaac8",
+  "recorded_normal_session_count": 1,
+  "real_fall_labels": 0,
+  "real_fall_recall": null,
+  "devices": {
+    "camera_opened": false,
+    "phone_contacted": false,
+    "microphone_or_speaker_used": false,
+    "real_actuator_called": false,
+    "firmware_flashed": false,
+    "external_notification_or_real_dial": false
+  },
+  "source_sha256": {
+    "code/agent/health_tracker.py": "acb73dd5aeb888549ff897a2d44b4627af6ca2117bec95d547970ec53bdf3a26",
+    "code/agent/intent.py": "390098acb67ecc6096d226924797d33ac1499f04a4e2e7b1c70d79d8e1c38e98",
+    "code/agent/lines.json": "0f67f981198a77576dd25a89d2b4237a30781b47d82a35f883b065bc623037dc",
+    "code/agent/llm_client.py": "4d1bbdabc80337720714ccb835f8f8a34faed32e84546b5367c43f39c0510820",
+    "code/config.py": "b11e42b95c2d173f84db4ecf41f64c5f7dbacdc6f0e2e6810171e25895418d99",
+    "code/gesture/fall_rules.py": "d33ca95553c8a9de6265b89e8070b56a4317e077c05062d434851ac72305de4b",
+    "code/master_service.py": "5db11085be4a9a92c1bdf9c01907d811520038202bd386bb37d84cfc44d923e6",
+    "code/state_machine/guard_fsm.py": "f528f8d3d5e892ce39d1866bef2b5ec4885408da6b2d8484c91cf4bb61126ea2",
+    "code/tests/test_bus_http.py": "0cb0ffcf98720c626d1587ec574f25323496cd503ec81c76b74c650571719fa4",
+    "code/tests/test_config_params.py": "b92f1e9f0805d617e7d969dfb29c56b6b710eadd721e43222253a51e4bfa716e",
+    "code/tests/test_fall_detector.py": "302155e2744b5d2c3b49d818fc40eb6c713a1e5d1dcc2eba1ddf4e80c3e2f103",
+    "code/tests/test_health_readback.py": "f8d51c9f4f5aeef60407a0d081ad0739d807b9778059aac887ec3de735e6382f",
+    "code/tests/test_help_chain.py": "4f370c6153322b64b447f074b0e23421ca620b9adf835c3754b746ae1d235e3e",
+    "code/tests/test_llm_fallback.py": "86c1e43ee589a6f512f598b718ad60261d7907880a1c2de57304ca3285c194b0",
+    "code/tests/test_ui_safety.py": "22a37bb062a1d535eb70c5e269577ce4c3a18f576c5e224f0d4060cdcd39ccb3",
+    "code/tests/ui_safety_cases.js": "dd53653ca3df7dd02b1ea42aa3388265e3cbb29a770200f780f3f113dbb5b677",
+    "code/tools/owners.py": "3d6a52ae1d80b0532dcb02836d2b54ee67ebd0e00d757b8f602a6a54bdaaab59",
+    "code/ui/console/index.html": "9d65c844ff122f38ed1767f205f3c85ccc6a6b42c9e0f5a52b35e8be5aca3951",
+    "code/ui/family/index.html": "aca0a8a4049648b19f74f068b5be50e11cf6e89add74d69c983f7938ae90719e",
+    "code/ui/monitor/index.html": "82bfd1d311cc13e0be82d50629e6261cc8ded712ec9f9ee9ff2d242f1df24386",
+    "code/ui/shared/bus.js": "5f050c122a7a3cc17b8a7370ece0e59a0db4ff22c9fe9b67725c679491382d56",
+    "code/vision/kpio.py": "bcb4022f27764628d3a7e84f38bf278e39fe25ad95d4f81a89f6695f4059337a"
+  },
+  "evidence_sha256": {
+    "regression.stdout.txt": "ed77007594de5afd5586dad259d57b88137863b2f755b0edcd8f193b808179b6",
+    "regression.stderr.txt": "07918240d4d5d7faa4d5c3eaa31f364be324ecd76ead2a7ee9c7f3fa03dad753",
+    "complete_mock/report.json": "43f593f1903500792cbfd81460dde12523f984f2716898806095ed2b2af18d55",
+    "visual_analysis/report.json": "0fabf57fbcf6f4722024e93f40674a066002c27d303cffb6f3ef0bdcd88e0e53"
+  },
+  "review_scope": "Focused manual code review of alarm state, intent, HTTP, family/monitor UI, and vision boundaries. Existing regression and syntax checks cover remaining modules; no claim of exhaustive line-by-line review.",
+  "limits": [
+    "No real fall labels or fall accuracy claim.",
+    "Family notification is an in-memory local demo record, not external delivery.",
+    "Action success is receipt acceptance, not measured physical completion.",
+    "Keyword safeguards do not cover all possible Chinese expressions.",
+    "No UI browser rendering or hardware validation in this pass.",
+    "Demo endpoints lack production authentication and notification persistence."
+  ],
+  "source_hash_basis": "Git index blobs after repository line-ending normalization; test logs are raw subprocess output."
+}

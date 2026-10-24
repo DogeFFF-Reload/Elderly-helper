@@ -9,7 +9,7 @@ import datetime
 import json
 from pathlib import Path
 
-from gesture.fall_rules import DEFAULT_RULES
+from gesture.fall_rules import DEFAULT_RULES, validate_rules
 
 
 class KeypointWriter:
@@ -66,17 +66,26 @@ def parse_set(items):
 
 
 def parse_zone(text):
-    vals = [float(v) for v in text.split(",")]
-    if len(vals) != 4:
-        raise SystemExit("--bed 需要 4 个数：x1,y1,x2,y2（归一化 0~1）")
+    try:
+        vals = [float(v) for v in text.split(",")]
+        validate_rules({"bed_zones": [vals]})
+    except ValueError as exc:
+        raise SystemExit("--bed 无效：%s" % exc) from None
     return vals
 
 
 def load_rules(path=None, sets=None, beds=None):
     rules = {}
     if path:
-        rules.update(json.loads(Path(path).read_text(encoding="utf-8")))
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise SystemExit("跌倒规则文件必须是 JSON 对象")
+        rules.update(data)
     rules.update(parse_set(sets))
+    try:
+        validate_rules(rules)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
     if beds:
         rules["bed_zones"] = list(rules.get("bed_zones", [])) + [parse_zone(b) for b in beds]
     unknown = set(rules) - set(DEFAULT_RULES)

@@ -39,6 +39,7 @@ from voice.text_normalize import is_filler, normalize
 
 UI_DIR = config.CODE_DIR / "ui"
 MAX_EVENTS = 500
+MAX_JSON_BYTES = 1024 * 1024
 TEACH_CARD_SECONDS = 45.0
 BOX_TIMEOUT = 3.0
 VISION_TIMEOUT = 3.0   # 视觉约 5 次/秒推骨架，3 秒没来算离线
@@ -415,12 +416,13 @@ class Bus:
     def _notify(self, contact_id, kind, text):
         c = self.contact(contact_id or self.primary["id"]) or self.primary
         n = {"id": self.next_notif_id, "ts": self.clock(), "contact": c["id"], "kind": kind,
-             "text": text, "acked": False}
+             "text": text, "acked": False, "delivery": "local_demo_record"}
         self.next_notif_id += 1
         self.notifications.append(n)
         del self.notifications[:-50]
         level = "danger" if kind in ("fall", "120") else "info"
-        self.events.add("notify", "通知%s：%s" % (c["name"], text), level, contact=c["id"], kind=kind)
+        self.events.add("notify", "通知%s（家属演示页面记录，未外部发送）：%s" % (c["name"], text),
+                        level, contact=c["id"], kind=kind, delivery="local_demo_record")
 
     def _run(self, acts):
         for a in acts:
@@ -436,7 +438,7 @@ class Bus:
             elif kind == "arm":
                 if self.estop:
                     if a["pose"] in SAFETY_POSES:
-                        self.events.add("system", "急停中，保命动作未执行：%s；通知家属走软件通道照常送达" % pose_label(a["pose"]),
+                        self.events.add("system", "急停中，保命动作未执行：%s；家属演示页面仍会生成通知记录（未外部发送）" % pose_label(a["pose"]),
                                         "danger", pose=a["pose"], hand=a["hand"])
                     continue
                 self.hands[str(a["hand"])] = self._hand(a["pose"], "sent")   # 先记再发：回执可能在 send 里同步回来
@@ -451,7 +453,7 @@ class Bus:
 
     def _arm_result(self, pose, hand, ok, why, detail):
         """保命动作没做成 → 马上告诉演示员；其他动作只在刚开始失败时记一笔，免得手指操刷屏。
-        type=system：操作台看得到、大屏不显示。通知家属走的是软件通道，不靠臂，照常送达。"""
+        type=system：操作台看得到、大屏不显示。家属通知仅生成本地演示记录，不依赖臂。"""
         with self.lock:
             h = self.hands.get(str(hand))
             if h and h["pose"] == pose and (h["status"] == "sent" or not ok):
@@ -464,7 +466,7 @@ class Bus:
                   "failed": "执行端做到一半出错：%s" % detail}.get(why, why)
         with self.lock:
             if pose in SAFETY_POSES:
-                self.events.add("system", "保命动作没做成：%s；%s。通知家属走软件通道，照常送达；现场可切 Plan B" % (
+                self.events.add("system", "保命动作没做成：%s；%s。家属演示页面仍会生成通知记录（未外部发送）；现场可切 Plan B" % (
                     pose_label(pose), reason), "danger", pose=pose, hand=hand, why=why)
             elif not self.arm_down_noted:
                 self.arm_down_noted = True
@@ -775,7 +777,7 @@ class Bus:
                 self._run(self._stop_exercise("急停"))
                 self.rps = None
                 self.events.add("estop", "急停：臂和双手全部停止，动作指令一律不发；"
-                                "保命链照常走软件通道（通知家属照常送达）", "danger")
+                                "保命链继续生成家属演示页面通知记录（未外部发送）", "danger")
             elif not on and self.estop:
                 self.estop = False
                 resume = getattr(self.arm, "resume", None)
@@ -974,18 +976,41 @@ class Bus:
 
 # ---------- HTTP ----------
 
+class RequestBodyError(ValueError):
+    def __init__(self, message, status=400):
+        super().__init__(message)
+        self.status = status
+
+
+def _reject_json_constant(value):
+    raise RequestBodyError("non-finite JSON number: " + value)
+
+
 def _read_json(handler):
-    n = int(handler.headers.get("Content-Length") or 0)
+    try:
+        n = int(handler.headers.get("Content-Length") or 0)
+    except ValueError:
+        raise RequestBodyError("invalid Content-Length") from None
+    if n < 0:
+        raise RequestBodyError("negative Content-Length")
+    if n > MAX_JSON_BYTES:
+        raise RequestBodyError("JSON body too large", 413)
     raw = handler.rfile.read(n) if n else b""
-    if not raw:
+    if len(raw) != n:
+        raise RequestBodyError("incomplete JSON body")
+    if not n:
         return {}
     for enc in ("utf-8", "gb18030"):
         try:
-            data = json.loads(raw.decode(enc))
-            return data if isinstance(data, dict) else {}
+            data = json.loads(raw.decode(enc), parse_constant=_reject_json_constant)
+            if not isinstance(data, dict):
+                raise RequestBodyError("JSON body must be an object")
+            return data
+        except RequestBodyError:
+            raise
         except (UnicodeDecodeError, ValueError):
             continue
-    return {}
+    raise RequestBodyError("invalid JSON body")
 
 
 def _truthy(v):
@@ -1006,7 +1031,7 @@ def dispatch_post(bus, path, body, query=None):
         "/mock/fall": lambda: bus.fall(arg("room")),
         "/mock/button": lambda: bus.button(arg("key", "ok")),
         "/api/skeleton": lambda: bus.update_skeleton(body or q),
-        "/api/family/ack": lambda: bus.family_ack(arg("contact", bus.primary["id"])),
+        "/api/family/ack": lambda: bus.family_ack(arg("contact")),
         "/api/family/message": lambda: bus.family_message(arg("contact", bus.primary["id"]), arg("text", "")),
         "/api/echo/authorize": lambda: bus.echo_authorize(arg("contact", bus.primary["id"])),
         "/api/echo/revoke": lambda: bus.echo_revoke(arg("contact", bus.primary["id"])),
@@ -1052,6 +1077,14 @@ def make_handler(bus):
             url = urllib.parse.urlparse(self.path)
             q = urllib.parse.parse_qs(url.query)
             path = url.path
+            since = 0
+            if path in ("/api/poll", "/api/events"):
+                try:
+                    since = int(q.get("since", ["0"])[0])
+                    if since < 0:
+                        raise ValueError
+                except ValueError:
+                    return self._json({"ok": False, "error": "since must be a nonnegative integer"}, 400)
             if path == "/":
                 self.send_response(302)
                 self.send_header("Location", "/ui/console")
@@ -1060,11 +1093,11 @@ def make_handler(bus):
             if path == "/api/state":
                 return self._json(bus.snapshot())
             if path == "/api/poll":
-                return self._json(bus.poll(int(q.get("since", ["0"])[0])))
+                return self._json(bus.poll(since))
             if path == "/api/events":
                 bus.saw_client(q.get("client", [""])[0] or "未标名@" + self.client_address[0])
                 with bus.lock:
-                    return self._json({"events": bus.events.since(int(q.get("since", ["0"])[0])),
+                    return self._json({"events": bus.events.since(since),
                                        "last_id": bus.events.next_id - 1})
             if path == "/api/health/report":
                 with bus.lock:
@@ -1085,7 +1118,11 @@ def make_handler(bus):
         def do_POST(self):
             url = urllib.parse.urlparse(self.path)
             q = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
-            result = dispatch_post(bus, url.path, _read_json(self), q)
+            try:
+                body = _read_json(self)
+            except RequestBodyError as exc:
+                return self._json({"ok": False, "error": str(exc)}, exc.status)
+            result = dispatch_post(bus, url.path, body, q)
             if result is None:
                 return self._json({"ok": False, "error": "not found"}, 404)
             self._json(result)

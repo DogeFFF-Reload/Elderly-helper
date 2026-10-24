@@ -108,7 +108,18 @@ class ClientTest(unittest.TestCase):
             self.assertEqual(text, SCRIPTED_DELIVER, why)
             self.assertTrue(info["reason"].startswith("rejected"), why)
         c.transport = FakeLLM("好，已经给您女儿发了消息，让她给您回电话。")
-        self.assertEqual(c.render("call_family", {"contact": "女儿", "pron": "她"})[1]["source"], "llm")
+        text, info = c.render("call_family", {"contact": "女儿", "pron": "她"})
+        self.assertEqual(info["source"], "scripted", "通知渠道说明不能被润色成已外部送达")
+        self.assertIn("家属演示页面", text)
+
+    def test_notification_channel_disclosures_never_polished(self):
+        fake = FakeLLM(reply="已经告诉女儿了。")
+        c = client(fake)
+        for key in ("call_family", "message_sent", "safe_report"):
+            text, info = c.render(key, {"contact": "女儿", "pron": "她"})
+            self.assertEqual(info["source"], "scripted")
+            self.assertIn("家属演示页面", text)
+        self.assertEqual(fake.calls, [])
         c.transport = FakeLLM("记下了，今天喝了 2 杯，一共 5 杯水。")
         self.assertEqual(c.render("water_saved", {"cups": 2, "today": 5})[1]["source"], "llm", "数字一致可以放行")
 

@@ -83,6 +83,14 @@ class ReadbackTest(unittest.TestCase):
         self.assertIn("未记录", acts[0]["text"])
         self.assertEqual(self.t.records, [])
 
+    def test_confirmation_at_deadline_without_tick_discards(self):
+        self.t.propose("血压138比85")
+        self.clock.advance(20)
+        acts = self.t.confirm()
+        self.assertEqual(self.t.records, [])
+        self.assertIsNone(self.t.pending)
+        self.assertTrue(any("未记录" in a.get("text", "") for a in acts))
+
     def test_normal_reading_has_no_family_alert(self):
         self.t.propose("血压120比78")
         acts = self.t.confirm()
@@ -127,7 +135,7 @@ class BusReadbackTest(unittest.TestCase):
         self.assertEqual(bus.voice("对")["intent"], "health_confirm")
         self.assertEqual(len(bus.health.records), 1)
         self.assertTrue(any(n["kind"] == "health" and n["contact"] == "daughter" for n in bus.notifications))
-        self.assertIn("同步给女儿", said(bus)[-1])
+        self.assertIn("家属演示页面已记录给女儿", said(bus)[-1])
 
     def test_correction_replaces_pending(self):
         bus, clock, arm = make_bus()
