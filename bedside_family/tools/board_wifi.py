@@ -67,6 +67,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ssid")
     ap.add_argument("--pass", dest="password")
+    ap.add_argument("--psk")             # 只改已存配置的密码,不动当前连接(等 AP 侧换密码后自动重连)
     ap.add_argument("--check", action="store_true")
     a = ap.parse_args()
     try:
@@ -77,10 +78,15 @@ def main():
     try:
         if a.check:
             check(c)
+        elif a.psk:
+            o, e = run(c, f"nmcli con mod Mocen_Bear 802-11-wireless-security.psk {shlex.quote(a.psk)}; "
+                          "nmcli -s con show Mocen_Bear | grep -E 'psk|interface-name'")
+            print(o or e)
+            print("(当前连接保持不断;AP 侧改密码踢人后,板子用新 psk 自动重连)")
         elif a.ssid and a.password:
             switch(c, a.ssid, a.password)
         else:
-            print("用 --check 或 --ssid X --pass Y")
+            print("用 --check / --psk / --ssid X --pass Y")
     finally:
         c.close()
 

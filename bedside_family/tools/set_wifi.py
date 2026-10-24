@@ -23,7 +23,7 @@ BUILD = r"C:\Users\36197\AppData\Local\Temp\opencode\build_v57"
 def cstr(s):
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
-def patch(ssid=None, pwd=None):
+def patch(ssid=None, pwd=None, host=None):
     src = open(INO, encoding="utf-8").read()
     if ssid:
         src = re.sub(r'(const char\*\s*WIFI_SSID\s*=\s*)"[^"]*"',
@@ -31,10 +31,14 @@ def patch(ssid=None, pwd=None):
     if pwd:
         src = re.sub(r'(const char\*\s*WIFI_PASS\s*=\s*)"[^"]*"',
                      lambda m: m.group(1) + '"' + cstr(pwd) + '"', src, count=1)
+    if host:
+        src = re.sub(r'(const char\*\s*ARM_HOST\s*=\s*)"[^"]*"',
+                     lambda m: m.group(1) + '"' + cstr(host) + '"', src, count=1)
     open(INO, "w", encoding="utf-8").write(src)
-    if ssid or pwd:
+    if ssid or pwd or host:
         print("固件校正区已更新:" + (f"SSID={ssid} " if ssid else "")
-              + ("PASS=<已写入,%d位>" % len(pwd) if pwd else ""))
+              + ("PASS=<已写入,%d位> " % len(pwd) if pwd else "")
+              + (f"ARM_HOST={host}" if host else ""))
 
 def find_port():
     try:
@@ -68,7 +72,7 @@ def burn(port=None):
     if not p:
         raise SystemExit(1)
     print("== 烧录 →", p)
-    r = subprocess.run([CLI, "upload", "--fqbn", FQBN, "-p", p, "--baud", "921600",
+    r = subprocess.run([CLI, "upload", "--fqbn", FQBN, "-p", p,
                         "--input-dir", BUILD], capture_output=True, text=True, errors="replace")
     sys.stdout.write(r.stdout[-800:]); sys.stdout.write(r.stderr[-800:])
     if r.returncode != 0:
@@ -80,6 +84,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ssid")
     ap.add_argument("--pass", dest="password")
+    ap.add_argument("--host")            # 床头板 IP(网段挪动后同步进固件)
     ap.add_argument("--burn", action="store_true")
     ap.add_argument("--port")
     ap.add_argument("--compile-only", action="store_true")
@@ -89,8 +94,8 @@ def main():
         compile_fw()
         return
 
-    if a.ssid or a.password:
-        patch(a.ssid, a.password)
+    if a.ssid or a.password or a.host:
+        patch(a.ssid, a.password, a.host)
         compile_fw()
         time.sleep(1)
     elif not os.path.isfile(os.path.join(BUILD, "bedside_s3_arm_kiosk.ino.bin")):
