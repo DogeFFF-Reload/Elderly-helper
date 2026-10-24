@@ -1,10 +1,11 @@
 // 老人端 / 家属端共用：语音通话（WebRTC，主脑只转信令）、按住说话录语音留言（WAV 16k）、铃声、留言播放、朗读。
 // 依赖 bus.js（Bus.post）。约定见 code/agent/comms.py。
 const Comms = (() => {
-  const RTC = { iceServers: [] };   // 同一个 Wi-Fi 直连，不走外网
+  // 同一个 Wi-Fi 直连；家属手机在 4G 上时靠 STUN 找到对方的公网地址（国内能连的几个，连不上就只用局域网地址）
+  const RTC = { iceServers: [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.miwifi.com:3478", "stun:stun.qq.com:3478"] }] };
   const ICE_WAIT = 1500;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const getJSON = (url) => fetch(url, { cache: "no-store" }).then((r) => r.json());
+  const getJSON = (url) => fetch(url, { cache: "no-store", headers: Bus.headers() }).then((r) => r.json());
 
   // ---------- 声音：音频上下文、铃声、提示音 ----------
   let ctx = null;
@@ -245,7 +246,7 @@ const Comms = (() => {
 
   function sendVoice(from, to, clip) {
     const q = new URLSearchParams({ from, to, dur: clip.dur.toFixed(1) });
-    return fetch("/api/voice_msg?" + q, { method: "POST", headers: { "Content-Type": clip.blob.type }, body: clip.blob })
+    return fetch("/api/voice_msg?" + q, { method: "POST", headers: Bus.headers({ "Content-Type": clip.blob.type }), body: clip.blob })
       .then((r) => r.json());
   }
 
@@ -263,7 +264,7 @@ const Comms = (() => {
         if (cur === id) { el.pause(); cur = null; onEnd = null; emit(); return false; }
         speechStop();
         el.pause();
-        el.src = "/api/voice_msg?id=" + encodeURIComponent(id);
+        el.src = Bus.withKey("/api/voice_msg?id=" + encodeURIComponent(id));   // <audio> 带不了请求头，钥匙放 URL 里
         cur = id; onEnd = opts.onEnd || null; emit();
         try { await el.play(); return true; } catch (e) { cur = null; onEnd = null; emit(); throw e; }
       },

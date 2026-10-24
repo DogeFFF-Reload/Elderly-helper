@@ -3,53 +3,141 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2f6fed">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="CareMate">
+<link rel="manifest" href="/ui/family/manifest.webmanifest">
+<link rel="icon" href="/ui/family/icon-192.png">
+<link rel="apple-touch-icon" href="/ui/family/icon-192.png">
 <title>CareMate 家属端</title>
 <style>
   :root {
     --bg: #e9eef5; --card: #ffffff; --soft: #f4f7fb; --line: #e3e9f1;
     --text: #0f1b2d; --muted: #66758c; --dim: #94a3b8;
-    --primary: #2f6fed; --ok: #0f9f6e; --warn: #c27c0e; --danger: #d93636;
+    --primary: #2f6fed; --primary-d: #1f53c1; --ok: #0f9f6e; --warn: #c27c0e; --danger: #d93636;
+    --ease: cubic-bezier(.2, .8, .2, 1); --spring: cubic-bezier(.34, 1.56, .64, 1);
     font-family: "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
     font-size: 16px;
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--text); font-variant-numeric: tabular-nums; }
-  .phone { max-width: 430px; margin: 0 auto; min-height: 100vh; padding: 0 16px 40px; }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; touch-action: manipulation; }
+  svg { width: 1em; height: 1em; display: block; }
+  .phone { position: relative; max-width: 430px; margin: 0 auto; min-height: 100vh; padding: 0 14px 40px; }
   @media (min-width: 700px) {
     body { background: linear-gradient(160deg, #dfe7f3, #eef1f6); padding: 28px 0; }
-    .phone { min-height: calc(100vh - 56px); background: var(--bg); border-radius: 36px; box-shadow: 0 30px 80px rgba(15, 27, 45, .18), 0 0 0 10px #101828; padding-top: 6px; overflow: hidden; }
+    .phone { min-height: calc(100vh - 56px); background: var(--bg); border-radius: 36px; box-shadow: 0 30px 80px rgba(15, 27, 45, .18), 0 0 0 10px #101828;
+             padding-top: 6px; overflow: hidden; }
   }
 
-  header { display: flex; align-items: center; gap: 12px; padding: 18px 2px 14px; }
-  .avatar { width: 46px; height: 46px; border-radius: 50%; background: linear-gradient(135deg, #ffd9a8, #f7a76c); display: grid; place-items: center;
+  /* 顶栏 */
+  .appbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 10px; padding: 14px 2px 12px;
+            background: linear-gradient(var(--bg) 80%, transparent); }
+  .avatar { position: relative; width: 46px; height: 46px; border-radius: 50%; background: linear-gradient(135deg, #ffd9a8, #f7a76c); display: grid; place-items: center;
             font-weight: 700; color: #7a3d0b; font-size: 20px; flex: none; }
-  header h1 { margin: 0; font-size: 19px; }
-  header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
-  .live { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; margin-right: 5px; vertical-align: 1px; }
+  .avatar i { position: absolute; right: 0; bottom: 0; width: 12px; height: 12px; border-radius: 50%; background: var(--dim); border: 2px solid var(--bg); }
+  .avatar i.on { background: var(--ok); }
+  .ttl { min-width: 0; flex: 1; }
+  .ttl h1 { margin: 0; font-size: 19px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ttl p { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .live { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); display: inline-block; margin-right: 5px; vertical-align: 1px; }
   .live.off { background: var(--danger); }
+  .ic { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; flex: none; font-size: 19px; text-decoration: none;
+        transition: transform .2s var(--spring); }
+  .ic:active { transform: scale(.9); }
+  .ic.call { background: #22c55e; color: #fff; box-shadow: 0 6px 16px rgba(34, 197, 94, .35); }
+  .ic.call:disabled { background: #b8c4d4; box-shadow: none; }
+  .ic.e120 { background: #fde8e8; color: var(--danger); font-weight: 800; font-size: 13px; letter-spacing: .02em; }
+  .ic.gear { background: #dde5f0; color: var(--muted); }
 
-  .seg { display: flex; background: #dde5f0; border-radius: 12px; padding: 3px; margin-left: auto; flex: none; }
-  .seg button { border: 0; background: transparent; font: inherit; font-size: 14px; padding: 6px 12px; border-radius: 9px; color: var(--muted); cursor: pointer; }
-  .seg button.on { background: #fff; color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .banner { display: flex; align-items: center; gap: 10px; background: #fff7e6; color: #8a5300; border-radius: 14px; padding: 11px 13px; margin-bottom: 12px;
+            font-size: 14px; animation: drop .4s var(--ease); }
+  .banner b { font-weight: 700; }
+  .banner button { margin-left: auto; background: #8a5300; color: #fff; border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; flex: none; }
+  .banner.bad { background: #fde8e8; color: #9b1c1c; }
+  .banner.blue { background: #e8f0ff; color: #1e3a8a; } .banner.blue button { background: var(--primary); }
 
   .card { background: var(--card); border-radius: 18px; padding: 16px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(15, 27, 45, .05); }
   .card h2 { margin: 0 0 12px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
   .card h2 .sub { margin-left: auto; font-size: 13px; color: var(--muted); font-weight: 400; }
 
   /* 紧急卡 */
-  .alert { background: linear-gradient(160deg, #e5484d, #c22b2b); color: #fff; animation: shake .6s ease-in-out 2; }
-  .alert h2 { font-size: 20px; margin-bottom: 6px; }
-  .alert p { margin: 4px 0; opacity: .92; font-size: 14px; line-height: 1.5; }
-  .alert .steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 14px; }
-  .alert .steps span { background: rgba(255,255,255,.18); border-radius: 999px; padding: 3px 10px; font-size: 12px; }
-  .alert button { width: 100%; border: 0; border-radius: 14px; padding: 15px; font: inherit; font-size: 18px; font-weight: 700;
-                  background: #fff; color: #c22b2b; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.18); }
-  .alert button:active { transform: scale(.98); }
-  .done { background: linear-gradient(160deg, #12b981, #0b8a5f); color: #fff; }
-  .done p { margin: 4px 0 0; opacity: .92; font-size: 14px; }
-  .info { background: #eaf1ff; color: #1e3a8a; }
+  .alert { color: #fff; padding: 0; overflow: hidden; animation: shake .6s ease-in-out 2; }
+  .alert.asking { background: linear-gradient(160deg, #f59e0b, #c2410c); }
+  .alert.sos { background: linear-gradient(160deg, #e5484d, #b42323); }
+  .alert.done { background: linear-gradient(160deg, #12b981, #0b8a5f); animation: none; }
+  .alert.info { background: linear-gradient(160deg, #3b6fd8, #1f4fae); animation: none; }
+  .alert .pad { padding: 16px 16px 14px; }
+  .alert h2 { font-size: 19px; margin: 0 0 6px; line-height: 1.35; }
+  .alert p { margin: 4px 0; opacity: .93; font-size: 14px; line-height: 1.5; }
+  .alert .steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 2px; }
+  .alert .steps span { background: rgba(255, 255, 255, .18); border-radius: 999px; padding: 3px 10px; font-size: 12px; }
+  .alert .acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+  .alert .acts .wide { grid-column: 1 / -1; }
+  .abtn { display: flex; align-items: center; justify-content: center; gap: 7px; border-radius: 14px; padding: 13px; font-size: 16px; font-weight: 700;
+          background: rgba(255, 255, 255, .18); color: #fff; text-decoration: none; transition: transform .2s var(--spring); }
+  .abtn:active { transform: scale(.97); }
+  .abtn.solid { background: #fff; color: #b42323; box-shadow: 0 6px 18px rgba(0, 0, 0, .18); }
+  .abtn.green { background: #22c55e; }
+  .photo { position: relative; margin: 0; background: #1b1b1f; }
+  .photo img, .photo svg.sk { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
+  .photo svg.sk { background: radial-gradient(circle at 50% 40%, #2a2d36, #15161a); }
+  .photo figcaption { position: absolute; left: 10px; bottom: 10px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 11.5px; padding: 4px 9px;
+                      border-radius: 999px; backdrop-filter: blur(6px); }
+  .photo .tag { position: absolute; right: 10px; top: 10px; background: rgba(217, 54, 54, .9); color: #fff; font-size: 11px; padding: 3px 8px; border-radius: 6px; font-weight: 700; }
+  .countbar { height: 4px; background: rgba(255, 255, 255, .25); border-radius: 4px; overflow: hidden; margin-top: 10px; }
+  .countbar i { display: block; height: 100%; background: #fff; transition: width .25s linear; }
 
-  /* 健康 */
+  /* 对话 */
+  .chat { padding-bottom: 12px; }
+  .thread { display: flex; flex-direction: column; gap: 10px; max-height: 420px; overflow-y: auto; padding: 4px 2px 6px; scroll-behavior: smooth; }
+  .tsep { align-self: center; color: var(--dim); font-size: 11.5px; margin: 4px 0 -2px; }
+  .row { display: flex; gap: 8px; align-items: flex-end; max-width: 88%; animation: rise .35s var(--ease) both; }
+  .row.me { align-self: flex-end; flex-direction: row-reverse; }
+  .row .av { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; flex: none;
+             background: linear-gradient(135deg, #ffd9a8, #f7a76c); color: #7a3d0b; }
+  .row.me .av { background: linear-gradient(135deg, #cfe0ff, #8fb2f5); color: #1e3a8a; }
+  .bub { background: var(--soft); border-radius: 16px 16px 16px 4px; padding: 9px 12px; font-size: 15px; line-height: 1.5; word-break: break-word; }
+  .row.me .bub { background: var(--primary); color: #fff; border-radius: 16px 16px 4px 16px; }
+  .meta { font-size: 11px; color: var(--dim); margin-top: 3px; text-align: right; }
+  .row:not(.me) .meta { text-align: left; }
+  .vb { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+  .vb .pp { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--primary); color: #fff; font-size: 12px; flex: none; }
+  .row.me .vb .pp { background: #fff; color: var(--primary); }
+  .vb .wave { display: flex; align-items: center; gap: 2px; height: 22px; flex: 1; }
+  .vb .wave span { flex: 1; min-width: 2px; border-radius: 2px; background: currentColor; opacity: .35; }
+  .vb .d { font-size: 13px; font-weight: 700; flex: none; }
+  .vb.playing .pp { animation: pulse 1.3s var(--ease) infinite; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); flex: none; align-self: center; }
+  .pill { align-self: center; max-width: 92%; display: flex; align-items: center; gap: 7px; background: var(--soft); color: var(--muted); border-radius: 12px;
+          padding: 7px 11px; font-size: 13px; line-height: 1.45; animation: rise .35s var(--ease) both; }
+  .pill.red { background: #fde8e8; color: #9b1c1c; } .pill.amber { background: #fff4e0; color: #8a5300; } .pill.green { background: #e6f7f0; color: #0b6b4b; }
+  .pill.blue { background: #eaf1ff; color: #1e3a8a; }
+  .pill button { margin-left: 4px; color: var(--primary); font-weight: 700; font-size: 13px; }
+  .empty { color: var(--dim); font-size: 14px; padding: 18px 0; text-align: center; }
+
+  .composer { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+  .composer input { flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--soft); border-radius: 22px; padding: 11px 14px; font: inherit; }
+  .composer input:focus { outline: 2px solid rgba(47, 111, 237, .3); border-color: var(--primary); }
+  .mic { --lvl: 0; position: relative; width: 44px; height: 44px; border-radius: 50%; background: #eaf1ff; color: var(--primary); display: grid; place-items: center;
+         font-size: 20px; flex: none; touch-action: none; transition: transform .2s var(--spring), background .2s; }
+  .mic.on { background: var(--primary); color: #fff; transform: scale(1.12); box-shadow: 0 0 0 calc(4px + var(--lvl) * 14px) rgba(47, 111, 237, .22); }
+  .mic.cancel { background: var(--danger); box-shadow: 0 0 0 6px rgba(217, 54, 54, .2); }
+  .send { background: var(--primary); color: #fff; border-radius: 22px; padding: 11px 16px; font-weight: 700; flex: none; }
+  .quick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .quick button { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 5px 11px; font-size: 13px; color: var(--muted); }
+  .recbar { display: flex; align-items: center; gap: 10px; margin-top: 10px; background: #eaf1ff; color: #1e3a8a; border-radius: 14px; padding: 10px 12px;
+            animation: drop .25s var(--ease); }
+  .recbar.cancel { background: #fde8e8; color: #9b1c1c; }
+  .recbar .t { font-weight: 800; font-size: 18px; min-width: 44px; }
+  .recbar .h { font-size: 13.5px; flex: 1; }
+  .recbar button { border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 700; background: #fff; }
+  .recbar button.go { background: var(--primary); color: #fff; }
+  .eq { display: flex; gap: 2px; align-items: center; height: 18px; }
+  .eq span { width: 3px; border-radius: 2px; background: currentColor; height: calc(20% + var(--lvl, 0) * 80%); transition: height .08s linear; }
+
+  /* 健康 / 用药 / 回声（原有） */
   .bp-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
   .bp-row:first-of-type { border-top: 0; }
   .bp-row time { color: var(--muted); font-size: 13px; width: 44px; }
@@ -65,41 +153,14 @@
   .stat b { font-size: 20px; }
   .summary { font-size: 14px; line-height: 1.65; margin: 8px 0 0; }
   .note { color: var(--dim); font-size: 12px; margin-top: 8px; }
-  .empty { color: var(--dim); font-size: 14px; padding: 6px 0; }
-
-  /* 消息 */
-  .msgs { list-style: none; margin: 0 0 12px; padding: 0; max-height: 320px; overflow: auto; }
-  .msgs li { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; line-height: 1.5; }
-  .msgs li:first-child { border-top: 0; }
-  .msgs time { color: var(--dim); font-size: 12px; width: 40px; flex: none; padding-top: 2px; }
-  .msgs .k { flex: none; font-size: 11px; padding: 2px 7px; border-radius: 6px; height: fit-content; margin-top: 1px; font-weight: 600; }
-  .k.fall, .k.\31 20 { background: #fde8e8; color: var(--danger); }
-  .k.health { background: #fff4e0; color: var(--warn); }
-  .k.cancel, .k.safe { background: #e6f7f0; color: var(--ok); }
-  .k.med { background: #e6f7f0; color: var(--ok); }
-  .k.med_missed { background: #fff4e0; color: var(--warn); }
-  /* 用药卡 */
-  .med-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px dashed var(--line, #e2e7ef); }
+  .med-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px dashed var(--line); }
   .med-row:first-of-type { border-top: 0; }
   .med-row time { font-weight: 700; font-size: 15px; min-width: 3.2em; }
   .med-row .chip { margin-left: auto; }
-  .chip.taken { background: #e6f7f0; color: var(--ok); }
-  .chip.missed { background: #fde8e8; color: var(--danger); }
-  .chip.waiting { background: #eef3ff; color: var(--primary); }
-  .k.message, .k.call { background: #eaf1ff; color: var(--primary); }
-  .k.mine { background: #f1f5f9; color: var(--muted); }
-  .msgs li.mine .t { color: var(--muted); }
-  .compose { display: flex; gap: 8px; }
-  .compose input { flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--soft); border-radius: 12px; padding: 11px 12px; font: inherit; }
-  .compose input:focus { outline: 2px solid rgba(47, 111, 237, .35); border-color: var(--primary); }
+  .chip.taken { background: #e6f7f0; color: var(--ok); } .chip.missed { background: #fde8e8; color: var(--danger); } .chip.waiting { background: #eef3ff; color: var(--primary); }
   .btn { border: 0; border-radius: 12px; padding: 11px 16px; font: inherit; font-weight: 600; cursor: pointer; background: var(--primary); color: #fff; }
-  .btn:disabled { opacity: .5; }
   .btn.outline { background: transparent; color: var(--danger); border: 1.5px solid #f3b4b4; }
   .btn.wide { width: 100%; }
-  .quick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .quick button { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 5px 11px; font: inherit; font-size: 13px; color: var(--muted); cursor: pointer; }
-
-  /* 回声 */
   .echo p { font-size: 14px; color: var(--muted); line-height: 1.6; margin: 0 0 12px; }
   .echo .rules { list-style: none; padding: 0; margin: 0 0 14px; font-size: 13px; color: var(--muted); }
   .echo .rules li { padding: 3px 0; }
@@ -110,194 +171,404 @@
   .profile dd { margin: 0; }
   .on-badge { background: #e6f7f0; color: var(--ok); font-size: 12px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
 
+  /* 通话全屏 */
+  .ov { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; color: #fff; opacity: 0; pointer-events: none; transition: opacity .4s var(--ease);
+        background: radial-gradient(700px 600px at 50% 15%, #2c3e57, #0f1724); }
+  @media (min-width: 700px) { .ov { left: 50%; right: auto; width: 430px; transform: translateX(-50%); top: 34px; bottom: 34px; border-radius: 30px; } }
+  .ov.show { opacity: 1; pointer-events: auto; }
+  .ov.green { background: radial-gradient(700px 600px at 50% 15%, #1d6b48, #0a2a1d); }
+  .ov.red { background: radial-gradient(700px 600px at 50% 15%, #b3302e, #3d0c0c); }
+  .ov .in { display: grid; justify-items: center; gap: 10px; text-align: center; padding: 30px 22px; width: 100%; transform: translateY(12px); transition: transform .5s var(--ease); }
+  .ov.show .in { transform: none; }
+  .ov .kick { font-size: 14px; opacity: .85; letter-spacing: .06em; }
+  .ov .who { font-size: 34px; font-weight: 800; letter-spacing: .04em; }
+  .ov .sub { font-size: 15px; opacity: .85; line-height: 1.5; }
+  .ov .timer { font-size: 22px; font-weight: 700; }
+  .ov .warn { background: rgba(255, 255, 255, .14); padding: 6px 12px; border-radius: 999px; font-size: 13px; }
+  .bav { --lvl: 0; position: relative; width: 120px; height: 120px; border-radius: 50%; display: grid; place-items: center; font-size: 50px; font-weight: 800;
+         color: #7a3d0b; background: linear-gradient(140deg, #ffe0b3, #f6b06e); margin: 10px 0 14px; box-shadow: 0 16px 40px rgba(0, 0, 0, .3); }
+  .bav .rip, .bav .lvl { position: absolute; inset: 0; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .5); }
+  .bav .rip { animation: ripple 2.4s var(--ease) infinite; } .bav .rip:nth-child(2) { animation-delay: .8s; } .bav .rip:nth-child(3) { animation-delay: 1.6s; }
+  .bav .lvl { inset: -8px; border: 5px solid rgba(255, 255, 255, .35); transform: scale(calc(1 + var(--lvl) * .22)); transition: transform .08s linear; }
+  .ov .acts { display: flex; gap: 46px; margin-top: 28px; }
+  .rd { display: grid; justify-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+  .rd .c { width: 68px; height: 68px; border-radius: 50%; display: grid; place-items: center; font-size: 26px; transition: transform .2s var(--spring); }
+  .rd:active .c { transform: scale(.9); }
+  .rd.ok .c { background: #22c55e; animation: wiggle 1.6s ease-in-out infinite; }
+  .rd.no .c { background: #ef4444; } .rd.no .c svg { transform: rotate(135deg); }
+  .rd.mute .c { background: rgba(255, 255, 255, .16); } .rd.mute.on .c { background: #fff; color: #0f1b2d; }
+  .ov .ack { margin-top: 18px; background: #fff; color: #b42323; border-radius: 14px; padding: 13px 20px; font-weight: 800; font-size: 16px; }
+  .dots::after { content: ""; animation: dots 1.5s steps(4) infinite; }
+
+  /* 设置 */
+  .scrim { position: fixed; inset: 0; z-index: 40; background: rgba(15, 27, 45, .35); opacity: 0; pointer-events: none; transition: opacity .3s; }
+  .scrim.show { opacity: 1; pointer-events: auto; }
+  .sheet { position: fixed; z-index: 41; left: 50%; bottom: 0; width: min(430px, 100%); transform: translate(-50%, 105%); background: var(--card);
+           border-radius: 22px 22px 0 0; padding: 12px 18px 26px; transition: transform .4s var(--ease); box-shadow: 0 -16px 40px rgba(0, 0, 0, .16); }
+  .sheet.show { transform: translate(-50%, 0); }
+  .grab { width: 40px; height: 5px; border-radius: 99px; background: var(--line); margin: 0 auto 12px; }
+  .sheet h3 { margin: 0 0 12px; font-size: 17px; }
+  .field { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-top: 1px solid var(--line); font-size: 14.5px; }
+  .field:first-of-type { border-top: 0; }
+  .field label { flex: none; width: 82px; color: var(--muted); }
+  .field select { flex: 1; min-width: 0; font: inherit; padding: 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--soft); }
+  .seg { display: inline-flex; background: #dde5f0; border-radius: 12px; padding: 3px; }
+  .seg button { font-size: 14px; padding: 6px 14px; border-radius: 9px; color: var(--muted); }
+  .seg button.on { background: #fff; color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, .08); }
+  .switch { margin-left: auto; width: 46px; height: 28px; border-radius: 99px; background: #cbd5e1; position: relative; transition: background .2s; }
+  .switch::after { content: ""; position: absolute; left: 3px; top: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: transform .25s var(--spring); }
+  .switch.on { background: var(--ok); } .switch.on::after { transform: translateX(18px); }
+
+  .toast { position: fixed; z-index: 60; left: 50%; top: 16px; transform: translate(-50%, -150%); background: #0f1b2d; color: #fff; padding: 10px 16px; border-radius: 12px;
+           font-size: 14px; transition: transform .4s var(--ease); max-width: 90vw; box-shadow: 0 10px 26px rgba(0, 0, 0, .2); }
+  .toast.show { transform: translate(-50%, 0); }
+
   @keyframes shake { 0%, 100% { transform: none; } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+  @keyframes drop { from { opacity: 0; transform: translateY(-6px); } }
+  @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(47, 111, 237, .5); } 50% { box-shadow: 0 0 0 8px transparent; } }
+  @keyframes ripple { from { transform: scale(1); opacity: .7; } to { transform: scale(1.9); opacity: 0; } }
+  @keyframes wiggle { 0%, 70%, 100% { transform: rotate(0); } 75% { transform: rotate(-12deg); } 80% { transform: rotate(12deg); } 85% { transform: rotate(-8deg); } 90% { transform: rotate(6deg); } }
+  @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition-duration: .01ms !important; } }
 </style>
 </head>
 <body>
 <div class="phone">
-  <header>
-    <div class="avatar" id="avatar">妈</div>
-    <div>
-      <h1 id="title">妈妈的 CareMate</h1>
-      <p><span class="live" id="live"></span><span id="liveText">实时连接</span></p>
-    </div>
-    <div class="seg" id="seg"></div>
+  <header class="appbar">
+    <div class="avatar" id="avatar">妈<i id="elderDot"></i></div>
+    <div class="ttl"><h1 id="title">妈妈的 CareMate</h1><p><span class="live" id="live"></span><span id="liveText">连接中…</span></p></div>
+    <button class="ic call" id="callBtn" aria-label="语音通话"></button>
+    <a class="ic e120" id="btn120" href="tel:120" aria-label="拨打 120">120</a>
+    <button class="ic gear" id="gearBtn" aria-label="设置">⚙</button>
   </header>
-
+  <div id="banner"></div>
   <div id="alert"></div>
   <section class="card" id="med" hidden></section>
-  <section class="card" id="health"></section>
-
-  <section class="card">
-    <h2>💬 消息<span class="sub" id="msgSub"></span></h2>
-    <ul class="msgs" id="msgs"></ul>
-    <form class="compose" id="compose">
-      <input id="msgInput" maxlength="80" placeholder="给妈妈留言，会念给她听" autocomplete="off">
-      <button class="btn" type="submit">发送</button>
+  <section class="card chat">
+    <h2>💬 <span id="chatTitle">和妈妈的对话</span><span class="sub" id="chatSub"></span></h2>
+    <div class="thread" id="thread"></div>
+    <div class="recbar" id="recbar" hidden><div class="eq" id="recEq"><span></span><span></span><span></span><span></span><span></span></div>
+      <span class="t" id="recT">0:00</span><span class="h" id="recH">松开发送 · 手指移开取消</span>
+      <button id="recCancel" hidden>取消</button><button class="go" id="recSend" hidden>发送</button></div>
+    <form class="composer" id="compose">
+      <button type="button" class="mic" id="micBtn" aria-label="按住说话"></button>
+      <input id="msgInput" maxlength="80" placeholder="发文字，会念给妈妈听" autocomplete="off">
+      <button class="send" type="submit">发送</button>
     </form>
     <div class="quick" id="quick">
-      <button type="button">妈，记得按时吃药哈</button>
-      <button type="button">晚上早点睡哈</button>
-      <button type="button">周末回来看您</button>
+      <button type="button">记得按时吃药哈</button><button type="button">晚上早点睡哈</button><button type="button">周末回来看您</button>
     </div>
   </section>
-
+  <section class="card" id="health"></section>
   <section class="card echo" id="echo"></section>
 </div>
 
+<div class="ov" id="ov"><div class="in" id="ovIn"></div></div>
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="sheet"><div class="grab"></div><h3>设置</h3>
+  <div class="field"><label>我是</label><div class="seg" id="seg"></div></div>
+  <div class="field"><label>新语音</label><span style="color:var(--muted);font-size:13px">收到后自动播放</span><button class="switch" id="autoplaySw" aria-label="自动播放"></button></div>
+  <div class="field"><label>麦克风</label><select id="micSel"></select></div>
+  <div class="field"><label>听筒</label><select id="spkSel"></select></div>
+  <div class="field" id="installRow" hidden><label>桌面图标</label><button class="btn" id="installBtn">添加到桌面</button></div>
+  <p class="note">同一台电脑上同时开老人端和家属端演示时，家属端的麦克风和听筒请选耳机，不然会啸叫。</p>
+</div>
+<div class="toast" id="toast"></div>
+
 <script src="/ui/shared/bus.js"></script>
+<script src="/ui/shared/comms.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
-const KIND = { fall: "跌倒", cancel: "已解除", "120": "120", health: "健康", message: "留言", safe: "报平安", call: "请回电", mine: "我",
-               med: "用药", med_missed: "漏服" };
+const esc = UI.esc;
+const ICON = {
+  phone: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25c1.1.37 2.3.57 3.6.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1L6.6 10.8z"/></svg>',
+  mic: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 0 0-7 0v6A3.5 3.5 0 0 0 12 15zm6-3.5a1 1 0 1 0-2 0 4 4 0 0 1-8 0 1 1 0 1 0-2 0 6 6 0 0 0 5 5.9V20H8.5a1 1 0 1 0 0 2h7a1 1 0 1 0 0-2H13v-2.6a6 6 0 0 0 5-5.9z"/></svg>',
+  play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.1v13.8a1 1 0 0 0 1.5.86l11-6.9a1 1 0 0 0 0-1.72l-11-6.9A1 1 0 0 0 8 5.1z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h3v14H7zM14 5h3v14h-3z"/></svg>',
+};
+$("callBtn").innerHTML = ICON.phone;
+$("micBtn").innerHTML = ICON.mic;
+if (location.pathname === "/ui/family") history.replaceState(null, "", "/ui/family/" + location.search);   // 桌面图标的作用域
+
 let S = null;
 let me = new URLSearchParams(location.search).get("as");
-if (!me) { try { me = localStorage.getItem("cm-family-as"); } catch (e) {} }
-me = me || "daughter";
+const store = { get: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+                set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
+me = me || store.get("cm-family-as") || "daughter";
+store.set("cm-family-as", me);
+let autoplay = store.get("cm-autoplay") !== "0";
+Comms.loadPrefs("family:" + me);
+const ring = Comms.ringer();
+const call = Comms.callClient({ party: me, onChange: () => renderCall() });
 
-function setMe(id) {
-  me = id;
-  alertKey = "";
-  try { localStorage.setItem("cm-family-as", id); } catch (e) {}
-  if (S) render(S);
-}
-
+let toastTimer = 0;
+function toast(t, ms = 2600) { $("toast").textContent = t; $("toast").classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => $("toast").classList.remove("show"), ms); }
 async function act(path, body, btn) {
   if (btn) btn.disabled = true;
-  try { await Bus.post(path, body); } finally { if (btn) btn.disabled = false; }
+  try { const r = await Bus.post(path, body); if (r && r.ok === false && r.error) toast(r.error); return r; }
+  catch (e) { toast("网络断了，稍后再试"); return { ok: false }; }
+  finally { if (btn) btn.disabled = false; }
 }
+const nm = (id) => id === "elder" ? (S ? S.elder_title : "妈妈") : UI.contactName(S, id);
+const off = () => (S && S.med && S.med.utc_offset != null ? S.med.utc_offset : 8);
+const bj = (ts) => new Date(ts * 1000 + off() * 3600000);
+const pad = (n) => String(n).padStart(2, "0");
+const hhmm = (ts) => { const d = bj(ts); return pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()); };
 
+// ---------- 声音解锁 / 系统通知 / 桌面图标 ----------
+let unlocked = false, installEvt = null, denied = null;
+function unlock() {
+  if (unlocked) return;
+  unlocked = true;
+  Comms.audio();
+  if (window.Notification && Notification.permission === "default") Notification.requestPermission().catch(() => {});
+  renderBanner();
+}
+document.addEventListener("pointerdown", unlock, { once: false, capture: true });
+setTimeout(() => { if (Comms.audio().state === "running") { unlocked = true; renderBanner(); } }, 300);
+window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvt = e; $("installRow").hidden = false; renderBanner(); });
+$("installBtn").onclick = async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; $("installRow").hidden = true; renderBanner(); };
+if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("/ui/family/sw.js", { scope: "/ui/family/" }).catch(() => {});
+async function notify(title, body) {   // 页面在后台时弹系统通知（要先授权）
+  if (!document.hidden || !window.Notification || Notification.permission !== "granted") return;
+  try {
+    const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration("/ui/family/");
+    if (reg) reg.showNotification(title, { body, icon: "/ui/family/icon-192.png", tag: title, renotify: true });
+    else new Notification(title, { body, icon: "/ui/family/icon-192.png" });
+  } catch (e) {}
+}
+function renderBanner() {
+  let html = "";
+  if (denied) html = `<div class="banner bad">🔑 <span>${esc(denied)}</span></div>`;
+  else if (!unlocked) html = `<div class="banner">🔔 <span><b>点一下这里</b>，打开来电铃声和语音自动播放</span><button>开启</button></div>`;
+  else if (installEvt) html = `<div class="banner blue">📲 <span>添加到桌面，像 App 一样一点就开</span><button id="bInstall">添加</button></div>`;
+  $("banner").innerHTML = html;
+  if ($("bInstall")) $("bInstall").onclick = () => $("installBtn").click();
+}
+renderBanner();
+
+// ---------- 设置 ----------
+function openSheet() { $("sheet").classList.add("show"); $("scrim").classList.add("show"); fillDevices(); }
+function closeSheet() { $("sheet").classList.remove("show"); $("scrim").classList.remove("show"); }
+$("gearBtn").onclick = openSheet;
+$("scrim").onclick = closeSheet;
+$("autoplaySw").classList.toggle("on", autoplay);
+$("autoplaySw").onclick = () => { autoplay = !autoplay; store.set("cm-autoplay", autoplay ? "1" : "0"); $("autoplaySw").classList.toggle("on", autoplay); };
+async function fillDevices() {
+  const { mics, speakers } = await Comms.devices();
+  const p = Comms.prefs();
+  const opts = (list, cur, label) => `<option value="">系统默认</option>` +
+    list.filter((d) => d.deviceId && d.deviceId !== "default").map((d, i) => `<option value="${esc(d.deviceId)}"${d.deviceId === cur ? " selected" : ""}>${esc(d.label || label + " " + (i + 1))}</option>`).join("");
+  $("micSel").innerHTML = opts(mics, p.mic, "麦克风");
+  $("spkSel").innerHTML = opts(speakers, p.speaker, "扬声器");
+  $("spkSel").disabled = !("setSinkId" in HTMLMediaElement.prototype);
+}
+$("micSel").onchange = () => Comms.setPrefs({ mic: $("micSel").value });
+$("spkSel").onchange = () => Comms.setPrefs({ speaker: $("spkSel").value });
 function renderSeg(s) {
-  $("seg").innerHTML = s.contacts.map((c) => `<button data-id="${c.id}" class="${c.id === me ? "on" : ""}">${UI.esc(c.name)}</button>`).join("");
-  $("seg").querySelectorAll("button").forEach((b) => (b.onclick = () => setMe(b.dataset.id)));
+  $("seg").innerHTML = s.contacts.map((c) => `<button data-id="${c.id}" class="${c.id === me ? "on" : ""}">${esc(c.name)}</button>`).join("");
+  $("seg").querySelectorAll("button").forEach((b) => (b.onclick = () => { if (b.dataset.id !== me) location.search = "?as=" + b.dataset.id; }));
 }
 
-// 紧急卡只在“状态”变化时重建；倒计时只改文字，保证按钮元素稳定、不吞点击
+// ---------- 打电话 / 120 ----------
+$("callBtn").onclick = async () => {
+  unlock();
+  const r = await call.start("elder");
+  if (!r.ok) toast(r.error || "现在打不通");
+};
+$("btn120").addEventListener("click", () => act("/api/dial120", { by: me }));   // 手机上 tel:120 打开拨号盘（要自己按拨出），这里只记一笔
+
+// ---------- 紧急卡：摔倒一识别就显示，带现场照片 ----------
+const FALLEN_SKETCH = { head: [0.22, 0.8], neck: [0.3, 0.81], l_shoulder: [0.32, 0.76], r_shoulder: [0.32, 0.86], l_elbow: [0.4, 0.72], r_elbow: [0.27, 0.9],
+  l_wrist: [0.47, 0.76], r_wrist: [0.2, 0.88], l_hip: [0.52, 0.79], r_hip: [0.52, 0.86], l_knee: [0.64, 0.78], r_knee: [0.65, 0.87], l_ankle: [0.78, 0.8], r_ankle: [0.77, 0.88] };
+const BONES = [["l_shoulder", "r_shoulder"], ["l_shoulder", "l_hip"], ["r_shoulder", "r_hip"], ["l_hip", "r_hip"], ["head", "neck"], ["l_shoulder", "l_elbow"],
+  ["l_elbow", "l_wrist"], ["l_hip", "l_knee"], ["l_knee", "l_ankle"], ["r_shoulder", "r_elbow"], ["r_elbow", "r_wrist"], ["r_hip", "r_knee"], ["r_knee", "r_ankle"]];
+function sketch(kp) {
+  const P = (k) => kp[k] && [kp[k][0] * 400, kp[k][1] * 300];
+  const lines = BONES.map(([a, b]) => { const p = P(a), q = P(b); return p && q ? `<line x1="${p[0]}" y1="${p[1]}" x2="${q[0]}" y2="${q[1]}"/>` : ""; }).join("");
+  const head = P("head");
+  return `<svg class="sk" viewBox="0 0 400 300"><line x1="0" y1="270" x2="400" y2="270" stroke="#3a3d47" stroke-width="2"/>
+    <g stroke="#f59e0b" stroke-width="7" stroke-linecap="round">${lines}</g>${head ? `<circle cx="${head[0]}" cy="${head[1]}" r="12" fill="#f59e0b"/>` : ""}</svg>`;
+}
+function scene(s) {
+  const p = s.fall_photo;
+  if (p) return `<figure class="photo"><img src="${Bus.withKey("/api/fall_photo?id=" + p.id)}" alt="摔倒现场照片"><span class="tag">现场照片</span>
+    <figcaption>${hhmm(p.ts)} 拍摄 · 警报解除后自动删除</figcaption></figure>`;
+  const sk = s.skeleton || {};
+  if (sk.keypoints) return `<figure class="photo">${sketch(sk.keypoints)}<figcaption>骨架示意（没有收到照片）</figcaption></figure>`;
+  return `<figure class="photo">${sketch(FALLEN_SKETCH)}<figcaption>示意图 · 摄像头没有传来照片</figcaption></figure>`;
+}
 let alertKey = "";
 function renderAlert(s) {
-  const g = s.guard, title = s.elder_title, myName = UI.contactName(s, me);
+  const g = s.guard, title = s.elder_title, myName = nm(me), room = g.room || "家里";
   const notified = g.notified.includes(me);
-  const key = JSON.stringify([me, g.state, notified, g.room, g.acked_by]);
+  const key = JSON.stringify([me, g.state, notified, g.room, g.acked_by, s.fall_photo && s.fall_photo.id, !!(s.skeleton && s.skeleton.keypoints)]);
   if (key === alertKey) return;
+  const was = alertKey;
   alertKey = key;
-  if (g.state === "SOS" && notified) {
-    const fallNote = [...s.notifications].reverse().find((n) => n.contact === me && n.kind === "fall");
-    $("alert").innerHTML = `<section class="card alert">
-      <h2>🚨 ${UI.esc(title)}在${UI.esc(g.room || "家里")}可能摔倒了</h2>
-      <p>${fallNote ? UI.time(fallNote.ts, false) + " · " : ""}询问${g.wait ? " " + g.wait + " 秒" : ""}没有得到“没事”的回应</p>
-      <div class="steps"><span>✓ 机械臂已按下 SOS</span><span>✓ 手#2 正在轻握安抚</span><span>⏳ 等你确认</span></div>
-      <button id="ackBtn">我收到了，马上到</button>
-      <p style="margin-top:10px;font-size:12px">点了之后，${UI.esc(title)}那边会显示“${UI.esc(myName)}马上到”。<span id="ackLeft"></span></p>
-    </section>`;
-    $("ackBtn").onclick = (e) => act("/api/family/ack", { contact: me }, e.target);
-  } else if (g.state === "HELP_COMING" && g.acked_by === me) {
-    $("alert").innerHTML = `<section class="card done"><h2>✓ 你已确认，正在赶去</h2>
-      <p>${UI.esc(title)}那边：手#1 举牌“家人已收到”，手#2 轻握并举牌“别怕，${UI.esc(myName)}马上到”。路上可以先打个电话。</p></section>`;
-  } else if (g.state === "HELP_COMING" && notified) {
-    $("alert").innerHTML = `<section class="card info"><h2>${UI.esc(UI.contactName(s, g.acked_by))}已确认前往</h2>
-      <p style="margin:0;font-size:14px">${UI.esc(title)}在${UI.esc(g.room || "家里")}可能摔倒了，已有家人在路上。</p></section>`;
-  } else {
-    $("alert").innerHTML = "";
+  const callB = `<button class="abtn green" data-act="call">${ICON.phone} 打给${esc(title)}</button>`;
+  const b120 = `<a class="abtn" href="tel:120" data-act="120">🚑 拨打 120</a>`;
+  let html = "";
+  if (g.state === "ASKING") {
+    html = `<section class="card alert asking">${scene(s)}<div class="pad"><h2>⚠️ ${esc(title)}在${esc(room)}可能摔倒了</h2>
+      <p>CareMate 正在问${esc(title)}情况，<b id="askLeft"></b>没有回应会自动按 SOS 并呼叫你。</p><div class="countbar"><i id="askBar"></i></div>
+      <div class="acts">${callB}${b120}</div></div></section>`;
+  } else if (g.state === "SOS") {
+    html = `<section class="card alert sos">${scene(s)}<div class="pad"><h2>🚨 ${esc(title)}在${esc(room)}摔倒了，没有回应</h2>
+      <div class="steps"><span>✓ 机械臂已按下 SOS</span><span>✓ 手#2 轻握安抚</span><span>${notified ? "⏳ 等你确认" : "⏳ 等" + esc(nm(g.contact)) + "确认"}</span></div>
+      <div class="acts">${notified ? `<button class="abtn solid wide" data-act="ack">我收到了，马上到</button>` : ""}${callB}${b120}</div>
+      <p style="margin-top:10px;font-size:12px" id="ackLeft"></p></div></section>`;
+  } else if (g.state === "HELP_COMING") {
+    const mine = g.acked_by === me;
+    html = `<section class="card alert ${mine ? "done" : "info"}">${scene(s)}<div class="pad"><h2>${mine ? "✓ 你已确认，正在赶去" : esc(nm(g.acked_by)) + "已确认前往"}</h2>
+      <p>${mine ? `${esc(title)}那边：手#1 举牌“家人已收到”，手#2 举牌“别怕，${esc(myName)}马上到”。` : `${esc(title)}在${esc(room)}可能摔倒了，已有家人在路上。`}</p>
+      <div class="acts">${callB}${b120}</div></div></section>`;
   }
-}
-
-function renderHealth(s) {
-  const t = s.health.today;
-  const rows = t.bp.length
-    ? [...t.bp].reverse().map((r) => `<div class="bp-row"><time>${r.time}</time><b>${r.sys}/${r.dia}</b><span class="unit">mmHg${r.pulse ? " · 心率 " + r.pulse : ""}</span>
-        <span class="chip ${r.flag === "偏高" ? "high" : "normal"}">${r.flag}</span></div>`).join("")
-    : `<div class="empty">今天还没有血压记录</div>`;
-  $("health").innerHTML = `<h2>❤️ 健康日报<span class="sub">${t.date}</span></h2>
-    <div class="stats">
-      <div class="stat"><small>血压次数</small><b>${t.bp.length}</b>${t.high_count ? ` <span class="chip high">${t.high_count} 次偏高</span>` : ""}</div>
-      <div class="stat"><small>喝水</small><b>${t.water_cups}</b> 杯</div>
-    </div>
-    ${rows}
-    <p class="summary">${UI.esc(t.summary)}</p>
-    <div class="note">${UI.esc(t.note)} 数据由${UI.esc(s.elder_title)}口述、复述确认后记录。</div>`;
-}
-
-// 用药：开关打开才显示。今天每一顿：提醒时间、状态（等打卡 / 已递药 / 已服 / 漏服）
-function renderMed(s) {
-  const m = s.med, box = $("med");
-  box.hidden = !(m && m.enabled);
-  if (box.hidden) return;
-  const chip = (d) => d.state === "taken" ? `<span class="chip taken">✓ 已服 ${UI.esc(d.taken_at)}</span>`
-    : d.state === "missed" ? `<span class="chip missed">⚠ 漏服</span>`
-    : `<span class="chip waiting">${d.state === "delivered" ? "已递药，等打卡" : "已提醒，等打卡"}</span>`;
-  const rows = m.doses.length
-    ? [...m.doses].reverse().map((d) => `<div class="med-row"><time>${UI.esc(d.slot)}</time><span>${UI.esc(d.name)}</span>${chip(d)}</div>`).join("")
-    : `<div class="empty">今天还没到吃药时间</div>`;
-  $("med").innerHTML = `<h2>💊 用药<span class="sub">每天 ${m.times.map(UI.esc).join(" / ")}${m.utc_offset === 8 ? "（北京时间）" : ""}</span></h2>${rows}
-    <div class="note">到点 CareMate 提醒，${UI.esc(s.elder_title)}说“吃了”才打卡；提醒后 ${Math.round(m.missed_after / 60) || 1} 分钟没打卡会通知你。</div>`;
-}
-
-function renderMsgs(s) {
-  const items = s.notifications.filter((n) => n.contact === me)
-    .map((n) => ({ ts: n.ts, kind: n.kind, text: n.text }))
-    .concat(s.messages.filter((m) => m.from === me).map((m) => ({ ts: m.ts, kind: "mine", text: m.text })))
-    .sort((a, b) => b.ts - a.ts);
-  $("msgSub").textContent = items.length ? items.length + " 条" : "";
-  $("msgs").innerHTML = items.length
-    ? items.map((i) => `<li class="${i.kind === "mine" ? "mine" : ""}"><time>${UI.time(i.ts, false)}</time>
-        <span class="k ${i.kind}">${KIND[i.kind] || i.kind}</span><span class="t">${UI.esc(i.text)}</span></li>`).join("")
-    : `<li class="empty">还没有消息</li>`;
-  $("msgInput").placeholder = `给${s.elder_title}留言，会念给她听`;
-}
-
-function renderEcho(s) {
-  const e = s.echo[me], c = s.contacts.find((x) => x.id === me);
-  if (e && e.authorized) {
-    const st = e.style;
-    $("echo").innerHTML = `<h2>🗣️ 回声代聊 <span class="on-badge">已开启</span></h2>
-      <p>${UI.esc(s.elder_title)}想你的时候，CareMate 会用你留言的说话风格替你说两句，开口一定先说“让我替${UI.esc(c.pron)}说两句”。</p>
-      <dl class="profile">
-        <div><dt>风格档案</dt><dd>从你的 ${e.sample_count} 条留言里学到（只有文字）</dd></div>
-        <div><dt>称呼</dt><dd>${UI.esc(st.address || "—")}</dd></div>
-        <div><dt>口头禅</dt><dd>${st.catchphrases.length ? st.catchphrases.map(UI.esc).join(" / ") : "—（多发几条留言就会学到）"}</dd></div>
-        <div><dt>语气词</dt><dd>${UI.esc(st.particle || "—")}</dd></div>
-      </dl>
-      <button class="btn outline wide" id="revokeBtn">一键收回（立即清空风格档案）</button>`;
-    $("revokeBtn").onclick = (ev) => act("/api/echo/revoke", { contact: me }, ev.target);
-  } else {
-    $("echo").innerHTML = `<h2>🗣️ 回声代聊</h2>
-      <p>你忙的时候，让 CareMate 用你平时留言的口吻陪${UI.esc(s.elder_title)}说两句。</p>
-      <ul class="rules">
-        <li>只学文字风格（称呼、口头禅），不采集声音，不做声音克隆</li>
-        <li>开口必说“让我替${UI.esc(c.pron)}说两句”，不冒充你</li>
-        <li>只复用你说过的话，不替你做新的承诺</li>
-        <li>随时一键收回，立即清空</li>
-      </ul>
-      <button class="btn wide" id="authBtn">我同意，开启回声代聊</button>`;
-    $("authBtn").onclick = (ev) => act("/api/echo/authorize", { contact: me }, ev.target);
+  $("alert").innerHTML = html;
+  if (html && !was.includes(g.state)) {
+    Comms.chime("alert");
+    if (navigator.vibrate) navigator.vibrate([300, 120, 300, 120, 600]);
+    notify(g.state === "ASKING" ? "⚠️ " + title + "可能摔倒了" : "🚨 " + title + "摔倒了，没有回应", "点开查看现场照片");
   }
+  $("alert").querySelectorAll("[data-act]").forEach((b) => (b.onclick = (e) => {
+    const a = b.dataset.act;
+    if (a === "call") $("callBtn").click();
+    if (a === "ack") act("/api/family/ack", { contact: me }, b);
+    if (a === "120") act("/api/dial120", { by: me });
+  }));
 }
-
+let askDeadline = 0, askTotal = 1;
 function renderCountdown(s) {
-  const el = $("ackLeft"), left = s.guard.ack_remaining;
-  if (el) el.textContent = left != null ? Math.ceil(left) + " 秒内没人确认会通知下一位家人。" : "其他家人也已收到通知。";
+  const g = s.guard;
+  if (g.state === "ASKING") { askDeadline = Date.now() + (g.remaining || 0) * 1000; askTotal = g.wait || 1; }
+  const el = $("ackLeft");
+  if (el) el.textContent = g.ack_remaining != null ? Math.ceil(g.ack_remaining) + " 秒内没人确认会通知下一位家人。" : "其他家人也已收到通知。";
 }
+setInterval(() => {
+  const l = $("askLeft"), b = $("askBar");
+  if (!l) return;
+  const left = Math.max(0, (askDeadline - Date.now()) / 1000);
+  l.textContent = Math.ceil(left) + " 秒内";
+  b.style.width = (100 * left / askTotal) + "%";
+}, 200);
 
-function render(s) {
-  S = s;
-  $("title").textContent = s.elder_title + "的 CareMate";
-  $("avatar").textContent = s.elder_title.slice(0, 1);
-  renderSeg(s); renderAlert(s); renderMed(s); renderHealth(s); renderMsgs(s); renderEcho(s);
+// ---------- 对话：文字、语音、通知、通话记录在一条时间线 ----------
+const PILL = { fall_alert: ["amber", "⚠️"], fall: ["red", "🚨"], cancel: ["green", "✅"], "120": ["red", "🚑"], call: ["blue", "📞"], health: ["amber", "❤️"],
+               safe: ["green", "🙂"], med: ["green", "💊"], med_missed: ["amber", "💊"] };
+function threadItems(s) {
+  const items = [];
+  for (const m of s.messages) {
+    if (m.from === me && m.to === "elder") items.push({ ts: m.ts, kind: "me", m });
+    else if (m.from === "elder" && m.to === me) items.push({ ts: m.ts, kind: "elder", m });
+  }
+  for (const n of s.notifications) if (n.contact === me && n.kind !== "message" && n.kind !== "voice") items.push({ ts: n.ts, kind: "pill", n });
+  for (const c of (s.comms && s.comms.history) || []) {
+    if ((c.from === me || c.to === me) && c.answered_ts) items.push({ ts: c.ended_ts || c.ts, kind: "callog", c });
+  }
+  return items.sort((a, b) => a.ts - b.ts).slice(-60);
 }
-
-// 避免每 400ms 重绘打断点击：只有内容变了才重绘
-let lastKey = "";
-Bus.on(({ state, online }) => {
-  $("live").classList.toggle("off", !online);
-  $("liveText").textContent = online ? "实时连接" : "连接中断，正在重连…";
-  if (!online) return;
-  const g = state.guard;
-  const key = JSON.stringify([me, g.state, g.notified, g.acked_by, state.health.today, state.notifications, state.messages, state.echo]);
-  if (key !== lastKey) { lastKey = key; render(state); }
-  renderCountdown(state);
+function voiceEl(m, mine) {
+  const n = Math.max(8, Math.min(22, Math.round(6 + m.dur)));
+  const bars = Comms.bars(m.voice_id, n).map((h) => `<span style="height:${h}%"></span>`).join("");
+  return `<div class="vb" data-voice="${m.voice_id}" data-dur="${m.dur}"><span class="pp">${ICON.play}</span><span class="wave">${bars}</span><span class="d">${Comms.mmss(m.dur)}</span></div>`;
+}
+let threadKey = "", knownVoices = null;
+function renderThread(s) {
+  const items = threadItems(s);
+  const key = JSON.stringify([me, items.map((i) => [i.kind, i.ts, i.m && i.m.heard, i.m && i.m.delivered_box])]);
+  const unheard = items.filter((i) => i.kind === "elder" && i.m.kind === "voice" && !i.m.heard).length;
+  $("chatSub").textContent = unheard ? unheard + " 条语音没听" : "";
+  $("chatTitle").textContent = "和" + s.elder_title + "的对话";
+  if (key === threadKey) return;
+  threadKey = key;
+  const box = $("thread");
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  let last = 0;
+  box.innerHTML = items.length ? items.map((i) => {
+    const sep = i.ts - last > 300 ? `<div class="tsep">${hhmm(i.ts)}</div>` : "";
+    last = i.ts;
+    if (i.kind === "pill") {
+      const [cls, icon] = PILL[i.n.kind] || ["", "•"];
+      return sep + `<div class="pill ${cls}">${icon}<span>${esc(i.n.text)}</span>${i.n.kind === "call" ? '<button data-act="call">回电</button>' : ""}</div>`;
+    }
+    if (i.kind === "callog") return sep + `<div class="pill blue">📞<span>语音通话 ${Comms.mmss((i.c.ended_ts || i.c.answered_ts) - i.c.answered_ts)}</span></div>`;
+    const m = i.m, mine = i.kind === "me";
+    const body = m.kind === "voice" ? voiceEl(m, mine) : esc(m.text);
+    const meta = mine ? (m.kind === "voice" ? (m.heard ? "✓ 已听" : m.delivered_box ? "已送到床头" : "未听") : "已念给" + esc(s.elder_title) + "听") : "";
+    return sep + `<div class="row ${mine ? "me" : ""}"><span class="av">${mine ? esc(nm(me).slice(0, 1)) : esc(s.elder_title.slice(0, 1))}</span>
+      <div><div class="bub">${body}</div>${meta ? `<div class="meta">${meta}</div>` : ""}</div>${!mine && m.kind === "voice" && !m.heard ? '<i class="dot"></i>' : ""}</div>`;
+  }).join("") : `<div class="empty">还没有消息。按住左下角的话筒说句话吧</div>`;
+  if (nearBottom || !box.dataset.ready) box.scrollTop = box.scrollHeight;
+  box.dataset.ready = "1";
+  markPlaying(Comms.player.current());
+}
+$("thread").addEventListener("click", (e) => {
+  const v = e.target.closest("[data-voice]"), a = e.target.closest("[data-act]");
+  if (v) play(Number(v.dataset.voice));
+  if (a && a.dataset.act === "call") $("callBtn").click();
 });
-Bus.start();
+function markPlaying(id) {
+  document.querySelectorAll(".vb").forEach((b) => {
+    const on = Number(b.dataset.voice) === id;
+    b.classList.toggle("playing", on);
+    b.querySelector(".pp").innerHTML = on ? ICON.pause : ICON.play;
+  });
+}
+Comms.player.on(markPlaying);
+(function progress() {
+  const id = Comms.player.current();
+  document.querySelectorAll(".vb").forEach((b) => {
+    const on = Number(b.dataset.voice) === id, p = on ? Comms.player.position() / (Number(b.dataset.dur) || 1) : 0;
+    const bars = b.querySelectorAll(".wave span");
+    bars.forEach((x, i) => (x.style.opacity = on && i / bars.length <= p ? 1 : 0.35));
+  });
+  requestAnimationFrame(progress);
+})();
+async function play(id) {
+  if (call.phase !== "idle") return toast("通话中，先不放留言");
+  const m = S && S.messages.find((x) => x.voice_id === id && x.to === me);
+  try { await Comms.player.play(id, { onEnd: (vid) => { if (m) Bus.post("/api/voice_msg/heard", { id: vid, party: me }).catch(() => {}); } }); }
+  catch (e) { toast("这条语音放不出来"); }
+}
+// 老人发来的新语音：不用点，响一声自动播放（设置里可关）
+function autoVoices(s) {
+  const mineIn = s.messages.filter((m) => m.kind === "voice" && m.from === "elder" && m.to === me);
+  if (knownVoices === null) { knownVoices = new Set(mineIn.map((m) => m.voice_id)); return; }
+  for (const m of mineIn) {
+    if (knownVoices.has(m.voice_id)) continue;
+    knownVoices.add(m.voice_id);
+    Comms.chime("message");
+    notify(s.elder_title + "发来一段语音留言", Comms.mmss(m.dur) + " · 点开就能听");
+    if (autoplay && unlocked && call.phase === "idle" && !Comms.player.current()) setTimeout(() => play(m.voice_id), 600);
+    else toast(s.elder_title + "发来一段语音，点一下就能听");
+  }
+}
 
+// ---------- 发消息：按住说话 / 文字 ----------
+const talk = Comms.talkButton($("micBtn"), {
+  send: (clip) => Comms.sendVoice(me, "elder", clip),
+  onState(st, info) {
+    const rec = st === "hold" || st === "toggle";
+    const btn = $("micBtn");
+    btn.classList.toggle("on", rec);
+    btn.classList.toggle("cancel", st === "hold" && info.cancel);
+    btn.style.setProperty("--lvl", rec ? info.level.toFixed(2) : 0);
+    $("recbar").hidden = !(rec || st === "arming" || st === "sending");
+    $("recbar").classList.toggle("cancel", st === "hold" && info.cancel);
+    $("recEq").style.setProperty("--lvl", rec ? info.level.toFixed(2) : 0);
+    $("recT").textContent = Comms.mmss(info.secs);
+    const left = Math.max(0, info.max - info.secs);
+    $("recH").textContent = st === "arming" ? "正在打开麦克风…" : st === "sending" ? "发送中…"
+      : st === "toggle" ? (left < 10 ? `还能说 ${Math.ceil(left)} 秒` : "说完点“发送”")
+      : info.cancel ? "松开手，这段不发" : (left < 10 ? `还能说 ${Math.ceil(left)} 秒` : "松开发送 · 手指移开取消");
+    $("recCancel").hidden = $("recSend").hidden = st !== "toggle";
+    if (st === "sent") toast("语音发给" + (S ? S.elder_title : "妈妈") + "了");
+    if (st === "error") toast(info.error);
+  },
+});
+$("recCancel").onclick = () => talk.cancel();
+$("recSend").onclick = () => talk.send();
 $("compose").onsubmit = async (e) => {
   e.preventDefault();
   const text = $("msgInput").value.trim();
@@ -305,7 +576,140 @@ $("compose").onsubmit = async (e) => {
   $("msgInput").value = "";
   await act("/api/family/message", { contact: me, text });
 };
-$("quick").querySelectorAll("button").forEach((b) => (b.onclick = () => { $("msgInput").value = b.textContent; $("msgInput").focus(); }));
+$("quick").querySelectorAll("button").forEach((b) => (b.onclick = () => { $("msgInput").value = (S ? S.elder_title.slice(0, 1) : "妈") + "，" + b.textContent; $("msgInput").focus(); }));
+
+// ---------- 通话全屏 ----------
+let ovKey = "";
+function setOv(key, cls, html, bind) {
+  if (key === ovKey) return;
+  ovKey = key;
+  if (!key) { $("ov").classList.remove("show"); return; }
+  $("ov").className = "ov " + cls;
+  $("ovIn").innerHTML = html;
+  requestAnimationFrame(() => $("ov").classList.add("show"));
+  if (bind) bind();
+}
+function endText(e) {
+  const t = S ? S.elder_title : "妈妈";
+  return ({ declined: e.mine ? t + "现在不方便接" : "已挂断", cancelled: e.mine ? "已取消" : t + "已挂断",
+            missed: e.mine ? t + "暂时没接" : "未接来电", dropped: "连接断开了", offline: t + "那边断开了", reset: "通话已结束",
+            elsewhere: "已在别处接听", replaced: "已转给其他家人" })[e.reason] || (e.secs ? "通话结束 · " + Comms.mmss(e.secs) : "通话结束");
+}
+function renderCall() {
+  const p = call.phase, c = call.call, t = esc(S ? S.elder_title : "妈妈"), av = esc((S ? S.elder_title : "妈").slice(0, 1));
+  const RIP = '<i class="rip"></i><i class="rip"></i><i class="rip"></i>';
+  if (p === "idle") { ring.stop(); return setOv("", "", ""); }
+  if (p === "ended") { ring.stop(); return setOv("end" + call.ended.call.id, call.ended.call.emergency ? "red" : "", `<div class="bav">${av}</div><div class="who">${esc(endText(call.ended))}</div>`); }
+  const emergency = c.emergency;
+  const fallen = S && (S.guard.state === "SOS" || S.guard.state === "ASKING");
+  const ackBtn = S && S.guard.state === "SOS" && S.guard.notified.includes(me) ? `<button class="ack" id="ovAck">我收到了，马上到</button>` : "";
+  if (p === "incoming") {
+    ring.start(emergency ? "urgent" : "phone");
+    if (ovKey !== "in" + c.id) notify(emergency ? "🚨 " + (S ? S.elder_title : "") + "的紧急呼叫" : (S ? S.elder_title : "") + "来电", "点开接听");
+    return setOv("in" + c.id, emergency ? "red" : "green", `<div class="kick">${emergency ? "🚨 紧急呼叫" : "语音来电"}</div><div class="bav">${RIP}${av}</div>
+      <div class="who">${t}</div><div class="sub">${emergency && fallen ? "可能摔倒了，接通能听到她那边" : emergency ? "在床头屏按了紧急呼叫" : "邀请你语音通话"}</div>
+      <div class="acts"><button class="rd no" id="ovNo"><span class="c">${ICON.phone}</span>拒绝</button><button class="rd ok" id="ovOk"><span class="c">${ICON.phone}</span>接听</button></div>`,
+      () => { $("ovOk").onclick = () => { unlock(); ring.stop(); call.accept(); }; $("ovNo").onclick = () => call.hangup(); });
+  }
+  ring.stop();
+  if (p === "outgoing" || p === "connecting") {
+    return setOv(p + c.id, emergency ? "red" : "", `<div class="kick">${p === "outgoing" ? "正在呼叫" : "正在接通"}</div><div class="bav">${RIP}${av}</div><div class="who">${t}</div>
+      <div class="sub dots">${p === "outgoing" ? "等" + t + "接听" : "连接中"}</div>
+      <div class="acts"><button class="rd no" id="ovNo"><span class="c">${ICON.phone}</span>${p === "outgoing" ? "取消" : "挂断"}</button></div>`,
+      () => ($("ovNo").onclick = () => call.hangup()));
+  }
+  setOv("act" + c.id + (ackBtn ? "a" : ""), emergency ? "red" : "green", `<div class="kick">${emergency ? "🚨 紧急通话中" : "通话中"}</div><div class="bav" id="ovAv"><i class="lvl"></i>${av}</div>
+    <div class="who">${t}</div><div class="timer" id="ovT">0:00</div>${call.micOk ? "" : `<div class="warn">${esc(call.micError || "麦克风不可用")}，${t}听不到你</div>`}
+    <div class="acts"><button class="rd mute" id="ovMute"><span class="c">${ICON.mic}</span>静音</button><button class="rd no" id="ovNo"><span class="c">${ICON.phone}</span>挂断</button></div>${ackBtn}`,
+    () => {
+      $("ovNo").onclick = () => call.hangup();
+      $("ovMute").onclick = () => { call.setMuted(!call.muted); $("ovMute").classList.toggle("on", call.muted); };
+      if ($("ovAck")) $("ovAck").onclick = (e) => act("/api/family/ack", { contact: me }, e.target);
+    });
+}
+(function liveCall() {
+  if (call.phase === "active") {
+    const t = $("ovT"), a = $("ovAv");
+    if (t) t.textContent = Comms.mmss(call.seconds());
+    if (a) a.style.setProperty("--lvl", call.levels().remote.toFixed(2));
+  }
+  requestAnimationFrame(liveCall);
+})();
+
+// ---------- 健康 / 用药 / 回声（原有功能） ----------
+function renderHealth(s) {
+  const t = s.health.today;
+  const rows = t.bp.length
+    ? [...t.bp].reverse().map((r) => `<div class="bp-row"><time>${r.time}</time><b>${r.sys}/${r.dia}</b><span class="unit">mmHg${r.pulse ? " · 心率 " + r.pulse : ""}</span>
+        <span class="chip ${r.flag === "偏高" ? "high" : "normal"}">${r.flag}</span></div>`).join("")
+    : `<div class="empty" style="text-align:left;padding:6px 0">今天还没有血压记录</div>`;
+  $("health").innerHTML = `<h2>❤️ 健康日报<span class="sub">${t.date}</span></h2>
+    <div class="stats"><div class="stat"><small>血压次数</small><b>${t.bp.length}</b>${t.high_count ? ` <span class="chip high">${t.high_count} 次偏高</span>` : ""}</div>
+    <div class="stat"><small>喝水</small><b>${t.water_cups}</b> 杯</div></div>${rows}
+    <p class="summary">${esc(t.summary)}</p><div class="note">${esc(t.note)} 数据由${esc(s.elder_title)}口述、复述确认后记录。</div>`;
+}
+function renderMed(s) {
+  const m = s.med, box = $("med");
+  box.hidden = !(m && m.enabled);
+  if (box.hidden) return;
+  const chip = (d) => d.state === "taken" ? `<span class="chip taken">✓ 已服 ${esc(d.taken_at)}</span>`
+    : d.state === "missed" ? `<span class="chip missed">⚠ 漏服</span>`
+    : `<span class="chip waiting">${d.state === "delivered" ? "已递药，等打卡" : "已提醒，等打卡"}</span>`;
+  const rows = m.doses.length ? [...m.doses].reverse().map((d) => `<div class="med-row"><time>${esc(d.slot)}</time><span>${esc(d.name)}</span>${chip(d)}</div>`).join("")
+    : `<div class="empty" style="text-align:left;padding:6px 0">今天还没到吃药时间</div>`;
+  box.innerHTML = `<h2>💊 用药<span class="sub">每天 ${m.times.map(esc).join(" / ")}${m.utc_offset === 8 ? "（北京时间）" : ""}</span></h2>${rows}
+    <div class="note">到点 CareMate 提醒，${esc(s.elder_title)}说“吃了”才打卡；提醒后 ${Math.round(m.missed_after / 60) || 1} 分钟没打卡会通知你。</div>`;
+}
+function renderEcho(s) {
+  const e = s.echo[me], c = s.contacts.find((x) => x.id === me);
+  if (!c) return;
+  if (e && e.authorized) {
+    const st = e.style;
+    $("echo").innerHTML = `<h2>🗣️ 回声代聊 <span class="on-badge">已开启</span></h2>
+      <p>${esc(s.elder_title)}想你的时候，CareMate 会用你留言的说话风格替你说两句，开口一定先说“让我替${esc(c.pron)}说两句”。</p>
+      <dl class="profile"><div><dt>风格档案</dt><dd>从你的 ${e.sample_count} 条留言里学到（只有文字）</dd></div>
+      <div><dt>称呼</dt><dd>${esc(st.address || "—")}</dd></div>
+      <div><dt>口头禅</dt><dd>${st.catchphrases.length ? st.catchphrases.map(esc).join(" / ") : "—（多发几条留言就会学到）"}</dd></div>
+      <div><dt>语气词</dt><dd>${esc(st.particle || "—")}</dd></div></dl>
+      <button class="btn outline wide" id="revokeBtn">一键收回（立即清空风格档案）</button>`;
+    $("revokeBtn").onclick = (ev) => act("/api/echo/revoke", { contact: me }, ev.target);
+  } else {
+    $("echo").innerHTML = `<h2>🗣️ 回声代聊</h2><p>你忙的时候，让 CareMate 用你平时留言的口吻陪${esc(s.elder_title)}说两句。</p>
+      <ul class="rules"><li>只学文字风格（称呼、口头禅），不采集声音，不做声音克隆</li><li>开口必说“让我替${esc(c.pron)}说两句”，不冒充你</li>
+      <li>只复用你说过的话，不替你做新的承诺</li><li>随时一键收回，立即清空</li></ul>
+      <button class="btn wide" id="authBtn">我同意，开启回声代聊</button>`;
+    $("authBtn").onclick = (ev) => act("/api/echo/authorize", { contact: me }, ev.target);
+  }
+}
+
+// ---------- 主循环 ----------
+let staticKey = "";
+Bus.on(({ state, online, denied: why }) => {
+  denied = why || null;
+  $("live").classList.toggle("off", !online);
+  $("liveText").textContent = online ? "实时连接" : why ? "链接已失效" : "连接中断，正在重连…";
+  renderBanner();
+  if (!online) return;
+  S = state;
+  call.update(state.comms.call);
+  const on = state.comms.online;
+  const elderOn = on.elder || on.box;
+  $("elderDot").classList.toggle("on", !!elderOn);
+  $("title").textContent = state.elder_title + "的 CareMate";
+  $("avatar").firstChild.textContent = state.elder_title.slice(0, 1);
+  $("liveText").textContent = "我是" + nm(me) + " · " + (on.elder ? "床头屏在线" : on.box ? "床头盒在线" : "床头设备离线");
+  $("callBtn").disabled = !on.elder;
+  $("callBtn").title = on.elder ? "语音通话" : "床头屏不在线，暂时打不了";
+  $("msgInput").placeholder = `发文字，会念给${state.elder_title}听`;
+  renderAlert(state);
+  renderCountdown(state);
+  renderThread(state);
+  autoVoices(state);
+  const k = JSON.stringify([me, state.health.today, state.med, state.echo, state.contacts]);
+  if (k !== staticKey) { staticKey = k; renderSeg(state); renderMed(state); renderHealth(state); renderEcho(state); }
+  if (call.phase !== "idle") renderCall();
+});
+Bus.start({ client: "family:" + me });
 </script>
 </body>
 </html>

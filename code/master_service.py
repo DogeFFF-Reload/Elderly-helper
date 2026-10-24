@@ -17,6 +17,7 @@
 import argparse
 import email.parser
 import email.policy
+import hmac
 import json
 import mimetypes
 import queue
@@ -49,6 +50,14 @@ TEACH_CARD_SECONDS = 45.0
 BOX_TIMEOUT = 3.0
 VISION_TIMEOUT = 3.0   # 视觉约 5 次/秒推骨架，3 秒没来算离线
 ARM_PROBE_EVERY = 2.0
+
+# 公网（Cloudflare 隧道）进来的请求只能碰家属端用得到的这些，而且要带公网钥匙；
+# 动臂、操作台、大屏、急停、重置、调参只在局域网（隧道进来的请求带 Cf-Connecting-Ip 头，据此区分）
+PUBLIC_GET = ("/api/poll", "/api/state", "/api/voice_msg", "/api/fall_photo", "/api/call/sdp", "/api/family_replies")
+PUBLIC_POST = ("/api/family/ack", "/api/family/message", "/api/voice_msg", "/api/voice_msg/heard",
+               "/api/call/start", "/api/call/offer", "/api/call/answer", "/api/call/hangup",
+               "/api/echo/authorize", "/api/echo/revoke", "/api/dial120")
+PUBLIC_UI = ("/ui/family", "/ui/shared/")
 
 # 保命链里的臂/手动作：没做成要马上告诉演示员，不能让时间线上只写着"已按下"
 SAFETY_POSES = ("press_sos", "gentle_hold", "sign_family_received", "sign_coming")
@@ -916,6 +925,28 @@ class Bus:
             self._run(acts)
             return {"ok": True}
 
+    def family_replies(self, after=None, base="", key=""):
+        """床头盒（手板）每 5 秒来拉家属发给老人的语音留言（《对接卡 v2》格式），按时间升序，只给 after 之后的。
+        wav_url 是 WAV 16k/16bit/单声道；公网拉的时候 URL 里带上钥匙，手板取音频不用再加请求头。"""
+        with self.lock:
+            self.saw_client("elder-box")   # 手板在拉 = 床头盒在线，家属语音由它放
+            try:
+                after = int(after) if after not in (None, "") else 0
+            except ValueError:
+                return {"ok": False, "error": "after 要是上次拿到的 id（数字）"}
+            replies = []
+            for m in self.messages:
+                clip = self.comms.get_audio(m["voice_id"]) if m.get("kind") == "voice" else None
+                if not clip or m["to"] != "elder" or m["voice_id"] <= after or "wav" not in clip["mime"]:
+                    continue
+                url = "%s/api/voice_msg?id=%d" % (base, m["voice_id"]) + ("&key=" + urllib.parse.quote(key) if key else "")
+                replies.append({"id": str(m["voice_id"]), "wav_url": url, "from": self.comms.name(m["from"]),
+                                "time": time.strftime("%Y-%m-%d %H:%M:%S",
+                                                      time.gmtime(m["ts"] + self.cfg["expected_utc_offset"] * 3600)),
+                                "duration": m["dur"]})
+                m["delivered_box"] = True
+            return {"ok": True, "replies": replies}
+
     def elder_reread(self, ts):
         """老人端点“读给我听”：把那条家属文字留言再念一遍（走喇叭，和收到时同一句台词）。"""
         with self.lock:
@@ -1220,8 +1251,40 @@ def dispatch_post(bus, path, body, query=None):
     return fn() if fn else None
 
 
+CALL_ROUTES = ("/api/call/start", "/api/call/offer", "/api/call/answer", "/api/call/hangup")
+
+
 def make_handler(bus):
     class Handler(BaseHTTPRequestHandler):
+        # ---------- 公网门 ----------
+
+        def _public(self):
+            return bool(self.headers.get("Cf-Connecting-Ip") or self.headers.get("Cf-Ray"))
+
+        def _key(self, q):
+            return self.headers.get("X-CareMate-Token") or (q.get("key", [""])[0] if isinstance(q.get("key"), list)
+                                                           else q.get("key", ""))
+
+        def _gate(self, method, path, q):
+            """局域网请求一律放行；公网请求只放家属端页面和家属端接口，接口要带钥匙。返回 None 放行，否则 (状态码, 原因)。"""
+            if not self._public():
+                return None
+            if method == "GET" and (path == "/" or path.startswith(PUBLIC_UI)):
+                return None
+            if path not in (PUBLIC_GET if method == "GET" else PUBLIC_POST):
+                return 403, "公网只开放家属端功能（动臂、操作台、大屏只在局域网）"
+            token = bus.cfg.get("public_token") or ""
+            if not token:
+                return 403, "主脑没有设置 public_token，公网访问已关闭"
+            if not hmac.compare_digest(self._key(q).encode("utf-8"), token.encode("utf-8")):
+                return 401, "公网钥匙不对，请用家属端链接重新打开"
+            return None
+
+        def _base(self):
+            visitor = self.headers.get("Cf-Visitor", "")
+            scheme = "https" if "https" in visitor or self.headers.get("X-Forwarded-Proto") == "https" else "http"
+            return "%s://%s" % (scheme, self.headers.get("Host", "127.0.0.1"))
+
         def _send(self, code, body, ctype):
             self.send_response(code)
             self.send_header("Content-Type", ctype)
@@ -1249,11 +1312,17 @@ def make_handler(bus):
             url = urllib.parse.urlparse(self.path)
             q = urllib.parse.parse_qs(url.query)
             path = url.path
+            denied = self._gate("GET", path, q)
+            if denied:
+                return self._json({"ok": False, "error": denied[1]}, denied[0])
             if path == "/":
                 self.send_response(302)
-                self.send_header("Location", "/ui/console")
+                self.send_header("Location", "/ui/family" if self._public() else "/ui/console")
                 self.end_headers()
                 return
+            if path == "/api/family_replies":
+                return self._json(bus.family_replies(q.get("after", [""])[0], self._base(),
+                                                     self._key(q) if self._public() else ""))
             if path == "/api/state":
                 return self._json(bus.snapshot())
             if path == "/api/poll":
@@ -1297,6 +1366,12 @@ def make_handler(bus):
         def do_POST(self):
             url = urllib.parse.urlparse(self.path)
             q = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
+            denied = self._gate("POST", url.path, q)
+            if denied:
+                n = int(self.headers.get("Content-Length") or 0)
+                if 0 < n <= 8 * 1024 * 1024:
+                    self.rfile.read(n)   # 先把正文读掉再拒：不读的话 Windows 上连接会被重置，对方收不到 403
+                return self._json({"ok": False, "error": denied[1]}, denied[0])
             if url.path == "/api/fall_photo":   # 正文是照片原始字节
                 n = int(self.headers.get("Content-Length") or 0)
                 if n > 2 * 1024 * 1024:
@@ -1313,7 +1388,14 @@ def make_handler(bus):
                     return self._json(_voice_from_form(bus, ctype, raw, q))
                 return self._json(bus.voice_upload(q.get("from"), q.get("to"), ctype, raw,
                                                    q.get("dur") or q.get("duration"), q.get("elder")))
-            result = dispatch_post(bus, url.path, _read_json(self), q)
+            body = _read_json(self)
+            if self._public():
+                # 公网只能以家属身份通话 / 拨 120，不能冒充老人那头（老人那头在局域网）
+                who = body.get("party", q.get("party")) if url.path != "/api/call/start" else body.get("from", q.get("from"))
+                if (url.path in CALL_ROUTES and who == "elder") or \
+                        (url.path == "/api/dial120" and body.get("by", q.get("by", "elder")) == "elder"):
+                    return self._json({"ok": False, "error": "公网只能以家属身份操作"}, 403)
+            result = dispatch_post(bus, url.path, body, q)
             if result is None:
                 return self._json({"ok": False, "error": "not found"}, 404)
             self._json(result)

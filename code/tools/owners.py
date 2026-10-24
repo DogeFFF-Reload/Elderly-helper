@@ -55,6 +55,8 @@ TESTS = {
     "test_estop": ("software",),
     "test_med_reminder": ("software",),
     "test_comms": ("software",),
+    "test_elder_relay": ("software",),
+    "test_public_gate": ("software",),
     "test_preflight": ("software",),
     "test_handover_chain": ("hardware",),
     "test_exercise": ("hardware",),
