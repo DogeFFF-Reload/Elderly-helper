@@ -2,6 +2,7 @@
 import io
 import base64
 import contextlib
+import hashlib
 import json
 import os
 import sys
@@ -10,6 +11,7 @@ import unittest
 from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+from urllib.request import parse_http_list, parse_keqv_list
 
 from PIL import Image
 
@@ -166,6 +168,52 @@ class IPhoneStreamTest(unittest.TestCase):
             self.assertEqual(dark.getpixel((0, 0)), 0)
             self.assertGreater(light.getpixel((0, 0)), 230)
         self.assertEqual(_PhoneHandler.requests[-1], ("/", _PhoneHandler.authorization))
+
+    def test_digest_authenticated_camera_stream_and_wrong_password_on_loopback(self):
+        import urllib.error
+        seen = []
+
+        class DigestCamera(BaseHTTPRequestHandler):
+            def do_GET(self):
+                header = self.headers.get("Authorization", "")
+                seen.append(header.split(" ", 1)[0])
+                fields = parse_keqv_list(parse_http_list(header[7:])) if header.startswith("Digest ") else {}
+                digest = lambda value: hashlib.md5(value.encode()).hexdigest()
+                ha1 = digest("viewer:Loopback camera:correct-password")
+                ha2 = digest("GET:" + self.path)
+                expected = digest(":".join((ha1, "test-nonce", fields.get("nc", ""),
+                                            fields.get("cnonce", ""), "auth", ha2)))
+                if (fields.get("username") != "viewer" or fields.get("uri") != self.path
+                        or fields.get("response") != expected):
+                    self.send_response(401)
+                    self.send_header("WWW-Authenticate", 'Digest realm="Loopback camera", nonce="test-nonce", algorithm=MD5, qop="auth"')
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+                self.end_headers()
+                self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + _PhoneHandler.pictures[0] + b"\r\n")
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), DigestCamera)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            url = "http://127.0.0.1:%d/" % server.server_address[1]
+            camera = PhoneFrameSource(url, mjpeg=True, username="viewer", password="correct-password")
+            with contextlib.closing(camera.frames()) as frames:
+                self.assertTrue(next(frames).startswith(b"\xff\xd8"))
+            self.assertIn("Digest", seen)
+            wrong = PhoneFrameSource(url, mjpeg=True, username="viewer", password="wrong-password")
+            with self.assertRaises(urllib.error.HTTPError) as failure:
+                next(wrong.frames())
+            self.assertEqual(failure.exception.code, 401)
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=2)
 
     def test_camera_page_resolves_actual_live_image_with_auth_but_never_archive_or_logo(self):
         with contextlib.closing(self.camera("/page", mjpeg=True).frames()) as frames:

@@ -29,6 +29,8 @@ def main(argv=None, *, prompt=input, secret=getpass.getpass, execute=family_watc
     cli = ap.parse_args(argv)
     if not 1 <= cli.port <= 65535:
         ap.error("监看端口须为1至65535")
+    monitor = None
+    browser_opened = False
     try:
         settings = Path(settings)
         try:
@@ -41,34 +43,17 @@ def main(argv=None, *, prompt=input, secret=getpass.getpass, execute=family_watc
         log("CareMate 直播监看 · 仅观察")
         log("请保持iPhone摄像头App在前台，电脑与手机连接同一Wi-Fi。")
         log("登录信息请使用刚才在浏览器中验证成功的那一组；密码输入时不显示字符。")
-        url = cli.phone_stream or (prompt("手机App的HTTP地址%s：" % (
-            " [回车使用 %s]" % previous if previous else "")).strip() or previous)
-        # Validate before asking for credentials, loading a model or opening any socket.
-        PhoneFrameSource(url, mjpeg=True)
-        username = prompt("摄像头账号 [回车使用admin；无登录要求则输入 -]：").strip() or "admin"
-        if username == "-":
-            username = password = None
-        else:
-            password = secret("摄像头密码（输入后按回车，不会显示字符）：")
-        args = family_watch.parser().parse_args([
-            "--phone-stream", url, "--mode", "off", "--continuous", "--web-monitor",
-            "--monitor-host", "127.0.0.1", "--monitor-port", str(cli.port), "--src", "phone-live-monitor",
-        ])
-        args.phone_username, args.phone_password = username, password
-        # Retain the convenient LAN address only. Never save credentials or query tokens.
-        if not urlsplit(url).query:
-            try:
-                settings.parent.mkdir(parents=True, exist_ok=True)
-                settings.write_text(json.dumps({"phone_stream": url}, ensure_ascii=False) + "\n", encoding="utf-8")
-            except OSError:
-                log("[提示] 无法记住本次地址，不影响直播。")
-
         def start_monitor(**options):
+            nonlocal monitor, browser_opened
+            if monitor is not None:
+                monitor.close()
+                monitor = None
             monitor = monitor_factory(**options)
             address = "http://127.0.0.1:%d/" % monitor.address[1]
             log("[打开直播] " + address)
-            if not cli.no_browser:
+            if not cli.no_browser and not browser_opened:
                 try:
+                    browser_opened = True
                     if not open_browser(address):
                         log("[提示] 请在浏览器手动打开上方网址。")
                 except Exception:
@@ -77,14 +62,46 @@ def main(argv=None, *, prompt=input, secret=getpass.getpass, execute=family_watc
 
         log("画面接通后会显示人体骨架。只显示当前画面，没有暂停或回放功能。")
         log("请保留此窗口；结束整套识别请按 Ctrl+C。关闭网页不会停止识别。")
-        report = execute(args, monitor_factory=start_monitor, log=log)
-        return 0 if report["ok"] or report["status"] == "interrupted" else 2
+        while True:
+            url = cli.phone_stream or (prompt("手机App的HTTP地址%s：" % (
+                " [回车使用 %s]" % previous if previous else "")).strip() or previous)
+            # Validation never opens a connection or loads a model.
+            PhoneFrameSource(url, mjpeg=True)
+            username = prompt("摄像头账号 [回车使用admin；无登录要求则输入 -]：").strip() or "admin"
+            if username == "-":
+                username = password = None
+            else:
+                password = secret("摄像头密码（输入后按回车，不会显示字符）：")
+            args = family_watch.parser().parse_args([
+                "--phone-stream", url, "--mode", "off", "--continuous", "--web-monitor",
+                "--monitor-host", "127.0.0.1", "--monitor-port", str(cli.port), "--src", "phone-live-monitor",
+            ])
+            args.phone_username, args.phone_password = username, password
+            # Never save credentials or URLs containing query tokens.
+            if not urlsplit(url).query:
+                try:
+                    settings.parent.mkdir(parents=True, exist_ok=True)
+                    settings.write_text(json.dumps({"phone_stream": url}, ensure_ascii=False) + "\n", encoding="utf-8")
+                except OSError:
+                    log("[提示] 无法记住本次地址，不影响直播。")
+            # The launcher owns the viewer so an input failure can remain visible
+            # while the user corrects credentials. No automatic reconnect attempts.
+            report = execute(args, monitor_factory=start_monitor, close_monitor=False, log=log)
+            if report["status"] != "error":
+                return 0 if report["ok"] or report["status"] == "interrupted" else 2
+            log("[等待处理] 请查看网页中的具体错误；检查手机App的HTTP登录设置。")
+            if prompt("按回车重新输入地址、账号和密码；输入 Q 后回车结束：").strip().lower() == "q":
+                return 2
+            previous, cli.phone_stream = (url if not urlsplit(url).query else ""), None
     except (KeyboardInterrupt, EOFError):
         log("\n已结束直播启动。")
         return 130
     except ValueError:
         log("[未启动] 地址或设置无效。请使用手机App显示的 http://IP:端口/，账号密码另行输入。")
         return 2
+    finally:
+        if monitor is not None:
+            monitor.close()
 
 
 if __name__ == "__main__":

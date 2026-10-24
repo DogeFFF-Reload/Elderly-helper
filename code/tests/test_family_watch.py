@@ -198,6 +198,39 @@ class FamilyWatchTest(unittest.TestCase):
                 else:
                     self.assertNotIn(text, json.dumps(report) + "".join(logs))
 
+    def test_launcher_can_keep_error_page_available_after_camera_rejection(self):
+        from http.client import HTTPConnection
+        from camera.phone_calibrate import CAMERA_ERROR_MESSAGES, CollectionError
+        from vision.web_monitor import WebMonitor
+        monitor = WebMonitor(port=0)
+        self.addCleanup(monitor.close)
+
+        class Rejected:
+            def __enter__(self):
+                raise CollectionError(CAMERA_ERROR_MESSAGES["auth"])
+
+            def __exit__(self, *_args):
+                pass
+
+        args = self.args("--phone-stream", "http://phone.invalid/", "--web-monitor")
+        report = watch.execute(args, live_factory=lambda **_kw: Rejected(), monitor_factory=lambda **_kw: monitor,
+                               close_monitor=False, log=lambda _: None)
+        self.assertFalse(report["ok"])
+        self.assertFalse(monitor.closed)
+        connection = HTTPConnection("127.0.0.1", monitor.address[1], timeout=2)
+        try:
+            connection.request("GET", "/api/status")
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            status = json.loads(response.read())
+            self.assertEqual(status["run_status"], "error")
+            self.assertEqual(status["input_message"], CAMERA_ERROR_MESSAGES["auth"])
+            self.assertFalse(status["frame_ready"])
+        finally:
+            connection.close()
+        monitor.update(input_message="secret-credential")
+        self.assertNotIn("secret-credential", json.dumps(monitor.snapshot()))
+
     def test_launcher_help_works_from_unrelated_directory_without_model_or_devices(self):
         launcher = Path(__file__).resolve().parents[2] / "run_family_alarm.py"
         result = subprocess.run([sys.executable, "-X", "utf8", str(launcher), "--help"],

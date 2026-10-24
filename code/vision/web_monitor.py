@@ -85,6 +85,7 @@ class WebMonitor:
         self.times = deque(maxlen=120)
         self.input_state = "waiting"
         self.run_status = "starting"
+        self.input_message = None
         self.alarm_count = 0
         self.latest_alarm = None
         self.preflight = None
@@ -139,10 +140,14 @@ class WebMonitor:
         self.worker.start()
         self.http.start()
 
-    def update(self, *, run_status=None, alarm=None, preflight=None):
+    def update(self, *, run_status=None, alarm=None, preflight=None, input_message=None):
         with self.condition:
             if run_status is not None:
                 self.run_status = run_status
+            if input_message is not None:
+                # The caller supplies a fixed, credential-free diagnostic.
+                from camera.phone_calibrate import CAMERA_ERROR_MESSAGES
+                self.input_message = input_message if input_message in CAMERA_ERROR_MESSAGES.values() else None
             if alarm is not None:
                 # All lifecycle updates for one event keep the same id.
                 if not self.latest_alarm or self.latest_alarm["event_id"] != alarm["event_id"]:
@@ -204,6 +209,7 @@ class WebMonitor:
             span = self.times[-1] - self.times[0] if len(self.times) > 1 else 0
             fps = (len(self.times) - 1) / span if span else 0
             return {"mode": self.mode, "input_kind": self.input_kind, "run_status": self.run_status,
+                    "input_message": self.input_message,
                     "input_state": "input_error" if stale and age is not None else self.input_state,
                     "stale": stale, "frame_age_s": None if age is None else round(age, 2),
                     "frame_ready": bool(self.jpeg) and not stale and jpeg_age <= self.stale_after,

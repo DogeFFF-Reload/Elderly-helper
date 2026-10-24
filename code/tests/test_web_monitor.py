@@ -191,6 +191,9 @@ const s={mode:'live',input_kind:'phone_mjpeg',sequence:3,processing_fps:8,alarm_
 display(s);
 if(!$('mode').textContent.includes('正式报警'))throw Error('Mode label');
 if(!$('alarmHelp').textContent.includes('待现场确认'))throw Error('False phone receipt');
+display({...s,run_status:'error',input_message:'摄像头登录失败，请核对账号和密码。'});
+if(!$('overlayText').textContent.includes('登录失败'))throw Error('Hidden login failure');
+if($('state').textContent!=='识别已停止')throw Error('False observation after login failure');
 for(const [state,label] of Object.entries(inputs)){display({...s,input_state:state});if($('state').textContent!==label)throw Error('Input state');}
 frameAllowed=true;
 globalThis.pending=updateImage(2);

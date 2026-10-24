@@ -4,22 +4,22 @@
   "scope": "CareMate live-only phone monitor and authenticated MJPEG input",
   "targeted": {
     "suites": 7,
-    "tests": 86,
+    "tests": 98,
     "result": "passed"
   },
   "regression": {
     "suites": 45,
-    "tests": 617,
+    "tests": 621,
     "skipped": 0,
     "result": "passed"
   },
   "windows_bat_from_unrelated_directory": "--help passed without loading model or opening camera/browser",
   "checks": [
-    "Authenticated MJPEG input and HTML live-image discovery on loopback",
+           "Basic and Digest authenticated MJPEG input and HTML live-image discovery on loopback",
     "Same-origin image selection without reading logo or archive links",
     "Snapshot and ambiguous/external page references rejected",
     "Separate startup and ordinary frame wait budgets",
-    "Safe Chinese login and stream diagnostics without credential exposure",
+           "Safe Chinese login and stream diagnostics without credential exposure; error page remains available for explicit retry",
     "Old sequence requests return only the current frame; stale frames refused",
     "Hidden or restored monitor page discards pending old responses and jumps to current frame"
   ],

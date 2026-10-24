@@ -97,7 +97,8 @@ class PhoneFrameSource:
             # The homepage and its MJPEG image can be sibling paths. Scope
             # credentials to this camera origin rather than just the first path.
             passwords.add_password(None, "%s://%s/" % (parts.scheme, parts.netloc), username, password or "")
-            handlers.append(urllib.request.HTTPBasicAuthHandler(passwords))
+            handlers.extend((urllib.request.HTTPDigestAuthHandler(passwords),
+                             urllib.request.HTTPBasicAuthHandler(passwords)))
         self.opener = urllib.request.build_opener(*handlers)
 
     def frames(self):

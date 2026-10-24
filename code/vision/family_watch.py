@@ -53,7 +53,8 @@ def parser():
     return ap
 
 
-def execute(args, *, client=None, live_factory=LiveInput, preview_factory=None, monitor_factory=None, log=print):
+def execute(args, *, client=None, live_factory=LiveInput, preview_factory=None, monitor_factory=None,
+            close_monitor=True, log=print):
     """Injection points let the whole entry run against fake inputs and loopback HTTP."""
     if args.mode == "live" and (args.keypoints or args.synthetic):
         raise ValueError("离线输入不能发送真实警报")
@@ -152,11 +153,12 @@ def execute(args, *, client=None, live_factory=LiveInput, preview_factory=None, 
             report["sender_drained"] = poster.close()
             report["events"] = poster.snapshot()
         if monitor:
-            monitor.update(run_status=report["status"])
+            monitor.update(run_status=report["status"], input_message=report.get("message"))
             report["monitor_final"] = monitor.snapshot()
             report["monitor_frames_served"] = monitor.served_frames
             report["images_sent"] = monitor.served_frames > 0
-            monitor.close()
+            if close_monitor:
+                monitor.close()
         report["input_quality"] = quality.snapshot()
         report["ended_utc"] = datetime.now(timezone.utc).isoformat()
         report["ok"] = report["status"] in ("completed", "link_checked") and all(

@@ -69,7 +69,8 @@ function display(s){
   const event=s.latest_alarm,states={queued:['正在发送','已记录事件号，等待床头回执。'],disabled:['仅本地记录','当前仅观察，未向床头发送。'],dry_accepted:['无扰检查通过','床头核对成功，本次没有建立警报。'],bedside_accepted:['床头已登记警报','家属手机是否收到，仍待现场确认。'],failed:['发送未确认','请保留原事件号排查连接，送达情况未知。']};
   const description=event?(states[event.status]||['等待回执','正在处理本次事件。']):['尚无跌倒事件',s.mode==='live'?'规则确认跌倒后将自动上报。':s.mode==='dry'?'无扰模式只检查格式，不建立警报。':'当前仅观察，不会发送报警。'];
   $('alarm').textContent=description[0];$('alarmHelp').textContent=description[1];$('alarm').className='state '+(event&&event.status==='failed'?'danger':'');$('event').textContent=event?'事件号 '+event.event_id+(event.alarm_id?'\n报警号 '+event.alarm_id:''):'';
-  if(s.stale){cover(s.sequence?'画面已中断':'等待第一份识别画面','请检查摄像头输入及视觉服务；停止画面不代表安全。');$('connection').textContent='没有新识别画面';}
+  if(s.run_status==='error'){cover('摄像头连接失败',s.input_message||'视觉程序已停止。请查看电脑上的启动窗口，根据提示修正后重试。');$('state').textContent='识别已停止';$('state').className='state danger';$('stateHelp').textContent='请回到电脑上的启动窗口重新输入；网页不会显示旧画面。';$('connection').textContent='未接通直播 · 等待在启动窗口重试';}
+  else if(s.stale){cover(s.sequence?'画面已中断':'等待第一份识别画面','请检查摄像头输入及视觉服务；停止画面不代表安全。');$('connection').textContent='没有新识别画面';}
   else if(s.render_error){cover('画面显示异常','姿态识别可能仍在运行，请让队友查看视觉服务日志。');$('connection').textContent='监看编码异常';}
   else if(s.frame_ready){frameAllowed=true;$('connection').textContent='监看已连接 · '+s.frame_age_s+' 秒前更新';updateImage(s.jpeg_sequence);}
   else{cover('正在准备监看画面','姿态处理已启动，等待画面编码。');$('connection').textContent='等待画面显示';}
