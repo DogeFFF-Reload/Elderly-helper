@@ -880,6 +880,26 @@ class Bus:
         self.comms.request_play(m["voice_id"], target)
         return [_ev("voice", "播放%s的语音留言" % self.comms.name(m["from"]), who="elder")]
 
+    def dial120(self, by="elder", via="床头屏"):
+        """一键 120。老人端（床头屏长按 2 秒 / 床头盒的 120 键）：长按本身就是确认，直接走模拟拨号 + 通知所有家属
+        （真拨要 4G 模块或云通信，接口待定；手机上页面会另外打开系统拨号盘）。家属端：手机拨号盘已打开，这里只记一笔。"""
+        with self.lock:
+            title = self.cfg["elder_title"]
+            if by == "elder":
+                acts = [{"do": "dial", "number": "120"},
+                        _ev("dial", "%s在%s一键拨打 120（模拟拨号）" % (title, via), "danger", "elder")]
+                acts += [{"do": "notify", "contact": c["id"], "kind": "120",
+                          "text": "%s在%s按了一键 120（模拟拨号），请尽快联系确认" % (title, via)}
+                         for c in self.cfg["contacts"]]
+                acts.append(_say("dial_done", contact=self.primary["name"]))
+            else:
+                c = self.contact(by)
+                if c is None:
+                    return {"ok": False, "error": "unknown contact"}
+                acts = [_ev("dial", "%s在家属端点了拨打 120（手机拨号盘已打开）" % c["name"], "danger", "family")]
+            self._run(acts)
+            return {"ok": True}
+
     def elder_reread(self, ts):
         """老人端点“读给我听”：把那条家属文字留言再念一遍（走喇叭，和收到时同一句台词）。"""
         with self.lock:
@@ -1174,6 +1194,7 @@ def dispatch_post(bus, path, body, query=None):
         "/api/call/hangup": lambda: bus.call_hangup(arg("id"), arg("party")),
         "/api/voice_msg/heard": lambda: bus.voice_heard(arg("id"), arg("party")),
         "/api/elder/reread": lambda: bus.elder_reread(arg("ts")),
+        "/api/dial120": lambda: bus.dial120(arg("by", "elder"), arg("via", "床头屏")),
     }
     fn = routes.get(path)
     return fn() if fn else None

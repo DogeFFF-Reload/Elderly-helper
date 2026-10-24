@@ -14,6 +14,7 @@
   POST /record/start | /record/stop       S3 屏没有麦克风时用：X5 用自己的 USB 麦克风录（arecord），stop 后同样存盘转发
   GET  /status                            {"recording", "pending" 待转发条数, "master" 主脑连得上吗, "unheard" 家属新留言条数}
   POST /play                              放最早一条没听过的家属语音留言（S3 屏上的“听留言”键）
+  POST /dial120                           一键 120（S3 屏上长按 2 秒再发）：转给主脑，模拟拨号 + 通知所有家属
 家属手机直连兜底（和《家属端需求单》第 3 节一致，同一个热点就能用）：
   GET  /messages                          老人留言列表，新的在前
   GET  /messages/<id>.wav                 音频
@@ -301,6 +302,13 @@ class Relay:
                     pass
             return ok
 
+    def dial120(self):
+        body = json.dumps({"by": "elder", "via": "床头盒 %s" % self.box_id}).encode("utf-8")
+        req = urllib.request.Request(self.master + "/api/dial120", data=body, method="POST",
+                                     headers={"Content-Type": "application/json; charset=utf-8"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read().decode("utf-8"))
+
     def play_next(self):
         """S3 屏“听留言”键：最早一条没听过的；都听过就放最近一条。"""
         msgs = [m for m in ((self.state or {}).get("messages") or []) if m.get("kind") == "voice" and m.get("to") == "elder"]
@@ -411,6 +419,11 @@ def make_handler(relay):
                 if path == "/record/stop":
                     item = relay.add(relay.recorder.stop(), "application/octet-stream", q.get("to"))
                     return self._json({"ok": True, "id": item["id"], "duration": item["duration"]})
+                if path == "/dial120":
+                    try:
+                        return self._json(relay.dial120())
+                    except (urllib.error.URLError, OSError, ValueError) as e:
+                        return self._json({"ok": False, "error": "主脑连不上：%s" % e}, 503)
                 if path == "/play":
                     vid = relay.play_next()
                     return self._json({"ok": vid is not None, "voice_id": vid} if vid else
