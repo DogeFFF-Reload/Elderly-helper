@@ -75,15 +75,16 @@ class MockMaster(AbstractContextManager):
             self.clock.t += seconds
             self.bus.tick()
 
-    def request(self, path, body):
+    def request(self, path, body=None):
         # An explicit HTTPConnection never follows redirects or system proxies.
         conn = HTTPConnection("127.0.0.1", self.port, timeout=3)
         try:
-            conn.request("POST", path, body=json.dumps(body).encode("utf-8"),
+            method = "GET" if body is None else "POST"
+            conn.request(method, path, body=None if body is None else json.dumps(body).encode("utf-8"),
                          headers={"Content-Type": "application/json; charset=utf-8"})
             response = conn.getresponse()
             result = json.loads(response.read())
-            if response.status != 200 or not result.get("ok"):
+            if response.status != 200 or (method == "POST" and not result.get("ok")):
                 raise RuntimeError("本机模拟主程序未接受请求")
             return result
         finally:
