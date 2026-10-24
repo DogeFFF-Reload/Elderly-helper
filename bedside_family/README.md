@@ -68,20 +68,30 @@ python bridges/fall_to_family.py --master http://<主脑IP>:8000 --family http:/
 
 ```
 bedside_family/
-├── firmware_s3/bedside_s3_arm_kiosk.ino   # S3 床头屏固件 v5.4(huge_app 分区,COM7 烧录/COM8 日志)
+├── firmware_s3/bedside_s3_arm_kiosk.ino   # 嘉立创 S3 床头屏固件 v5.4(六键+留言+语音,COM7 烧录/COM8 日志)
 │   ├── btn_bitmaps.h                      #   六键图标位图(1.4MB 生成物,入库即源码,缺了编译不过)
 │   └── voice_prompts.h                    #   提示音 WAV 数组(2.2MB SAPI 16k/mono)
-├── service_handboard/arm_service.py       # X5#A 服务 v5.7:留言 + 家属推送/回话 + 跌倒警报(event_id 去重/dry 无扰测) + 姿态 + Vosk 语音
+├── firmware_t5ai_handover/bedside_t5ai_arm/   # 涂鸦 T5AI 床头臂屏固件(交接队友的原始版;队友已在仓库 firmware/bedside_t5ai 继续演进)
+├── firmware_bedside_box/bedside_box.ino   #床头盒(无屏留言中继/播音)固件
+├── firmware_diag/                         # 嘉立创 S3 面板诊断板配置(ESP_Panel 板级 conf 7 件,排屏/触摸故障用)
+├── service_handboard/                     # X5#A 手板执行端服务包(可运行)
+│   ├── arm_service.py                     #   v5.7:留言+家属推送/回话+跌倒警报(event_id 去重/dry 无扰测)+姿态+Vosk 语音
+│   ├── poses.py rh56f2_driver.py          #   姿态词表/序列 + RH56F2 EB90 手驱动
+│   └── rh56f2_eb90.py rh56_register_map.py#   EB90 协议帧 + 手册 V1.09 寄存器表
 ├── family_app/                            # 家属 App(原生安卓,无第三方依赖,纯手工工具链构建)
 │   ├── android/                           #   源码(Manifest / MainActivity / GuardService / Cfg)
 │   ├── build_app.py                       #   构建脚本(aapt2→javac→d8→zipalign→apksigner,无需 gradle)
 │   ├── family_app_v1.1.apk                #   签名成品(桌面版,~30KB)
-│   └── README.md                          #   行为规格 / 4G 中转升级法 / 构建坑位
+│   ├── README.md                          #   行为规格 / 4G 中转升级法 / 构建坑位
+│   └── legacy_webview_v1/                 #   初版 WebView+MIC 原型(考古)
 ├── bridges/fall_to_family.py              # 视觉/主脑 → 家属警报 桥接器(姿势 B,带 event_id=bus-<事件id>)
+├── voice_pack/                            # TTS 台词播报包:73 条×原速/慢速 + lines.json(+tools/gen_tts.py)
+├── deploy_x5/                             # X5 板端 systemd 单元(caremate*.service)+ 开板/翻转脚本
 ├── tools/                                 # 现场/联调工具
 │   ├── smoke_alarm_api.py                 #   警报契约冒烟测试(无扰优先,自建自收,退出码可判 CI)
-│   ├── push_v57.py / push_v57b.py         #   服务部署脚本(paramiko 推板+自检)
-│   ├── bg_capture.py ... 等               #   串口抓日志/板监测/TTS 生成
+│   ├── x5_ops/                            #   X5 运维交接包 9 件:部署/模型上传/agent推送/救砖/验证(密码 env 注入)
+│   ├── gen_*btns.py gen_voice_prompts.py  #   按键位图与提示音批量生成器
+│   └── bg_capture.py probe_x5.py 等       #   串口抓日志/板存活监测/TTS 提示音
 └── docs/                                  # 对接卡 / 需求单 / 交接说明 / 队友 agent 任务包
 ```
 
