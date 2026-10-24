@@ -69,14 +69,20 @@ python bridges/fall_to_family.py --master http://<主脑IP>:8000 --family http:/
 ```
 bedside_family/
 ├── firmware_s3/bedside_s3_arm_kiosk.ino   # S3 床头屏固件 v5.4(huge_app 分区,COM7 烧录/COM8 日志)
+│   ├── btn_bitmaps.h                      #   六键图标位图(1.4MB 生成物,入库即源码,缺了编译不过)
+│   └── voice_prompts.h                    #   提示音 WAV 数组(2.2MB SAPI 16k/mono)
 ├── service_handboard/arm_service.py       # X5#A 服务 v5.7:留言 + 家属推送/回话 + 跌倒警报(event_id 去重/dry 无扰测) + 姿态 + Vosk 语音
 ├── family_app/                            # 家属 App(原生安卓,无第三方依赖,纯手工工具链构建)
 │   ├── android/                           #   源码(Manifest / MainActivity / GuardService / Cfg)
 │   ├── build_app.py                       #   构建脚本(aapt2→javac→d8→zipalign→apksigner,无需 gradle)
-│   └── family_app_v1.1.apk                #   签名成品(桌面版,~30KB)
-├── bridges/fall_to_family.py              # 视觉/主脑 → 家属警报 桥接器(姿势 B)
-├── tools/                                 # 现场/联调工具(串口抓日志、板推送、TTS 提示音生成等)
-└── docs/                                  # 对接卡 / 需求单 / 交接说明
+│   ├── family_app_v1.1.apk                #   签名成品(桌面版,~30KB)
+│   └── README.md                          #   行为规格 / 4G 中转升级法 / 构建坑位
+├── bridges/fall_to_family.py              # 视觉/主脑 → 家属警报 桥接器(姿势 B,带 event_id=bus-<事件id>)
+├── tools/                                 # 现场/联调工具
+│   ├── smoke_alarm_api.py                 #   警报契约冒烟测试(无扰优先,自建自收,退出码可判 CI)
+│   ├── push_v57.py / push_v57b.py         #   服务部署脚本(paramiko 推板+自检)
+│   ├── bg_capture.py ... 等               #   串口抓日志/板监测/TTS 生成
+└── docs/                                  # 对接卡 / 需求单 / 交接说明 / 队友 agent 任务包
 ```
 
 ## 6. 家属 App 构建与安装
@@ -102,6 +108,7 @@ python family_app/build_app.py        # 产出 family_app.apk,自动同步到桌
 |---|---|
 | 双向留言闭环(msg_→app 听 / app 说→fam_→床头播) | ✅ 真人原声全通 |
 | 跌倒警报端点(空 body/JSON/自检/确认) | ✅ curl 全通过 |
+| v5.7 event_id 去重 + dry 无扰测 | ✅ 契约冒烟测试 ALL PASS(tools/smoke_alarm_api.py) |
 | 家属 App v1.1(留言+警报+守护服务+历史) | ✅ 构建/签名通过,装机待现场复测 |
 | S3 固件 v5.4 u32 播放修复 + 听留言只播 fam_ | ✅ 烧录验证 |
 | 公网中转(4G 免热点) | ⏳ 等中转站,契约已写在 `docs/留言接入队友App_对接卡.md` |
