@@ -26,6 +26,8 @@
  *
  * v5.1 留言版：点赞键 → 留言键。点一下=开始说（屏幕蓝条"正在留言"），再点一下=发送，
  *      最长 60 秒自动发送（服务端合成 WAV 落盘 + 网页收件箱）。
+ * v5.5 听留言电流声修复：HTTP 分块奇数字节导致样本错位(白噪声)，跨块 1 字节
+ *      进位对齐修复(详见 messagePlay 注释)。烧录后重测：App 发 fam_ 留言→屏播应清亮。
  *
  * v5.2 留言收发版：按键表 [招手|手指操|猜拳 / 留言|听留言|语音]（归位仍在语音里说）。
  *      听留言=播最新留言/家属回话，没有则喇叭播"还没有"；
@@ -522,7 +524,11 @@ static void spk_prompt(const uint8_t *pcm, int len) {
 
 /* 听留言(v5.4):拉留言列表 → 只播家属回话(fam_ 前缀,最新一条)。msg_=老人自己录的,
    归家属 app 收听,老人侧不播自己。没有家属回话则播"还没有"。
-   播放中点屏任意处=停止。 */
+   播放中点屏任意处=停止。
+   v5.5 电流声修复:HTTP 分块按到达时机切分,readBytes 可能返回奇数字节;
+   spk_play_pcm 只保证"单次调用内"字节对齐,跨调用奇块让后续样本整体错位 8 位
+   → 留言后半段全成白噪声(20261025 真机定位)。修法:1 字节进位缓存,
+   悬空奇字节并入下一块,保证喂给 spk_play_pcm 的永远从头对齐、偶数字节。 */
 static void messagePlay() {
   if (!wifi_up()) {
     Serial.println("[net] 离线,听不了留言");
@@ -572,6 +578,10 @@ static void messagePlay() {
     const int HDR = 44;                 /* 板上合成的 WAV 头恒定 44 字节 */
     uint8_t buf[2048];
     int skipped = 0;
+    /* v5.5:跨块对齐。carry 是上一块剩下的悬空奇字节,并入本块头部,
+       保证 (carry+got) 恒偶,样本边界永不漂移。 */
+    uint8_t carry = 0;
+    bool have_carry = false;
     ok = true;
     while (true) {
       int avail = st->available();
@@ -580,15 +590,24 @@ static void messagePlay() {
         delay(2);
         continue;
       }
-      if (skipped < HDR) {
-        int got = st->readBytes(buf, (avail < HDR - skipped) ? avail : (HDR - skipped));
-        if (got <= 0) { ok = false; break; }
-        skipped += got;
-        continue;
-      }
-      int got = st->readBytes(buf, (avail < (int)sizeof(buf)) ? avail : (int)sizeof(buf));
+      int want = (avail < (int)(sizeof(buf) - (have_carry ? 1 : 0)))
+                   ? avail : (int)(sizeof(buf) - (have_carry ? 1 : 0));
+      int got = st->readBytes(buf + (have_carry ? 1 : 0), want);
       if (got <= 0) break;
-      if (!spk_play_pcm(buf, got, false)) { ok = false; break; }
+      if (have_carry) { buf[0] = carry; got += 1; have_carry = false; }
+      int base = 0;
+      while (skipped < HDR) {          /* 头 44 字节:同样在字节流里数,不吃对齐亏 */
+        int take2 = (got - base < HDR - skipped) ? (got - base) : (HDR - skipped);
+        base += take2; skipped += take2;
+        if (base >= got) break;
+      }
+      int nbytes = got - base;
+      if (nbytes & 1) {                /* 奇数字节:尾字节悬空,留进位 */
+        carry = buf[base + nbytes - 1];
+        have_carry = true;
+        nbytes -= 1;
+      }
+      if (nbytes > 0 && !spk_play_pcm(buf + base, nbytes, false)) { ok = false; break; }
       int16_t tx, ty;
       if (getTouch(tx, ty)) { stopped = true; break; }   /* 点屏即停 */
     }
@@ -781,7 +800,7 @@ static void messageSend() {
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.println("\n[boot] CareMate bedside_s3_arm_kiosk v5.4 留言收发(听留言只播家属回话)");
+  Serial.println("\n[boot] CareMate bedside_s3_arm_kiosk v5.5 留言收发(听留言电流声修复)");
 
   /* I2C 先行（PCA/触摸都在上面） */
   Wire.begin(BSP_I2C_SDA, BSP_I2C_SCL, 100000);
