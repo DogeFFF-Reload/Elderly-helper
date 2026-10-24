@@ -1,9 +1,12 @@
 """臂（Panthera-HT）：正运动学、物理安全（限位 / 限速 / 禁区 / 按压限力）、臂线程的排队与打断、
 示教文件、Panthera 后端对 SDK 的调用、kit 路由映射、和主脑端到端。全部 mock，不碰硬件。"""
+import io
+from http.client import HTTPConnection
 import json
 import math
 import os
 import shutil
+import socket
 import sys
 import tempfile
 import threading
@@ -11,13 +14,14 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+import wave
 from http.server import ThreadingHTTPServer
 from unittest import mock
 
 from helpers import events, make_bus
 
 from hand_controller import arm_safety as S
-from hand_controller import arm_selftest, arm_service
+from hand_controller import arm_selftest, arm_service, voice_cmd
 from hand_controller.arm_backend import REST, ArmError, MockArm, PantheraArm, make_backend
 from hand_controller.arm_kinematics import GRIPPER_TCP, body_points, tool_position
 from hand_controller.arm_teach import dump_skills, save_point
@@ -188,7 +192,9 @@ class ShippedSkillsTest(unittest.TestCase):
             self.assertIn(name, JOINTS, "末端是手#1 时 grip close 要用 JOINTS[%s]" % name)
 
     def test_master_sends_only_known_arm_skills(self):
-        self.assertEqual(S.skill_names(), {"home", "deliver_medicine", "press_sos", "sign_family_received"})
+        # return_medicine 只从 T5AI 大屏（还药键 / 语音）来，主脑不发
+        self.assertEqual(S.skill_names(), {"home", "deliver_medicine", "return_medicine", "press_sos",
+                                           "sign_family_received"})
 
     def test_all_skills_safe_from_rest_and_after_each_other(self):
         for effector in ("gripper", "hand1"):
@@ -214,7 +220,7 @@ class ShippedSkillsTest(unittest.TestCase):
 
     def test_skills_end_at_rest_except_sign(self):
         cfg = S.load_config("gripper")
-        for name in ("home", "deliver_medicine", "press_sos"):
+        for name in ("home", "deliver_medicine", "return_medicine", "press_sos"):
             self.assertEqual(S.skill_moves(name, cfg)[-1], "rest", name)
 
 
@@ -794,6 +800,16 @@ def start_service():
     return "http://127.0.0.1:%d" % server.server_address[1], stop
 
 
+def post_body(url, path, data):
+    req = urllib.request.Request(url + path, data=data, method="POST",
+                                 headers={"Content-Type": "application/octet-stream"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode("utf-8"))
+
+
 def call(url, path, method="POST"):
     req = urllib.request.Request(url + path, data=b"" if method == "POST" else None, method=method)
     try:
@@ -861,6 +877,7 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(body["arm"]["backend"], "mock")
         self.assertIn("joints_deg", body["arm"])
         self.assertEqual(set(body["hands"]), {"1", "2"})
+        self.assertIn("loaded", body["voice"])
 
     def test_hand_only_poses_still_go_to_hands(self):
         code, body = call(self.url, "/pose?name=finger_fist&hand=1")
@@ -911,7 +928,8 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(self.mock.moves, [], "挥手、举牌（手#2）都只动手")
 
     def test_kit_routes_map_to_arm_skills(self):
-        for route, pose in (("/press_sos", "press_sos"), ("/handover_med", "deliver_medicine"), ("/reset", "home")):
+        for route, pose in (("/press_sos", "press_sos"), ("/handover_med", "deliver_medicine"),
+                            ("/return_med", "return_medicine"), ("/reset", "home")):
             code, body = call(self.url, route)
             self.assertEqual(code, 200, (route, body))
             self.assertEqual((body["pose"], body["alias_of"]), (pose, route))
@@ -919,6 +937,130 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(self.mock.moves[-1][0], REST)
         code, body = call(self.url, "/thumbs")
         self.assertEqual((code, body["pose"]), (200, "thumbs_up"))
+
+    # ---- T5AI 大屏的语音键 /voice_cmd（识别换成假的，只验关键词 → 动作这条路） ----
+
+    def voice(self, heard, body=b"\0" * 16000, unk=0.0):
+        with mock.patch.object(voice_cmd, "recognize", return_value=(heard, unk)):
+            return post_body(self.url, "/voice_cmd", body)
+
+    def test_voice_moves_arm_like_the_button(self):
+        code, body = self.voice("递药")
+        self.assertEqual(code, 200, body)
+        self.assertEqual((body["pose"], body["hand"], body["keyword"]), ("deliver_medicine", 1, "递药"))
+        self.assertTrue(self.arm.wait_idle())
+        self.assertEqual(self.mock.moves[-1][0], REST)
+        self.assertEqual(arm_service.HISTORY[-1]["requested"], "voice:递药")
+        code, body = self.voice("帮我还药")
+        self.assertEqual((code, body["pose"]), (200, "return_medicine"))
+
+    def test_voice_hand_gestures_do_not_move_arm(self):
+        for heard in ("猜拳", "挥手", "点赞", "手指操"):
+            code, body = self.voice(heard)
+            self.assertEqual(code, 200, (heard, body))
+            self.assertEqual(body["hand"], 1)
+            arm_service.hands()[1].drain()
+        self.assertIn(arm_service.HISTORY[0]["pose"], ("rps_rock", "rps_scissors", "rps_paper"))
+        self.assertEqual(self.mock.moves, [])
+
+    def test_voice_longest_keyword_wins(self):
+        self.assertEqual(voice_cmd.match("按铃铛"), "按铃铛")
+        self.assertEqual(voice_cmd.match("做手指操"), "手指操")
+        self.assertEqual(voice_cmd.match("猜拳"), "猜拳")
+        self.assertIsNone(voice_cmd.match("今天天气"))
+
+    def test_voice_grammar_splits_words_missing_from_model(self):
+        vocab = {"药盒", "手指", "操", "按", "铃", "递", "药"}
+        known = vocab.__contains__
+        self.assertEqual(voice_cmd.segment("递药", known), "递 药", "小模型没有「递药」这个词")
+        self.assertEqual(voice_cmd.segment("药盒", known), "药盒")
+        self.assertEqual(voice_cmd.segment("手指操", known), "手指 操")
+        self.assertIsNone(voice_cmd.segment("按铃铛", known))
+        g = voice_cmd.grammar(known)
+        self.assertIn("按 铃", g)
+        self.assertNotIn("按铃铛", " ".join(g))
+        self.assertEqual(g[-1], "[unk]")
+        self.assertEqual(voice_cmd.match("递 药".replace(" ", "")), "递药")
+
+    def test_voice_not_understood_does_nothing(self):
+        for heard, why in (("", "没听清"), ("今天天气", "没听懂")):
+            code, body = self.voice(heard)
+            self.assertEqual(code, 200, body)
+            self.assertFalse(body["ok"])
+            self.assertIn(why, body["error"])
+        # X5 实测：「今天天气不错」被 grammar 硬凑成「紧急」，[unk] 占 0.68；指令最多 0.41（「我们来猜拳」）
+        code, body = self.voice("紧急", unk=0.68)
+        self.assertEqual((code, body["ok"]), (200, False), body)
+        self.assertIn("大半没听懂", body["error"])
+        self.assertEqual(arm_service.HISTORY, [])
+        self.assertEqual(self.mock.moves, [])
+        code, body = self.voice("猜拳", unk=0.41)
+        self.assertTrue(body["ok"], body)
+
+    def test_voice_rejects_short_audio_and_reports_missing_asr(self):
+        code, body = self.voice("递药", b"\0" * 100)
+        self.assertEqual(code, 400, body)
+        with mock.patch.object(voice_cmd, "recognize", side_effect=voice_cmd.VoiceError("没有模型目录")):
+            code, body = post_body(self.url, "/voice_cmd", b"\0" * 16000)
+        self.assertEqual(code, 503, body)
+        self.assertIn("没有模型目录", body["error"])
+        self.assertEqual(arm_service.HISTORY, [])
+
+    def test_voice_accepts_wav(self):
+        pcm = bytes(range(256)) * 64
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(16000)
+            w.writeframes(pcm)
+        self.assertEqual(voice_cmd.strip_wav(buf.getvalue()), pcm)
+        self.assertEqual(voice_cmd.strip_wav(pcm), pcm)
+
+    def test_voice_bad_lengths_and_incomplete_upload_never_reach_recognition(self):
+        from urllib.parse import urlsplit
+        url = urlsplit(self.url)
+        for value in ("invalid", "-1", str(voice_cmd.MAX_BYTES + 1)):
+            with self.subTest(length=value), mock.patch.object(voice_cmd, "handle", side_effect=AssertionError("No recognition")):
+                conn = HTTPConnection(url.hostname, url.port, timeout=2)
+                try:
+                    conn.request("POST", "/voice_cmd", body=b"", headers={"Content-Length": value})
+                    response = conn.getresponse()
+                    self.assertIn(response.status, (400, 413))
+                    response.read()
+                finally:
+                    conn.close()
+        with mock.patch.object(voice_cmd, "handle", side_effect=AssertionError("No recognition")):
+            conn = HTTPConnection(url.hostname, url.port, timeout=2)
+            try:
+                conn.request("POST", "/voice_cmd", body=b"\0" * 8000, headers={"Content-Length": "16000"})
+                conn.sock.shutdown(socket.SHUT_WR)
+                response = conn.getresponse()
+                self.assertEqual(response.status, 400)
+                response.read()
+            finally:
+                conn.close()
+        self.assertEqual(arm_service.HISTORY, [])
+
+    def test_voice_wrong_wav_format_or_partial_pcm_does_not_dispatch(self):
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as recording:
+            recording.setnchannels(1)
+            recording.setsampwidth(2)
+            recording.setframerate(8000)
+            recording.writeframes(b"\0" * 16000)
+        for body in (buffer.getvalue(), b"RIFF" + b"\0" * 16000, b"\0" * 8001):
+            with mock.patch.object(voice_cmd, "recognize", side_effect=AssertionError("Invalid audio")):
+                code, result = post_body(self.url, "/voice_cmd", body)
+                self.assertEqual(code, 400, result)
+        self.assertEqual(arm_service.HISTORY, [])
+
+    def test_voice_recognizer_failure_returns_error_without_any_action(self):
+        with mock.patch.object(voice_cmd, "recognize", side_effect=RuntimeError("private_model_detail")):
+            code, body = post_body(self.url, "/voice_cmd", b"\0" * 16000)
+        self.assertEqual(code, 503)
+        self.assertNotIn("private_model_detail", body["error"])
+        self.assertEqual(arm_service.HISTORY, [])
 
     # ---- 真臂自检脚本（这里用 mock 臂按真实节奏的 1/10 跑） ----
 

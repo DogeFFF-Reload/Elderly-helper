@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 启动单个服务（systemd、桌面自启、手动调试都用它）：
-#   bash deploy/start.sh vision|phone|rps|master|tts|asr|arm|kiosk
+#   bash deploy/start.sh vision|phone|phone-demo|rps|master|tts|asr|arm|kiosk
 #   X5-A：vision、rps   X5-B：master、arm、tts、asr、kiosk
 set -euo pipefail
 
@@ -31,9 +31,14 @@ cd "$ROOT/code"
 # shellcheck disable=SC2086
 case "${1:-}" in
   vision) exec "$PY" -m vision.fall_bridge --camera "${CAMERA_INDEX:-0}" --room "${ROOM:-卧室}" --server "$MASTER" ${VISION_ARGS:-} ;;
-  phone)
-    [ -n "${PHONE_URL:-}" ] || { echo "缺少 PHONE_URL（手机 IP Webcam 地址，例如 http://192.168.1.30:8080）" >&2; exit 1; }
-    exec "$PY" -m camera.phone_fall_watch --phone "$PHONE_URL" --master "$MASTER" ${PHONE_ARGS:-} ;;
+  phone|phone-demo)
+    [ -n "${PHONE_STREAM_URL:-}" ] || { echo "缺少 PHONE_STREAM_URL：填 App 显示的完整 MJPEG 地址（含端口和路径）。旧 PHONE_URL / PHONE_ARGS 已弃用。" >&2; exit 1; }
+    [ -z "${PHONE_ARGS:-}" ] || { echo "请删除旧 PHONE_ARGS；手机入口已改为姿态观察，不使用能量阈值或 --arm。" >&2; exit 1; }
+    export PHONE_USERNAME="${PHONE_USERNAME:-}" PHONE_PASSWORD="${PHONE_PASSWORD:-}"
+    if [ "$1" = phone-demo ]; then
+      exec "$PY" -m vision.integrated_demo --phone-stream "$PHONE_STREAM_URL" --duration "${PHONE_DURATION:-60}" --fps-cap "${PHONE_FPS:-10}" --headless
+    fi
+    exec "$PY" -m vision.fall_bridge --phone-stream "$PHONE_STREAM_URL" --duration "${PHONE_DURATION:-60}" --fps-cap "${PHONE_FPS:-10}" --room "${ROOM:-卧室}" ;;
   rps)    exec "$PY" -m vision.rps_bridge --camera "${RPS_CAMERA_INDEX:-${CAMERA_INDEX:-0}}" --server "$MASTER" ;;
   master) CAREMATE_ARM_URL="http://${ARM_HOST:-127.0.0.1}:8013" exec "$PY" -m master_service --host 0.0.0.0 ;;
   arm)    exec "$PY" -m hand_controller.arm_service --host 0.0.0.0 ;;
@@ -54,5 +59,5 @@ case "${1:-}" in
     done
     echo "没找到浏览器（chromium / firefox）" >&2
     exit 1 ;;
-  *) echo "用法：$0 vision|phone|rps|master|tts|asr|arm|kiosk" >&2; exit 2 ;;
+  *) echo "用法：$0 vision|phone|phone-demo|rps|master|tts|asr|arm|kiosk" >&2; exit 2 ;;
 esac

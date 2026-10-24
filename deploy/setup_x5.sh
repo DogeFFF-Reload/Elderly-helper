@@ -33,7 +33,7 @@ PIP=("$ROOT/.venv/bin/python" -m pip install -i "$PIP_INDEX")
 case "$ROLE" in
   a)
     "${PIP[@]}" -r "$ROOT/code/requirements-vision.txt"
-    # 手机哨兵只依赖 Pillow；即使 PHONE_URL 还没填，提前装好也方便现场换机位
+    # MJPEG 姿态复用上面的视觉依赖；Pillow 用于读取/复核旧能量采集结果。
     "${PIP[@]}" -r "$ROOT/code/requirements-phonecam.txt" ;;
   b)
      # X5-B 跑仓库的 arm_service，蓝盒在 /dev/ttyUSB*：装 pyserial，并把当前用户加进 dialout 组才打得开串口（重新登录生效）

@@ -23,3 +23,4 @@ code/config.local.json
 
 # 各现场自己的 IP 等配置
 deploy/x5.env
+firmware/bedside_t5ai/bedside_t5ai_arm/caremate_local.h

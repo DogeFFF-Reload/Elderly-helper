@@ -98,6 +98,26 @@ class PhonePoseTest(unittest.TestCase):
                 self.assertNotIn(sensitive, text)
         self.assertEqual(len(list(Path(self.temp.name).iterdir())), 2)
 
+    def test_authenticated_loopback_phone_feeds_complete_isolated_mock_demo(self):
+        import master_service
+        from vision.integrated_demo import run_full_demo
+        from vision.live_input import LiveInput
+        live = LiveInput(phone_stream=self.base, username="collector_user", password="collector_secret",
+                         duration=.35, fps=20, estimator_factory=lambda **kw: FakeEstimator())
+        output = Path(self.temp.name) / "complete"
+        output.mkdir()
+        with patch("cv2.VideoCapture", side_effect=AssertionError("No physical camera")), \
+                patch.object(master_service, "ArmClient", side_effect=AssertionError("No real actuator")):
+            report = run_full_demo(output, live_input=live)
+        self.assertTrue(report["ok"], report)
+        self.assertFalse(report["camera_opened"])
+        self.assertTrue(report["phone_stream_opened"])
+        self.assertEqual(report["visual_inputs"][0]["kind"], "live")
+        for path in output.glob("*.json*"):
+            text = path.read_text(encoding="utf-8")
+            for value in (self.base, "collector_user", "collector_secret"):
+                self.assertNotIn(value, text)
+
     def test_low_sampling_rate_does_not_extend_session_past_deadline(self):
         camera = PhoneFrameSource(self.base, mjpeg=True, username="collector_user", password="collector_secret")
         started = time.monotonic()

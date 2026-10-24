@@ -5,8 +5,7 @@
 - **交互端**（§2–§6）：语音链路（ASR / TTS）、三块屏、健康口述、回声风格档案、教学库、scripted 台词。
 - **主脑与安全内核**（§10）：总线、状态机、supervisor、llm 超时回落、演示参数配置化、`demo_driver`、回归与合并工具。
 
-> ⚠️ 本机没有找到团队代码仓，所以按 v2.5 文档的接口**从零重建**了一个能跑的最小总线（stand-in），让交互端可以独立开发、端到端演示。
-> 合并进真仓库时：**交互端文件直接用这里的；stand-in 文件以队友的正式版为准**（见文末「合并说明」）。
+> 当前为团队合并仓库。执行端统一使用仓库 `code/hand_controller/arm_service.py`，不用 kit 同名服务。最新分工与剩余验收见 `docs/26_field_handoff_vision_phone_debug.md`、`docs/27_计划执行结果与剩余验收.md`；模拟流程通过和设备现场验收分别记录。
 
 ## 1. 跑起来
 
@@ -14,7 +13,7 @@
 
 ```powershell
 cd code
-python tests/run_all.py                  # 回归，必须 ALL PASS（当前 29 套 390 条）
+python tests/run_all.py                  # 回归，必须 ALL PASS（当前 31 套 415 条）
 python -m master_service                 # 主脑 :8000（含三块屏）
 python -m demo_driver --pause            # 按 §3 主线一段一段走演示（另开终端，见 §10）
 python -m hand_controller.arm_service    # 臂+双手 mock :8013（另开终端，可不开）
@@ -143,7 +142,7 @@ python -m voice.asr_bridge --device 1
 
 - 【硬件】喇叭和麦克风最终装在床头盒还是 X5？在床头盒的话，`tts_player --backend cmd` 把音频转给盒子，协议等硬件同学定。
 - 【全队】会场噪音下 Vosk 小模型的识别率需要实测；不够用的话换 `vosk-model-cn-0.22`（大模型）或 sherpa-onnx，桥的接口不变。
-- 【演示】`fall_bridge --camera` 还没在真人画面上实拍调参（见 §11.3）；大屏已能画视觉推来的实时骨架。
+- 【演示】已完成电脑固定机位的真人正常活动采集与骨架回放；真人跌倒检出、误报/漏报和真实 iPhone 姿态稳定性仍待验收。实时输入可接独立模拟主程序（§12.7），本轮未启动设备。
 - 【硬件 × 软件】床头盒协议是软件这边出的草案（§10.6），等硬件同学确认或改。
 - 【全队】只有**两块 X5**（v2.5 §1.2 按三块写的）。建议映射见 §10.9：X5-A 视觉，X5-B 主脑 + 屏 + 语音 + 执行端。要硬件同学确认 X5-B 的 USB 口够接 RS485、麦克风、喇叭；演示同学 `deploy/` 里的脚本已改成两块的版本（`a` / `b`，执行端并进 `b`，见 §11.5）。
 
@@ -435,13 +434,13 @@ CareMate 联调自检 · http://127.0.0.1:8000
 
 | # | 任务 | 状态 | 在哪 |
 |---|---|---|---|
-| ① | 笔记本跑通 `--camera`，依赖写进 README | ✅ 姿态/手部模型已在 mediapipe 1.1.1 官方测试图上实测（站立人像躯干 2°、旋转 90° 后 89°、张开的手判为"布"）；**摄像头取帧（cv2）还没在本机实拍过**，见 11.3 | `vision/fall_bridge.py`、`vision/pose_backends.py` |
-| ② | 用真实画面调 `fall_rules`，降低误报漏报 | ✅ 规则改成看时间（见 11.2），9 个合成场景 × 多种帧率/抖动 0 误判；配套调参窗口、录制、离线评估工具 | `gesture/fall_rules.py`、`vision/preview.py`、`vision/eval_falls.py` |
-| ③ | `--video` + 预录跌倒视频（Plan B） | ✅ `--video` 按真实时间播放；另有 `--keypoints`（回放录下的骨架，不需要摄像头和模型）和 `--synthetic fall`（内置合成跌倒） | `vision/fall_bridge.py`、`vision/synth.py` |
-| ④ | 2 块 X5 装环境、写开机脚本 | ✅ 装环境、systemd 开机自启、桌面登录后自启（喇叭/大屏）；还没在 X5 实机上跑过 | `deploy/` |
-| — | 猜拳手势识别 | ✅ 视觉只认手势（分类 + 多帧投票）并回传；一局流程和判输赢在主脑，由软件分支 `software/rps-hook` 提供 | `gesture/rps_engine.py`、`vision/rps_bridge.py` |
+| ① | 笔记本摄像头与依赖 | 已实拍：固定电脑完成站立、走动、坐下站起；操作者已确认，坐标留档。新增实时完整模拟入口，实机运行待验收 | `vision/pc_observe.py`、`vision/integrated_demo.py` |
+| ② | 真实画面调 `fall_rules` | 部分完成：时序规则、合成场景和真人正常活动回放通过；真人跌倒检出和真实场景误报/漏报尚未完成 | `gesture/fall_rules.py`、`vision/eval_falls.py` |
+| ③ | 预录素材 Plan B | 输入代码与骨架回放已完成；尚未确认有合适的真人跌倒视频及最终完整演示录像 | `vision/fall_bridge.py`、`vision/integrated_demo.py` |
+| ④ | 2 块 X5 环境与开机脚本 | 脚本已写；两板最终视觉链路、性能、网络和重启恢复待现场验收，队友的单模块实测不等于全链完成 | `deploy/` |
+| — | 猜拳手势识别 | 代码与回归已完成；真人手势整局验收待补 | `gesture/rps_engine.py`、`vision/rps_bridge.py` |
 
-回归：`python tests/run_all.py` 合并 main 后 16 套 132 条（视觉新增 `test_fall_detector`，`test_rps_engine` 改为只测视觉一侧；`test_fall_detector` 的负责人登记在 `software/rps-hook` 里）。本分支只改视觉文件，`master_service.py` 等软件文件一行没动。
+视觉规则、猜拳、手机输入、实时输入、完整模拟演示均有已登记负责人的测试。当前全量回归数字见 §1；早期分支的16套132条属于历史记录。
 
 ### 11.1 跑起来
 
@@ -475,7 +474,7 @@ python -m vision.rps_bridge --camera                       # 猜拳（展台）�
 ### 11.3 实拍调参流程（演示同学要做的）
 
 1. `--camera --preview`：窗口里看骨架、躯干角度、髋部下降、规则状态；按 `q` 退出。
-2. 录素材（只存坐标，不存画面）：`--camera --record-keypoints recordings/fall_01.jsonl`。文件名带 `fall` 的是跌倒，其余（`sit_`、`bend_`、`bed_` …）是日常动作。建议各录 3 段以上，摔的时候垫好垫子。
+2. 当前不要求重新采集。后续有安全素材和设备条件时，保存坐标并明确标注动作；文件名不是动作真值，真人活动由操作者确认。完整模拟入口的倒地阶段使用清楚标注的合成骨架。
 3. 批量评估：`python -m vision.eval_falls recordings/`，输出每段是否漏报 / 误报和报警时间；改参数再跑：`--set confirm_hold=1.5`。
 4. 定下来的参数写进 `rules.json`，开机脚本里 `VISION_ARGS="--rules rules.json"`。
 5. 录好的 `recordings/` 可以提交进仓库，以后谁改规则都先跑一遍 eval。
@@ -509,27 +508,20 @@ bash deploy/start.sh vision                  # 手动起单个服务调试：vis
 
 视觉这边只做一件事：在揭晓前后约 2 秒内逐帧识别老人的手势、多帧投票，回传 `POST /api/rps/gesture {"round": n, "gesture": "rock"|"scissors"|"paper"|null}`。一局怎么走、机器人出什么、谁赢，都在主脑一侧（`software/rps-hook`，README §10.7）。手势识别按"指尖到手腕的距离"判断手指伸直，和手怎么转、离多远、画面比例都无关。
 
-## 12. 手机摄像头保底哨兵
+## 12. 手机摄像头：MJPEG 姿态输入
 
-当 X5 的 MIPI 摄像头不可用时，可以用安卓手机运行 IP Webcam，把手机当作临时视觉输入。哨兵只负责从 `/shot.jpg` 取帧、计算动作能量并向主脑发送 `POST /mock/fall`；它不直接调用机械臂，跌倒后的询问、升级和家属通知仍由主脑状态机负责。
+当前使用 iPhone App 显示的完整 MJPEG 地址，支持账号密码。默认入口 `vision.fall_bridge --phone-stream` 运行人体姿态与时序规则，只在本地观察并保存坐标（§12.3）。显式选择 `vision.integrated_demo --phone-stream` 时，可把实时骨架接入独立本机模拟主程序（§12.7）。
 
 ```powershell
-pip install -r code/requirements-phonecam.txt
 cd code
-python -m camera.phone_fall_watch --phone http://<手机IP>:8080 --arm 0
+..\.venv\Scripts\python.exe -m vision.fall_bridge --phone-stream "http://<手机IP>:8081/" --duration 60 --preview
 ```
 
-`--arm 0` 用于现场校准，`--arm 1` 才会真正上报；`--conn` 控制连续超阈值帧数。手机和主脑必须处于同一网络，手机应保持插电并关闭省电策略。X5 部署可在 `deploy/x5.env` 设置 `PHONE_URL` 和 `PHONE_ARGS`，然后运行 `bash deploy/start.sh phone`；执行 `bash deploy/install_services.sh a` 时若已配置 `PHONE_URL`，会在 X5-A 上安装手机哨兵 systemd 服务。完整交接步骤见 `docs/21_交接_手机摄像头组.md`。
+账号密码可通过当前终端的 `PHONE_USERNAME` / `PHONE_PASSWORD` 设置；不写入网址或提交 Git。X5 的 `deploy/x5.env` 改填 `PHONE_STREAM_URL`、凭据、`PHONE_DURATION` 和 `PHONE_FPS`。`bash deploy/start.sh phone` 只观察；`phone-demo` 使用独立模拟主程序，默认无窗口。安装 a 角色时，配置了手机流就只安装 phone 服务；已有旧 vision 服务需现场队友检查并停止。
 
-**iPhone / IP Camera Lite**：若 App 首页返回 `Content-Type: multipart/x-mixed-replace`，使用 `--stream-url` 指定这个完整地址，不能附加安卓的 `/shot.jpg`。摄像头连接直接访问手机，不使用系统/环境代理；`.local` 主机名按系统解析，可使用 IPv6。需要登录时传 `--username` / `--password`，也可用 `PHONE_USERNAME` / `PHONE_PASSWORD` 环境变量。账号密码不要写入网址或提交到仓库。
+**旧配置迁移**：删除 `PHONE_URL` / `PHONE_ARGS`。启动与安装脚本会拒绝旧配置。`camera.phone_fall_watch` 仅保留用于历史能量数据排查，不作为默认跌倒方案；不可能触发的阈值38现在会在访问摄像头前被拒绝。当前交接以 `docs/26_field_handoff_vision_phone_debug.md` 为准。
 
-```powershell
-# 在仓库根目录执行；地址替换成 App 实际显示、已测试可连接的地址。
-# admin/admin 仅适用于未修改默认账号密码的 App。
-python code/camera/phone_fall_watch.py --stream-url http://<手机主机名>.local:8081/ --username admin --password admin --arm 0 --frames 10
-```
-
-看到 `[CAMERA] 已收到并解码第一帧画面` 和 `[M] e=...` 表示 Python 已在读取画面；`--frames 10` 会在观察 10 帧后退出，按 Ctrl+C 也可退出。`--arm 0` 不向主脑上报事件，无需先启动主脑或手服务。持续观察时去掉 `--frames 10`。当前保底算法用连续变化能量触发，纵向重心只作日志输出；普通大幅运动也可能触发，仍需现场测量误报/漏报。注意当前能量缩放的理论范围是 0–21.25，旧交接材料中的 `--thresh 38` 不适用于当前实现；先观察实际数值，再标定阈值。
+摄像头请求绕过系统/环境代理；`.local` 按系统解析，可用实际 IP。画面只在内存中处理。以下 §12.1–12.2 是历史能量采集与分析工具的说明，现已接受第三轮固定手机数据继续开发，不要求现在重跑三轮；这些能量数值不能还原成骨架，也不能证明跌倒识别效果。
 
 ### 12.1 一次启动，自动采集三轮日常动作
 
@@ -672,3 +664,19 @@ python -m vision.integrated_demo --headless --keypoints "data/pc_pose/批次/key
 ```
 
 结果保存在 `code/data/integrated_demo/批次/`，包含 HTML、JSON、输入坐标和 ZIP。若同目录存在 `operator_confirmation.json`，只有正常活动、固定机位两个确认和坐标 SHA256 全部匹配时，才自动采用操作者确认。没有确认时保留未标注状态。录制出现疑似事件会停止后续演示并保留证据。
+
+### 12.7 实时摄像头接完整模拟流程
+
+本轮完成实时入口的软件验证，没有启动真实摄像头或硬件；实机运行仍待验收。准备好测试时，Windows 双击 `START_LIVE_VISION_DEMO.bat` 使用电脑0号摄像头。iPhone 在 `code/` 中运行：
+
+```powershell
+..\.venv\Scripts\python.exe -m vision.integrated_demo --phone-stream "http://<App显示的完整地址>:8081/" --duration 60
+```
+
+凭据用 `PHONE_USERNAME` / `PHONE_PASSWORD` 环境变量。电脑也可运行 `python -m vision.integrated_demo --camera 0 --duration 60`；Linux / X5 加 `--headless`。旧的 `START_FULL_VISION_DEMO.bat` 继续回放保存的骨架，不打开摄像头。
+
+血压确认、模拟递药后开始实时观察，固定镜头并做普通活动；窗口显示内存中的画面、骨架和主程序状态。观察结束后关闭输入，继续标为合成的倒地、取消、模拟求助、家属确认和手指操。实时段按接收时间运行，不叠加回放速度。全程无语音播放，操作提示在电脑屏幕上。
+
+主程序固定为本次新建的 `127.0.0.1` 随机端口，忽略本机真实执行端配置，只记录模拟动作。没有外部主程序地址参数。结果 ZIP 增加 `live_keypoints.jsonl`；不保存画面、手机地址或凭据。断流、无人导致没有可用骨架、观察段出现疑似事件或用户中断时保留部分结果并停止后续脚本。通过只说明软件流程通过，不能作为真人跌倒识别准确率。
+
+X5 的 `bash deploy/start.sh phone` 是姿态观察，`phone-demo` 是上述完整模拟流程；均使用 `PHONE_STREAM_URL`，不再使用旧能量阈值。详细交接见 [视觉与手机交接](docs/26_field_handoff_vision_phone_debug.md)。
