@@ -13,7 +13,7 @@
 
 ```powershell
 cd code
-python tests/run_all.py                  # 回归，必须 ALL PASS（当前 31 套 415 条）
+python tests/run_all.py                  # 回归，必须 ALL PASS（当前 34 套 449 条）
 python -m master_service                 # 主脑 :8000（含三块屏）
 python -m demo_driver --pause            # 按 §3 主线一段一段走演示（另开终端，见 §10）
 python -m hand_controller.arm_service    # 臂+双手 mock :8013（另开终端，可不开）
@@ -475,9 +475,21 @@ python -m vision.rps_bridge --camera                       # 猜拳（展台）�
 
 1. `--camera --preview`：窗口里看骨架、躯干角度、髋部下降、规则状态；按 `q` 退出。
 2. 当前不要求重新采集。后续有安全素材和设备条件时，保存坐标并明确标注动作；文件名不是动作真值，真人活动由操作者确认。完整模拟入口的倒地阶段使用清楚标注的合成骨架。
-3. 批量评估：`python -m vision.eval_falls recordings/`，输出每段是否漏报 / 误报和报警时间；改参数再跑：`--set confirm_hold=1.5`。
-4. 定下来的参数写进 `rules.json`，开机脚本里 `VISION_ARGS="--rules rules.json"`。
-5. 录好的 `recordings/` 可以提交进仓库，以后谁改规则都先跑一遍 eval。
+3. 离线分析：`python -m vision.eval_falls recordings/keypoints.jsonl`。不提供标签时只报告触发事件，不宣称准确率。根目录 `START_ANALYZE_VISION.bat` 默认分析最新电脑坐标，不打开摄像头。
+4. 有明确标签时加 `--labels labels.json`，格式见下方；每个标签绑定原文件 SHA256，可给 `window: [开始秒, 结束秒]` 限定半开区间。重复跌倒必须填写确切次数。可加 `event_onsets_s`（与坐标同一时间轴）报告触发延迟；没有开始时间就不推算延迟。改参数再跑：`--set confirm_hold=1.5`。
+5. 结果包含 HTML、JSON 和同名 ZIP。没有可用躯干、输入缺口超过3秒或输入错误时不计入效果统计；录制和合成分别统计。目录参数会读取其中所有 `*.jsonl`，阶段提示和事件日志不是骨架文件，应使用明确的坐标路径或单独的坐标目录。
+6. 参数保存到 `rules.json`，开机脚本使用 `VISION_ARGS="--rules rules.json"`。录制与标签留在本地结果包中交接，不自动提交个人采集数据。
+
+```json
+{
+  "schema_version": 1,
+  "recordings": [
+    {"file": "recordings/keypoints.jsonl", "sha256": "<原文件64位小写SHA256>", "expected_events": 0}
+  ]
+}
+```
+
+路径相对 `labels.json`。哈希不匹配会报错，文件名包含 `fall` 不影响标签。`--synthetic` 的9个内置规则场景和 `vision.rehearsal` 的12个链路/异常场景是两组不同检查，均不是实测跌倒识别率。
 
 ### 11.4 Plan B 顺序
 
@@ -680,3 +692,21 @@ python -m vision.integrated_demo --headless --keypoints "data/pc_pose/批次/key
 主程序固定为本次新建的 `127.0.0.1` 随机端口，忽略本机真实执行端配置，只记录模拟动作。没有外部主程序地址参数。结果 ZIP 增加 `live_keypoints.jsonl`；不保存画面、手机地址或凭据。断流、无人导致没有可用骨架、观察段出现疑似事件或用户中断时保留部分结果并停止后续脚本。通过只说明软件流程通过，不能作为真人跌倒识别准确率。
 
 X5 的 `bash deploy/start.sh phone` 是姿态观察，`phone-demo` 是上述完整模拟流程；均使用 `PHONE_STREAM_URL`，不再使用旧能量阈值。详细交接见 [视觉与手机交接](docs/26_field_handoff_vision_phone_debug.md)。
+
+### 12.8 无设备分析与备用视频
+
+双击 `START_ANALYZE_VISION.bat`，只读取最新保存的电脑骨架，生成 HTML、JSON 和 ZIP；没有明确标签时保留“未标注”，不以文件名猜测动作。显式标签格式和输入质量限制见 §11.3。
+
+安装视觉依赖和本机 FFmpeg 后，可在 `code/` 运行：
+
+```powershell
+..\.venv\Scripts\python.exe -m vision.export_demo --latest-recording
+```
+
+导出 `code/data/demo_backup/<批次>/software_demo.mp4` 及同名 ZIP。只读已有骨架或明确标注的合成坐标，不打开摄像头、窗口、音频或真实执行端。视频全程带“备份回放·全程模拟”标识；正常活动可来自已保存记录，倒地与执行端均模拟。关键询问/求助画面留出观看时间，视频长度不是现场彩排用时。需要 Pillow、中文字体和 FFmpeg；命令没有摄像头参数。
+
+### 12.9 检测到倒下后，警报发到哪里
+
+默认电脑观察 `START_PC_CAMERA.bat` 和手机姿态观察只在本地提示、保存事件，不向主程序上报。完整模拟入口把疑似事件送到本次新建的本机 CareMate 主程序，再进行询问、取消或模拟求助。视觉从不直接调用机械臂。
+
+当前家属通知仅是主程序内的通知记录，由家属网页显示；没有短信、微信推送或电话服务，120也是模拟。完整模拟入口没有声音播放。现场版要发出可听询问，需要另接并验收 TTS/喇叭；真正通知家属还需确定并接入通知渠道。
