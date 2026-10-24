@@ -7,7 +7,10 @@
   GET  /api/box?id=box1                   床头盒轮询：灯色 + 心跳（协议草案，见 README）
   GET  /api/nodes                         节点自检：执行端 / 床头盒 / 视觉 / 喇叭 / 麦克风 / LLM（tools/preflight 用）
   GET/POST /api/params                    演示参数查看 / 运行中调整
-  GET  /ui/monitor | /ui/family | /ui/console
+  POST /api/call/start|offer|answer|hangup  老人端 ↔ 家属端语音通话的信令（WebRTC，见 agent/comms.py）
+  GET  /api/call/sdp?id=&which=offer      取对方的 SDP
+  POST /api/voice_msg?from=&to=&dur=      语音留言（正文是录音原始字节）；GET ?id= 取回放
+  GET  /ui/monitor | /ui/family | /ui/console | /ui/elder
 
 运行：python -m master_service [--host 0.0.0.0] [--port 8000]
 """
@@ -27,6 +30,7 @@ from pathlib import Path
 
 import config
 from agent import intent
+from agent.comms import MAX_VOICE_BYTES, Comms
 from agent.device_helper import DeviceHelper
 from agent.health_tracker import HealthTracker
 from agent.llm_client import LLMClient
@@ -340,6 +344,7 @@ class Bus:
         self.next_rps_id = 1
         self.estop = False   # 不放进 _reset_runtime：重置演示不能解除急停
         self.med = MedReminder(self.cfg, clock)
+        self.comms = Comms(self.cfg, clock, self.clients)
         self._reset_runtime()
         channel = self.llm.mode
         if self.llm.mode == "llm":
@@ -359,6 +364,8 @@ class Bus:
         self.rps_last = None
         if hasattr(self, "med"):
             self.med.reset()
+        if hasattr(self, "comms"):
+            self.comms.reset()   # 通话中重置：两边页面看到 call 没了就自己挂断
 
     # ---------- 工具 ----------
 
@@ -412,10 +419,9 @@ class Bus:
         elif reason.startswith("rejected"):
             self.events.add("system", "LLM 台词没过检查（%s）→ 这句用 scripted" % reason.split(": ", 1)[1], "warn")
 
-    def _notify(self, contact_id, kind, text):
+    def _notify(self, contact_id, kind, text, **extra):
         c = self.contact(contact_id or self.primary["id"]) or self.primary
-        n = {"id": self.next_notif_id, "ts": self.clock(), "contact": c["id"], "kind": kind,
-             "text": text, "acked": False}
+        n = dict(extra, id=self.next_notif_id, ts=self.clock(), contact=c["id"], kind=kind, text=text, acked=False)
         self.next_notif_id += 1
         self.notifications.append(n)
         del self.notifications[:-50]
@@ -444,7 +450,9 @@ class Bus:
                 if not a.get("quiet"):
                     self.events.add("arm", pose_label(a["pose"]), who="arm", pose=a["pose"], hand=a["hand"])
             elif kind == "notify":
-                self._notify(a["contact"], a["kind"], a["text"])
+                self._notify(a["contact"], a["kind"], a["text"], **a.get("extra", {}))
+                if a["kind"] == "fall":   # 跌倒升级通知到谁，老人端就向谁发起紧急通话（不改状态机）
+                    self._run(self.comms.emergency(a["contact"]))
             # "dial" 已由状态机配套的 event 记录；真实拨号接口待定
 
     # ---------- 执行端回执（ArmClient 的线程里调） ----------
@@ -493,12 +501,15 @@ class Bus:
             self.last_heard = {"text": text, "ts": self.clock()}
             self.events.add("heard", text, who="elder")
             g = self.fsm.snapshot()
+            live = self.comms.live
             ctx = {
                 "asking": g["state"] == ASKING,
                 "dial_pending": g["dial_pending"],
                 "health_pending": self.health.pending is not None,
                 "exercise_active": self.exercise is not None,
                 "med_pending": self.med.enabled and self.med.pending is not None,
+                "call_incoming": bool(live and live["state"] == "ringing" and live["to"] == "elder"),
+                "call_active": bool(live and "elder" in (live["from"], live["to"])),
                 "contacts": self.cfg["contacts"],
             }
             name, slots = intent.classify(text, ctx)
@@ -551,9 +562,21 @@ class Bus:
             return self.med.not_yet()
         if name == "call_family":
             c = self.contact(slots["contact"])
+            # 床头屏在线就真打过去（语音通话）；不在线照旧发消息让家属回电话
+            if self.comms.online("elder") and not self.comms.live:
+                res, acts = self.comms.start("elder", c["id"])
+                if res["ok"]:
+                    return acts + [_say("call_dialing", contact=c["name"], pron=c["pron"])]
             return [{"do": "notify", "contact": c["id"], "kind": "call",
                      "text": "%s请您回个电话" % self.cfg["elder_title"]},
                     _say("call_family", contact=c["name"], pron=c["pron"])]
+        if name == "call_answer":
+            return self.comms.request_answer()
+        if name == "call_hangup":
+            live = self.comms.live
+            return self.comms.hangup(live["id"] if live else None, "elder")[1]
+        if name == "voice_play":
+            return self._voice_play()
         if name == "call_blocked":
             who = slots["who"]
             sup.check("call_family", contact=who)
@@ -576,7 +599,7 @@ class Bus:
             return self._teach(text)
         if name == "echo":
             c = self.contact(slots["contact"]) or self.primary
-            latest = next((m["text"] for m in reversed(self.messages) if m["from"] == c["id"]), None)
+            latest = next((m["text"] for m in reversed(self.messages) if m["from"] == c["id"] and m.get("text")), None)
             line = self.style.speak(c["id"], c["pron"], latest)
             if line is None:
                 return [_ev("echo", "%s未授权回声代聊，未代聊" % c["name"]),
@@ -747,7 +770,7 @@ class Bus:
             c = self.contact(contact_id)
             if c is None:
                 return {"ok": False}
-            history = [m["text"] for m in self.messages if m["from"] == c["id"]]
+            history = [m["text"] for m in self.messages if m["from"] == c["id"] and m.get("text")]
             style = self.style.authorize(c["id"], history)
             self.events.add("echo", "%s亲手授权回声代聊（只学文字风格，不做声音克隆）" % c["name"], "ok", "family")
             return {"ok": True, "style": style}
@@ -760,6 +783,72 @@ class Bus:
             self.style.revoke(c["id"])
             self.events.add("echo", "%s一键收回授权，风格档案已清空" % c["name"], "info", "family")
             return {"ok": True}
+
+    # ---------- 通话 / 语音留言（老人端 ui/elder ↔ 家属端 ui/family） ----------
+
+    def call_start(self, frm, to, emergency=False):
+        with self.lock:
+            emergency = bool(emergency) and frm == "elder"   # 紧急呼叫只有老人能发
+            res, acts = self.comms.start(frm, to, emergency=emergency, urgent=self.fsm.state != IDLE,
+                                         manual=emergency)
+            self._run(acts)
+            return res
+
+    def call_offer(self, call_id, party, sdp):
+        with self.lock:
+            return self.comms.set_offer(call_id, party, sdp)
+
+    def call_answer(self, call_id, party, sdp):
+        with self.lock:
+            res, acts = self.comms.answer(call_id, party, sdp)
+            self._run(acts)
+            return res
+
+    def call_hangup(self, call_id, party):
+        with self.lock:
+            res, acts = self.comms.hangup(call_id, party)
+            self._run(acts)
+            return res
+
+    def call_sdp(self, call_id, which):
+        with self.lock:
+            return self.comms.sdp(call_id, which)
+
+    def voice_upload(self, frm, to, mime, data, dur):
+        with self.lock:
+            msg, acts, err = self.comms.add_voice(frm, to, mime, data, dur)
+            if err:
+                return {"ok": False, "error": err}
+            self.messages.append(msg)
+            self._run(acts)
+            return {"ok": True, "voice_id": msg["voice_id"], "dur": msg["dur"]}
+
+    def voice_audio(self, voice_id):
+        with self.lock:
+            return self.comms.get_audio(voice_id)
+
+    def voice_heard(self, voice_id, party):
+        with self.lock:
+            for m in self.messages:
+                if m.get("kind") == "voice" and str(m["voice_id"]) == str(voice_id):
+                    if m["to"] != party:
+                        return {"ok": False, "error": "这条留言不是发给你的"}
+                    if not m["heard"]:
+                        m["heard"], m["heard_ts"] = True, self.clock()
+                    return {"ok": True}
+            return {"ok": False, "error": "没有这条留言"}
+
+    def _voice_play(self):
+        """老人说“听留言”：床头屏在线就让它放（先放没听过的，最早的先放），不在线就说一声。"""
+        if not self.comms.online("elder"):
+            return [_say("voice_no_screen")]
+        mine = [m for m in self.messages if m.get("kind") == "voice" and m["to"] == "elder"
+                and self.comms.get_audio(m["voice_id"])]
+        if not mine:
+            return [_say("voice_none")]
+        m = next((x for x in mine if not x["heard"]), mine[-1])
+        self.comms.request_play(m["voice_id"])
+        return [_ev("voice", "播放%s的语音留言" % self.comms.name(m["from"]), who="elder")]
 
     # ---------- 操作台 ----------
 
@@ -858,7 +947,8 @@ class Bus:
 
     def tick(self):
         with self.lock:
-            acts = self.fsm.tick() + self.health.tick() + self.med.tick(idle=self.fsm.state == IDLE)
+            acts = (self.fsm.tick() + self.health.tick() + self.med.tick(idle=self.fsm.state == IDLE)
+                    + self.comms.tick())
             now = self.clock()
             ex = self.exercise
             if ex and now >= ex["next"]:
@@ -956,6 +1046,7 @@ class Bus:
                 "exercise": {"active": ex is not None, "beat": ex["beat"] if ex else 0, "total": len(FINGER_MOVES)},
                 "rps": self._rps_view(),
                 "med": self.med.snapshot(),
+                "comms": self.comms.snapshot(),
                 "skeleton": self.skeleton,
                 "arm": self.arm.status(),
                 "hands": {k: dict(v) for k, v in self.hands.items()},
@@ -1018,6 +1109,11 @@ def dispatch_post(bus, path, body, query=None):
         "/api/agent/propose": lambda: bus.agent_propose(arg("skill", "")),
         "/api/reset": lambda: bus.reset(clear_data=str(arg("all", "0")) == "1"),
         "/api/rps/gesture": lambda: bus.rps_gesture(arg("round"), arg("gesture")),
+        "/api/call/start": lambda: bus.call_start(arg("from"), arg("to"), _truthy(arg("emergency", False))),
+        "/api/call/offer": lambda: bus.call_offer(arg("id"), arg("party"), arg("sdp", "")),
+        "/api/call/answer": lambda: bus.call_answer(arg("id"), arg("party"), arg("sdp", "")),
+        "/api/call/hangup": lambda: bus.call_hangup(arg("id"), arg("party")),
+        "/api/voice_msg/heard": lambda: bus.voice_heard(arg("id"), arg("party")),
     }
     fn = routes.get(path)
     return fn() if fn else None
@@ -1060,7 +1156,17 @@ def make_handler(bus):
             if path == "/api/state":
                 return self._json(bus.snapshot())
             if path == "/api/poll":
+                client = q.get("client", [""])[0]
+                if client:   # 老人端 / 家属端页面报到：通话要知道对方页面开没开
+                    bus.saw_client(client[:40])
                 return self._json(bus.poll(int(q.get("since", ["0"])[0])))
+            if path == "/api/call/sdp":
+                return self._json(bus.call_sdp(q.get("id", [""])[0], q.get("which", [""])[0]))
+            if path == "/api/voice_msg":
+                clip = bus.voice_audio(q.get("id", [""])[0])
+                if clip is None:
+                    return self._json({"ok": False, "error": "留言不存在或已过期"}, 404)
+                return self._send(200, clip["data"], clip["mime"])
             if path == "/api/events":
                 bus.saw_client(q.get("client", [""])[0] or "未标名@" + self.client_address[0])
                 with bus.lock:
@@ -1085,6 +1191,13 @@ def make_handler(bus):
         def do_POST(self):
             url = urllib.parse.urlparse(self.path)
             q = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
+            if url.path == "/api/voice_msg":   # 正文是录音原始字节，不是 JSON
+                n = int(self.headers.get("Content-Length") or 0)
+                if n > MAX_VOICE_BYTES:
+                    return self._json({"ok": False, "error": "录音太大"}, 413)
+                data = self.rfile.read(n) if n else b""
+                return self._json(bus.voice_upload(q.get("from"), q.get("to"), self.headers.get("Content-Type", ""),
+                                                   data, q.get("dur")))
             result = dispatch_post(bus, url.path, _read_json(self), q)
             if result is None:
                 return self._json({"ok": False, "error": "not found"}, 404)
