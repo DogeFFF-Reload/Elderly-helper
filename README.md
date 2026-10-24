@@ -14,7 +14,7 @@
 
 ```powershell
 cd code
-python tests/run_all.py                  # 回归，必须 ALL PASS（当前 24 套 225 条）
+python tests/run_all.py                  # 回归，必须 ALL PASS（当前 25 套 235 条）
 python -m master_service                 # 主脑 :8000（含三块屏）
 python -m demo_driver --pause            # 按 §3 主线一段一段走演示（另开终端，见 §10）
 python -m hand_controller.arm_service    # 臂+双手 mock :8013（另开终端，可不开）
@@ -475,3 +475,32 @@ python code/camera/phone_calibration_report.py "code/data/phone_calibration/批�
 测试前先固定机位、确认全身和走动路线能入镜；测试中人只在画面内活动，不挪动手机去追拍。机位和镜头与已有有效轮次一致时可用 `--rounds 2` 补两轮；重新摆放机位或换镜头后，按新场景重新采集和分析。
 
 阶段结束前剩余时间不足 `--frame-timeout` 时，等待最后一帧到期只代表阶段到时；程序仍检查源错误、画面新鲜度和本段采样质量。不会因阶段到时本身误报连接失败，也不会隐藏真实连接错误。
+
+### 12.3 手机画面接入人体姿态规则（本地观察）
+
+`vision.fall_bridge --phone-stream` 将同一 iPhone MJPEG 输入接到仓库已有的 `PoseEstimator` 和 `FallDetector`，依据躯干姿态和动作时序做本地判断。此入口始终只观察，即使未写 `--dry-run` 也不创建总线发送器，不向主脑发送骨架或跌倒事件。它与 §12 的画面变化哨兵分别使用不同的判定方式；能量值不能转换成骨架坐标。
+
+依赖与模型先在项目环境中安装（无需摄像头）：
+
+```powershell
+python -m venv --system-site-packages .venv
+.\.venv\Scripts\python.exe -m pip install -r code/requirements-vision.txt
+cd code
+..\.venv\Scripts\python.exe -m vision.pose_backends --download
+```
+
+有手机条件时，在 `code/` 下运行以下观察命令（当前阶段不要求补测）：
+
+```powershell
+..\.venv\Scripts\python.exe -m vision.fall_bridge --phone-stream http://<手机主机名>.local:8081/ --phone-username admin --phone-password admin --duration 60 --preview
+```
+
+默认观察60秒，自动保存到 `code/data/phone_pose/`，也可用 `--frames 30` 限制处理帧数、`--record-keypoints 路径.jsonl` 指定保存位置。`--fps-cap` 默认自动取10帧/秒；读取线程持续排空MJPEG，推理处理新画面，不累积旧帧。骨架文件记录接收时间和关键点、真实宽高比，不包含图像、手机网址或登录信息；`.summary.json` 记录处理帧数、检测到人的帧数、可用躯干骨架帧数和本地疑似事件。检测到人的比例表示骨架可用情况，不能当成识别准确率。
+
+按 `q` 关闭预览或 Ctrl+C 会停止并保留骨架；断线或解码错误会保留部分记录并报告失败。没检测到可用躯干骨架会单独提示，不标为成功。保存的骨架可在以后无设备时回放：
+
+```powershell
+..\.venv\Scripts\python.exe -m vision.fall_bridge --keypoints "data/phone_pose/批次/keypoints.jsonl" --fast --dry-run
+```
+
+一轮固定机位的正常活动数值可作为当前参考，不足以验证真实跌倒检出、误报率或漏报率；没有更多设备条件时继续软件开发，把实景可靠性保留为待验收项。

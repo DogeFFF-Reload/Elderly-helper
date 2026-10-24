@@ -3,6 +3,7 @@
 输入（选一个）：
   --camera [N]        实拍，默认 0 号摄像头
   --video PATH        预录视频当输入（Plan B：现场光照/遮挡不行时）
+  --phone-stream URL  手机 MJPEG 输入；只做本地姿态观察，默认60秒，保存骨架
   --keypoints PATH    回放录下来的骨架（不需要摄像头和模型，最稳的兜底）
   --synthetic NAME    内置合成场景：fall / stumble / sit / bend / bed / slow_floor ...
   --mock              直接发一次倒地（最早的 mock 方式）
@@ -17,6 +18,8 @@
 """
 import argparse
 import json
+import math
+import os
 import queue
 import sys
 import threading
@@ -163,23 +166,28 @@ def opencv_source(capture_arg, estimator, realtime, fps_cap=0.0, log=print):
 def run(source, detector, poster, room, recorder=None, preview=None, log=print):
     """跑完一个输入源；返回触发的报警列表。"""
     alarms, seen, frames, t_report = [], 0, 0, 0.0
-    for t, kp, frame, aspect in source:
-        detector.aspect = aspect
-        ev = detector.update(t, kp)
-        frames += 1
-        seen += kp is not None
-        poster.skeleton(kp, detector.state != FallDetector.WATCH)
-        if recorder:
-            recorder.write(t, kp, aspect)
-        if ev:
-            alarms.append(ev)
-            log("⚠ %.1fs 判定跌倒（%s）：%s" % (t, ev["kind"], ev["reason"]))
-            poster.fall(room)
-        if preview and not preview.show(frame, kp, detector):
-            break
-        if t - t_report >= 5.0:
-            log("· %.0fs  检出率 %d%%  状态 %s" % (t, 100 * seen // max(frames, 1), detector.state))
-            t_report, seen, frames = t, 0, 0
+    try:
+        for t, kp, frame, aspect in source:
+            detector.aspect = aspect
+            ev = detector.update(t, kp)
+            frames += 1
+            seen += kp is not None
+            poster.skeleton(kp, detector.state != FallDetector.WATCH)
+            if recorder:
+                recorder.write(t, kp, aspect)
+            if ev:
+                alarms.append(ev)
+                log("⚠ %.1fs 判定跌倒（%s）：%s" % (t, ev["kind"], ev["reason"]))
+                poster.fall(room)
+            if preview and not preview.show(frame, kp, detector):
+                break
+            if t - t_report >= 5.0:
+                log("· %.0fs  检出率 %d%%  状态 %s" % (t, 100 * seen // max(frames, 1), detector.state))
+                t_report, seen, frames = t, 0, 0
+    finally:
+        close = getattr(source, "close", None)
+        if close:
+            close()
     return alarms
 
 
@@ -189,6 +197,7 @@ def main():
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--camera", nargs="?", const=0, type=int, metavar="N", help="摄像头编号，默认 0")
     src.add_argument("--video", metavar="PATH")
+    src.add_argument("--phone-stream", metavar="URL", help="手机完整 MJPEG 地址；本入口只观察、不向总线上报")
     src.add_argument("--keypoints", metavar="PATH")
     src.add_argument("--synthetic", choices=sorted(synth.SCENARIOS))
     src.add_argument("--mock", action="store_true")
@@ -204,7 +213,23 @@ def main():
     ap.add_argument("--fps-cap", type=float, default=0.0, help="最多每秒处理几帧（X5 上省 CPU，如 10）")
     ap.add_argument("--complexity", type=int, choices=[0, 1, 2], default=0, help="姿态模型大小：0 快 / 2 准")
     ap.add_argument("--dry-run", action="store_true", help="只打印不发送")
+    ap.add_argument("--phone-username", default=os.environ.get("PHONE_USERNAME"))
+    ap.add_argument("--phone-password", default=os.environ.get("PHONE_PASSWORD"))
+    ap.add_argument("--duration", type=float, default=60, help="手机姿态观察时长，默认60秒")
+    ap.add_argument("--frames", type=int, default=0, help="手机处理帧数上限，0=仅按时长结束")
     args = ap.parse_args()
+
+    if args.phone_stream:
+        if args.loop:
+            ap.error("手机姿态观察不使用 --loop")
+        if (not math.isfinite(args.duration) or args.duration <= 0 or not math.isfinite(args.fps_cap)
+                or args.fps_cap < 0 or args.frames < 0):
+            ap.error("手机观察时长须为正数，帧率和帧数上限须非负")
+        from vision.phone_input import observe_phone
+        try:
+            return observe_phone(args, run)
+        except ValueError as exc:
+            ap.error(str(exc))
 
     poster = BusPoster(args.server, dry_run=args.dry_run)
 
