@@ -19,6 +19,8 @@ CALL_VERBS = ("叫我", "叫一下", "帮我叫", "找我", "喊我", "打给", 
 ECHO_WORDS = ("想女儿", "想儿子", "想她", "想他", "陪我聊", "聊聊", "说说话", "想孩子")
 EXERCISE_WORDS = ("手指操", "做操", "活动手指", "动动手")
 TEACH_HINTS = ("怎么", "咋", "教我", "不会", "如何", "怎样")
+MED_TAKEN = ("吃了", "吃过了", "吃完了", "吃好了", "服了", "吃过药", "药吃了")
+MED_NOT_YET = ("没吃", "还没", "等会", "待会", "一会儿吃")
 
 _PUNCT = re.compile(r"[\s，。？！,.?!~～、：:]")
 
@@ -67,6 +69,13 @@ def classify(text, ctx):
             return "health_reject", {}
         if _starts(core, YES_WORDS):
             return "health_confirm", {}
+
+    # 只有等服药打卡的时候才认“吃了 / 还没吃”，平时“我吃了饭”不会被当成打卡
+    if ctx.get("med_pending"):
+        if _has(core, MED_NOT_YET):
+            return "med_not_yet", {}
+        if _has(core, MED_TAKEN):
+            return "med_taken", {}
 
     if _has(core, EMERGENCY):
         return "dial_request", {}

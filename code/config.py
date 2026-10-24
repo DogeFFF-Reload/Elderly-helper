@@ -49,6 +49,11 @@ DEFAULTS = {
     # 排队超过 arm_stale 秒还没发出去的动作直接丢 —— 链路断了又恢复时，臂不补做一串过期动作（§5.2 断链保护）
     "arm_timeout": 1.5,
     "arm_stale": 5.0,
+    # 用药提醒闭环（agent/med_reminder.py）：off（默认）/ on；运行中也可经 /api/med/enable 切换
+    "med_reminder": "off",
+    "med_name": "降压药",
+    "med_times": ["08:00", "20:00"],   # 按 expected_utc_offset 的钟点（默认北京时间），不跟本机时区；演示用操作台按钮当场触发
+    "med_missed_after": 120.0,         # 提醒后多少秒没说“吃了”算漏服、通知家属
     # 家属端对老人的称呼
     "elder_title": "妈妈",
     "default_room": "卧室",
@@ -76,12 +81,14 @@ LIMITS = {
     "llm_cooldown": (0, 3600),
     "arm_timeout": (0.2, 10),
     "arm_stale": (1, 60),
+    "med_missed_after": (10, 7200),
 }
 # expected_utc_offset 只用于自检，改了要重启主脑，不放进运行中可调白名单
 TUNABLE = tuple(key for key in LIMITS if key != "expected_utc_offset")
 CHOICES = {
     "llm_mode": ("scripted", "llm"),
     "night_override": ("auto", "on", "off"),
+    "med_reminder": ("off", "on"),
 }
 
 
@@ -105,6 +112,14 @@ def _coerce(key, value):
     return value if isinstance(default, (list, dict)) else str(value)
 
 
+def _hhmm_ok(t):
+    try:
+        h, m = str(t).split(":")
+        return 0 <= int(h) <= 23 and 0 <= int(m) <= 59
+    except ValueError:
+        return False
+
+
 def validate(cfg):
     errors = []
     for key, (lo, hi) in LIMITS.items():
@@ -114,6 +129,9 @@ def validate(cfg):
     for key, options in CHOICES.items():
         if cfg.get(key) not in options:
             errors.append("%s=%r 只能是 %s" % (key, cfg.get(key), " / ".join(options)))
+    times = cfg.get("med_times")
+    if not isinstance(times, list) or not all(_hhmm_ok(t) for t in times):
+        errors.append("med_times=%r 要是 \"HH:MM\" 的列表，例如 [\"08:00\", \"20:00\"]" % (times,))
     contacts = cfg.get("contacts")
     if not isinstance(contacts, list) or not contacts:
         errors.append("contacts 至少要有一位联系人（第一位是首要联系人）")
