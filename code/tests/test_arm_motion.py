@@ -967,6 +967,19 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(voice_cmd.match("猜拳"), "猜拳")
         self.assertIsNone(voice_cmd.match("今天天气"))
 
+    def test_voice_grammar_splits_words_missing_from_model(self):
+        vocab = {"药盒", "手指", "操", "按", "铃", "递", "药"}
+        known = vocab.__contains__
+        self.assertEqual(voice_cmd.segment("递药", known), "递 药", "小模型没有「递药」这个词")
+        self.assertEqual(voice_cmd.segment("药盒", known), "药盒")
+        self.assertEqual(voice_cmd.segment("手指操", known), "手指 操")
+        self.assertIsNone(voice_cmd.segment("按铃铛", known))
+        g = voice_cmd.grammar(known)
+        self.assertIn("按 铃", g)
+        self.assertNotIn("按铃铛", " ".join(g))
+        self.assertEqual(g[-1], "[unk]")
+        self.assertEqual(voice_cmd.match("递 药".replace(" ", "")), "递药")
+
     def test_voice_not_understood_does_nothing(self):
         for heard, why in (("", "没听清"), ("今天天气", "没听懂")):
             code, body = self.voice(heard)

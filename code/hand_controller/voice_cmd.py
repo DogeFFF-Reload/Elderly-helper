@@ -41,9 +41,30 @@ class VoiceError(Exception):
     pass
 
 
-_MODEL = {"model": None, "error": None}
+_MODEL = {"model": None, "grammar": None, "error": None}
 _MU = threading.Lock()
 LAST = {}                 # 最近一次识别，/status 看
+
+
+def segment(word, known):
+    """按模型词表把关键词切成词（最长优先），切不开返回 None。
+    小模型词表里没有「递药」「还药」「按铃」这类词，整词放进 grammar 会被 vosk 丢掉，要写成「递 药」。"""
+    out, i = [], 0
+    while i < len(word):
+        for j in range(len(word), i, -1):
+            if known(word[i:j]):
+                out.append(word[i:j])
+                i = j
+                break
+        else:
+            return None
+    return " ".join(out)
+
+
+def grammar(known):
+    """识别只在这些短语里挑；切不开的关键词（如「按铃铛」的铛）不放，靠更短的「按铃」兜住。"""
+    phrases = sorted({p for p in (segment(kw, known) for kw in KEYWORDS) if p})
+    return phrases + ["[unk]"]
 
 
 def _model():
@@ -55,7 +76,10 @@ def _model():
                 SetLogLevel(-1)
                 if not os.path.isdir(MODEL_DIR):
                     raise FileNotFoundError("没有模型目录 %s（VOSK_MODEL）" % MODEL_DIR)
-                _MODEL["model"], _MODEL["error"] = Model(MODEL_DIR), None
+                model = Model(MODEL_DIR)
+                find = getattr(model, "vosk_model_find_word", None) or model.find_word
+                _MODEL["grammar"] = json.dumps(grammar(lambda w: find(w) != -1), ensure_ascii=False)
+                _MODEL["model"], _MODEL["error"] = model, None
             except Exception as e:  # noqa: BLE001 识别不了只影响语音键
                 _MODEL["error"] = "%s：%s" % (type(e).__name__, e)
         return _MODEL["model"]
@@ -73,7 +97,7 @@ def recognize(pcm):
     if model is None:
         raise VoiceError(_MODEL["error"])
     from vosk import KaldiRecognizer
-    rec = KaldiRecognizer(model, RATE, json.dumps(sorted(KEYWORDS) + ["[unk]"], ensure_ascii=False))
+    rec = KaldiRecognizer(model, RATE, _MODEL["grammar"])
     rec.AcceptWaveform(pcm)
     text = json.loads(rec.FinalResult()).get("text", "")
     return text.replace("[unk]", "").replace(" ", "")
