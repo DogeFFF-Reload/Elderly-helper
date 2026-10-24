@@ -19,6 +19,8 @@
 
 ## 2. 现在没有设备时，怎么演示
 
+Windows 推荐直接双击仓库根目录的 `START_VISION_REHEARSAL.bat`，完成后窗口会停留，便于查看报告地址。也可在任意目录使用 `python "<仓库完整路径>/run_vision_rehearsal.py"`。
+
 在仓库 `code/` 目录只运行：
 
 ```powershell

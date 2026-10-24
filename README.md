@@ -607,6 +607,8 @@ cd code
 
 ### 12.4 无设备的视觉完整模拟联调
 
+Windows 可直接双击仓库根目录的 `START_VISION_REHEARSAL.bat`。终端也可使用启动文件的完整路径：`python "<仓库完整路径>/run_vision_rehearsal.py"`，无需切换当前目录。
+
 在 `code/` 目录只运行一条命令，无需手机、模型、OpenCV 或另开任何服务：
 
 ```powershell
