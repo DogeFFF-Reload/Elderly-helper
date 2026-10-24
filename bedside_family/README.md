@@ -1,5 +1,7 @@
 # Mocen CareMate · 床头屏侧 + 家属端模块(嘉立创屏 + 手板 + 家属 App + 跌倒警报推送)
 
+> 视觉接入更新：新增 `START_FAMILY_ALARM.bat`，默认off、dry无扰、live才报警；操作见 [用户页](../docs/31_用户_视觉报警怎么启动.md)，部署和验证见 [Agent交接](../docs/32_Agent_家属App报警接入交接.md)。床头源码现为5.7.1，补上并发重试原子去重及同毫秒报警编号防冲突；本次未访问或部署实机。下文原有真机结果为队友此前反馈，不等同于本次端到端验收。
+
 本目录是团队仓库之外的另一半系统——**床头侧(老人端)** 与 **家属手机端** 的完整实现。
 与本仓库其他模块的关系,一句话:**视觉模块(§11)负责"发现跌倒",本目录负责"警报立刻响到家属手机上"**,同时床头屏、留言互通、家属语音回话也都从这里完成。
 
@@ -45,24 +47,26 @@
 
 ## 4. 视觉模块 → 家属警报(一行接入 + 桥接器两种姿势)
 
-**姿势 A——检测端直发(一行)**:在你们的跌倒判定处加:
+**姿势 A——新视觉入口直发（推荐）**：在仓库根目录先无扰检查，现场准备好后启用实时入口：
 
-```python
-urllib.request.urlopen(urllib.request.Request(
-    "http://10.153.47.252:8013/fall_alarm",
-    data=b'{"kind":"fall","src":"cam-A"}',
-    method="POST"), timeout=3)
+```powershell
+.\START_FAMILY_ALARM.bat --check-link --mode dry
+.\START_FAMILY_ALARM.bat --camera 0 --mode live --preview --duration 300
 ```
+
+现有自定义检测器可复用 `vision.family_alarm.AlarmClient` / `AlarmPoster`。每个事件一个唯一event_id，最多3次重试沿用原号；仅规则确认事件发送，不按帧发送。不上传照片，不向主脑发事件，不请求机械臂动作。离线/合成拒绝live；`--send-test --mode live`才会在不打开摄像头时建立单条接口测试警报。
 
 **姿势 B——走主脑不动视觉代码(零侵入)**:
 
 ```
-python bridges/fall_to_family.py --master http://<主脑IP>:8000 --family http://10.153.47.252:8013
+python bedside_family/bridges/fall_to_family.py --master http://<主脑IP>:8000 --family http://10.153.47.252:8013 --mode live
 ```
 
-它订阅主脑事件流(`GET /api/events?since=`),看到 fall/fall_hint 类事件就转发 `/fall_alarm`。视觉、主脑、操作台都不用改一行,警报通道独立于大屏流程。
+它轮询主脑事件流，只转发严格的 `type=fall,level=danger` 首次倒地记录，忽略台词、照片、取消和处理中重复提示。首次启动跳过旧历史，待发事件持久化，失败后复用原号重试。先启动桥接，再开始真实检测。默认off；不带 `--mode live` 不建警报。旧 `--selftest` 已改为健康检查+dry。
 
-**姿势 C——操作台"触发摔倒"演示**:直接 `curl -X POST http://10.153.47.252:8013/fall_alarm -d '{}'`,家属手机立刻响;不响手机的验证用 `curl -X POST .../fall_alarm -d '{"dry":true}'`(v5.7,只回执不落账)。
+同一个场景的检测/上报路径二选一。主脑桥接无法区分一次mock是否由真人触发，离线/模拟主脑请用off/dry。主脑事件快照有限，长时间停机仍可能错过尚未捕获事件。
+
+**姿势 C——单条接口验收**：现场明确让家属手机接收测试警报时，用 `START_FAMILY_ALARM.bat --send-test --mode live`；只检查连接用 `--check-link --mode dry`。成功回执仅表示床头收到，不表示手机已收到；实际红条、声音、震动和延迟需现场确认。
 
 ## 5. 目录结构
 

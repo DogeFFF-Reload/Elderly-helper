@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "verified_at_utc": "2026-10-24T14:56:39.710229+00:00",
+  "merged_team_commit": "40b190e1347a7be8f976e0d193b95d1e1d98c018",
+  "receiver_source_version": "5.7.1",
+  "live_receiver_version": null,
+  "regression": {
+    "suites": 41,
+    "tests": 570,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "added_alarm_test_methods": 34,
+  "added_http_test_methods": 2,
+  "resolved_regression_failure": "Windows closed an unread oversized JSON body with TCP reset instead of a readable 413. Fixed with response-first bounded draining; initial failed logs preserved.",
+  "full_mock": {
+    "ok": true,
+    "checks": {
+      "health_and_medicine": true,
+      "visual_input_usable": true,
+      "normal_keeps_idle": true,
+      "cancel_before_sos": true,
+      "visual_rescue": true,
+      "cancel_after_rescue": true,
+      "exercise": true,
+      "single_sos": true,
+      "all_visual_receipts": true,
+      "no_driver_failures": true
+    },
+    "final_state": "IDLE"
+  },
+  "vision": {
+    "ok": true,
+    "recorded_labels": {
+      "labeled_fall_clips": 0,
+      "fall_clips_with_event": 0,
+      "labeled_normal_clips": 3,
+      "normal_clips_with_event": 0,
+      "event_count_matches": 3,
+      "eligible_clips": 3
+    },
+    "synthetic_labels": {
+      "labeled_fall_clips": 5,
+      "fall_clips_with_event": 5,
+      "labeled_normal_clips": 4,
+      "normal_clips_with_event": 0,
+      "event_count_matches": 9,
+      "eligible_clips": 9
+    },
+    "cases": [
+      {
+        "name": "synthetic:fall",
+        "status": "pass",
+        "events": 1
+      },
+      {
+        "name": "synthetic:stumble",
+        "status": "pass",
+        "events": 0
+      },
+      {
+        "name": "synthetic:sit",
+        "status": "pass",
+        "events": 0
+      },
+      {
+        "name": "synthetic:chair_fall",
+        "status": "pass",
+        "events": 1
+      },
+      {
+        "name": "synthetic:bend",
+        "status": "pass",
+        "events": 0
+      },
+      {
+        "name": "synthetic:bed",
+        "status": "pass",
+        "events": 0
+      },
+      {
+        "name": "synthetic:slow_floor",
+        "status": "pass",
+        "events": 1
+      },
+      {
+        "name": "synthetic:fall_occluded",
+        "status": "pass",
+        "events": 1
+      },
+      {
+        "name": "synthetic:refall",
+        "status": "pass",
+        "events": 2
+      },
+      {
+        "name": "sit_stand.jsonl",
+        "status": "pass",
+        "events": 0
+      },
+      {
+        "name": "stand.jsonl",
+        "status": "pass",
+        "events": 0
+      },
+      {
+        "name": "walk.jsonl",
+        "status": "pass",
+        "events": 0
+      }
+    ]
+  },
+  "safe_entry": {
+    "mode": "off",
+    "ok": true,
+    "event_statuses": [
+      "disabled"
+    ]
+  },
+  "original_keypoints_sha256": "b0e261c58b0a06d896afc822aec540edbdcfd879a695a7dc60746e7e417aaac8",
+  "devices": {
+    "camera_opened": false,
+    "phone_contacted": false,
+    "microphone_or_speaker_used": false,
+    "real_actuator_called": false,
+    "firmware_flashed": false,
+    "real_family_endpoint_contacted": false,
+    "external_notification_or_real_dial": false
+  },
+  "contract_verification": "Actual bedside alarm functions and HTTP Handler AST-extracted into a temporary loopback server; hardware module top-level never imported. Tests guard all connections to 127.0.0.1.",
+  "source_hash_basis": "Working files normalized to LF, excluding generated evidence and documentation.",
+  "source_sha256": {
+    "code/master_service.py": "f88c7c1612d06aee21313b7bdaf88ab33cc5b36ccd1a0718878348dbdab1f755",
+    "code/tests/test_bus_http.py": "72da7819902976d91eaddd2c3fe1a38d5f13053d53b5af72d6a9778b2cc22433",
+    "code/vision/family_alarm.py": "d1400424b8bce90dbca72e161de922bac7e99de5bebfdeb997c1321a21fd45c5",
+    "code/vision/family_watch.py": "18ae4e4747ff629acd305d0d752ec0048f95e10c69de8fc24e0a66d6c9aef52d",
+    "run_family_alarm.py": "71a50729fc58eb08be99dcb02d791d695ff2ba4420c48dfee19f644b35aecae4",
+    "START_FAMILY_ALARM.bat": "c13745f5ff2bddc9448b65f796800ac8ef57d82e35e31302f0b9ec62b97cc649",
+    "bedside_family/bridges/fall_to_family.py": "5ddf3ddecd2d9a5344f7d56b6868508a4404f06eb090fc6214c3313ddc385c43",
+    "bedside_family/service_handboard/arm_service.py": "9bf30b7f40b081abe0071932a4da6f0e710168648bb9aeb0b3a717132043747f",
+    "code/tests/family_alarm_receiver.py": "a5ec4793f924a0f7e2753bbcf9579a0d4048c0eff7e6b7e8a00b6b71c35f03c8",
+    "code/tests/test_family_alarm.py": "0bde0d668896d7e6a67dc6fd29ffb1ab6c75727a280851ed027bd982da0068e7",
+    "code/tests/test_family_watch.py": "8b10fddbf24305290cc64122b468478a70d886e92b6cb4cdf70f14dc7526209e",
+    "code/tests/test_family_alarm_bridge.py": "fd94da71aa6a61ca88b2f682a4fe1b73a1fe67501eabcbcd5f071e82d83f1962"
+  },
+  "evidence_sha256": {
+    "complete_mock/live_status.json": "bad5b0e55ee87cb701e3ae574b5748c4d870aa2eb171f45a2a74c642064030bf",
+    "complete_mock/operator_confirmation.json": "4e68fd5248bf01a8570310acf16c254f5d1f0253f005877018a2aeadd7c85fe8",
+    "complete_mock/report.json": "f52ed83f76d18d39a50f12a54d9b3636d4a252061f51d08f63a12759a6e79f3f",
+    "complete_mock.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "complete_mock.stdout.txt": "b3cc3ac8c83930dcd164a0d76820a8341b940058cb30a13762c867e7cdbae676",
+    "complete_mock_before_http_fix/live_status.json": "bad5b0e55ee87cb701e3ae574b5748c4d870aa2eb171f45a2a74c642064030bf",
+    "complete_mock_before_http_fix/operator_confirmation.json": "4e68fd5248bf01a8570310acf16c254f5d1f0253f005877018a2aeadd7c85fe8",
+    "complete_mock_before_http_fix/report.json": "f52ed83f76d18d39a50f12a54d9b3636d4a252061f51d08f63a12759a6e79f3f",
+    "initial_failed.stderr.txt": "2161aaca5ea7a2c7a5e48abf324bce9ee98ee9d0b9d7f3c41495719d28f48a65",
+    "initial_failed.stdout.txt": "317a74a2a914c55adec7d40da03e38681b5553e7a2f21b5e4cb70be9d9055ece",
+    "regression.json": "78becf670e3f23c72d606b035eed4bda9619d23e909da2cd2c7409ca062eb4cf",
+    "regression.stderr.txt": "5621ab56578cb09efc2c633afb74e97765511cebb89296559c3914bb4f480a44",
+    "regression.stdout.txt": "c51f18cec0793d0aba3cc582e23fdddade20a6a11246ef3834fc3911dc2c9463",
+    "safe_entry/summary.json": "fa7b9cabd9764d7e09745acee9fe9c91e2eeb102677d66e0ff4104e43039246e",
+    "safe_entry.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "safe_entry.stdout.txt": "cf988346e3521e051a9506b88f1b99ac6c47b7189aacecaa5a0598080dfba995",
+    "visual_analysis/report.json": "464acf88c4ee1b18bd551118013293f106a1bf85e385de240fe326c2d105ae51",
+    "visual_analysis.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "visual_analysis.stdout.txt": "20c5cba79227bee290024624aac9323943a43aa366d56533b35c1140c2d7f3f4"
+  },
+  "limits": [
+    "One real normal-activity session split into three labeled clips; no real fall labels or recall estimate.",
+    "Bedside accepted means HTTP receipt, not family phone delivery or guaranteed durable storage.",
+    "Source version 5.7.1 not deployed to bedside by this task; real camera/App integration remains field acceptance.",
+    "Bridge captures bounded master snapshots; uncaptured events may be missed during long downtime.",
+    "Direct watcher has bounded retries and journaled ids; cross-process retry is explicit, not automatic.",
+    "Receiver dedup retention remains bounded by existing in-memory and persisted alarm history.",
+    "No browser layout inspection, Android APK rebuild, or hardware validation in this task."
+  ]
+}

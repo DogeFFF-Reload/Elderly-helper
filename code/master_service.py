@@ -22,6 +22,7 @@ import json
 import mimetypes
 import queue
 import random
+import socket
 import sys
 import threading
 import time
@@ -1320,6 +1321,29 @@ def make_handler(bus):
         def _json(self, obj, code=200):
             self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
 
+        def _reject_unread(self, obj, code):
+            """Send rejection first, then briefly drain bytes to avoid Windows TCP reset.
+
+            Parsing oversized bodies remains forbidden. Draining uses fixed-size
+            chunks, a byte cap and a deadline; a slow/missing body cannot hold the
+            request open indefinitely or postpone the error response.
+            """
+            self.close_connection = True
+            self._json(obj, code)
+            try:
+                self.wfile.flush()
+                self.connection.shutdown(socket.SHUT_WR)
+                remaining = min(max(int(self.headers.get("Content-Length") or 0), 0), 8 * 1024 * 1024)
+                self.connection.settimeout(.1)
+                deadline = time.monotonic() + .25
+                while remaining and time.monotonic() < deadline:
+                    chunk = self.rfile.read1(min(64 * 1024, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+            except (OSError, ValueError):
+                pass
+
         def _static(self, path):
             rel = path[len("/ui/"):].strip("/")
             target = (UI_DIR / rel).resolve()
@@ -1400,20 +1424,17 @@ def make_handler(bus):
             q = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
             denied = self._gate("POST", url.path, q)
             if denied:
-                n = int(self.headers.get("Content-Length") or 0)
-                if 0 < n <= 8 * 1024 * 1024:
-                    self.rfile.read(n)   # 先把正文读掉再拒：不读的话 Windows 上连接会被重置，对方收不到 403
-                return self._json({"ok": False, "error": denied[1]}, denied[0])
+                return self._reject_unread({"ok": False, "error": denied[1]}, denied[0])
             if url.path == "/api/fall_photo":   # 正文是照片原始字节
                 n = int(self.headers.get("Content-Length") or 0)
                 if n > 2 * 1024 * 1024:
-                    return self._json({"ok": False, "error": "照片太大"}, 413)
+                    return self._reject_unread({"ok": False, "error": "照片太大"}, 413)
                 return self._json(bus.fall_photo_upload(self.rfile.read(n) if n else b"",
                                                         self.headers.get("Content-Type", ""), q.get("src", "vision")))
             if url.path == "/api/voice_msg":   # 正文是录音（原始字节或 multipart），不是 JSON
                 n = int(self.headers.get("Content-Length") or 0)
                 if n > MAX_VOICE_BYTES + 64 * 1024:
-                    return self._json({"ok": False, "error": "录音太大"}, 413)
+                    return self._reject_unread({"ok": False, "error": "录音太大"}, 413)
                 ctype = self.headers.get("Content-Type", "")
                 raw = self.rfile.read(n) if n else b""
                 if ctype.lower().startswith("multipart/form-data"):
@@ -1423,6 +1444,8 @@ def make_handler(bus):
             try:
                 body = _read_json(self)
             except RequestBodyError as exc:
+                if exc.status == 413:
+                    return self._reject_unread({"ok": False, "error": str(exc)}, exc.status)
                 return self._json({"ok": False, "error": str(exc)}, exc.status)
             if self._public():
                 # 公网只能以家属身份通话 / 拨 120，不能冒充老人那头（老人那头在局域网）

@@ -122,9 +122,31 @@ class HttpTest(unittest.TestCase):
         self.assertEqual(self.bus.fsm.state, "HELP_COMING")
 
     def test_oversized_body_rejected(self):
-        status, data = self.req("POST", "/api/family/ack", b" " * (master_service.MAX_JSON_BYTES + 1))
+        for _ in range(3):
+            status, data = self.req("POST", "/api/family/ack", b" " * (master_service.MAX_JSON_BYTES + 1))
+            self.assertEqual(status, 413)
+            self.assertFalse(json.loads(data)["ok"])
+
+    def test_oversized_rejection_preserves_sos_and_server_remains_usable(self):
+        self.post("/mock/fall", {})
+        self.bus.voice("起不来")
+        status, data = self.req("POST", "/api/family/ack", b"x" * (master_service.MAX_JSON_BYTES + 1000))
         self.assertEqual(status, 413)
         self.assertFalse(json.loads(data)["ok"])
+        self.assertEqual(self.bus.fsm.state, "SOS")
+        self.assertEqual(self.req("GET", "/api/state")[0], 200)
+
+    def test_oversized_headers_are_rejected_without_waiting_for_the_body(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=2)
+        try:
+            connection.putrequest("POST", "/api/family/ack")
+            connection.putheader("Content-Length", str(master_service.MAX_JSON_BYTES + 1))
+            connection.endheaders()  # Deliberately do not send any declared body.
+            response = connection.getresponse()
+            self.assertEqual(response.status, 413)
+            self.assertFalse(json.loads(response.read())["ok"])
+        finally:
+            connection.close()
 
     def test_bad_cursor_returns_json_error_and_server_survives(self):
         for endpoint in ("/api/poll", "/api/events"):

@@ -1,8 +1,8 @@
-"""X5#3 上的动作 HTTP 服务 —— 全系统「物理动作」唯一入口。
+"""床头板动作、留言和原生家属App报警服务，默认端口8013。
 
-启动：
-    cd code && python -m hand_controller.arm_service     (默认 mock, 端口 8013)
-    MOCK_SERIAL=0 python -m hand_controller.arm_service  (真机)
+本文件为bedside_family独立服务，沿用床头板现有systemd部署。
+主脑动作服务code/hand_controller/arm_service.py为另一板用途，不要互相覆盖。
+报警接入和5.7.1部署交接见docs/32_Agent_家属App报警接入交接.md。
 
 端点（全部动作名词表来自 poses.ALL_ACTIONS，supervisor 与此同源）
     GET  /status
@@ -860,10 +860,10 @@ def _ensure_app_cert():
 #   无扰测试:POST {"dry":true}  → 只回执校验,不建警报,手机不响
 #   健康检查:GET  /fall_alarm   → ok+版本+用法,不动任何数据
 # 家属 app:GET /alarms(列 50 条,新在前);POST /alarms/ack {"id":..} 确认
-SVC_VER = "5.7"
+SVC_VER = "5.7.1"
 AL_DIR = os.environ.get("APP_ALARM_DIR", "/root/caremate/alarms")
 ALARMS_JSON = os.path.join(AL_DIR, "alarms.json")
-_alarm_lock = threading.Lock()
+_alarm_lock = threading.RLock()  # incoming的查重和alarm_new的落账共用原子临界区
 _alarm_mem = []          # 内存态(新在前),boot 时从磁盘恢复
 
 
@@ -877,11 +877,13 @@ def alarms_load():
 
 
 def alarm_new(kind="fall", src="", conf=None, eid=""):
-    """记录一条警报;返回带 id 的 dict。id 带毫秒后缀,同秒不撞号。"""
+    """记录一条警报;返回带 id 的 dict。随机后缀避免同毫秒新事件撞号。"""
     import time as _t
+    import uuid as _uuid
     t = _t.time()
     now = _t.localtime(t)
-    aid = "al_" + _t.strftime("%Y%m%d_%H%M%S", now) + "_%03d" % int((t - int(t)) * 1000)
+    aid = ("al_" + _t.strftime("%Y%m%d_%H%M%S", now)
+           + "_%03d_" % int((t - int(t)) * 1000) + _uuid.uuid4().hex[:12])
     a = {"id": aid, "time": _t.strftime("%Y-%m-%d %H:%M:%S", now),
          "kind": kind, "acked": False}
     if eid:
@@ -907,18 +909,18 @@ def alarm_new(kind="fall", src="", conf=None, eid=""):
 
 
 def alarm_incoming(kind, src, conf, eid=""):
-    """检测端上报入口(v5.7):同 event_id 去重 —— 命中只回旧条目,不重响。"""
-    if eid:
-        with _alarm_lock:
+    """检测端上报入口:查重和插入一起上锁,并发重试也只落一条。"""
+    with _alarm_lock:
+        if eid:
             for a in _alarm_mem:
                 if a.get("event_id") == eid:
                     r = {"ok": True, "dedup": True}
                     r.update(a)
                     _log("alarm", "DEDUP %s eid=%s(重试不重响)" % (a["id"], eid))
                     return r
-    r = {"ok": True, "dedup": False}
-    r.update(alarm_new(kind, src, conf, eid))
-    return r
+        r = {"ok": True, "dedup": False}
+        r.update(alarm_new(kind, src, conf, eid))
+        return r
 
 
 def alarms_ack(aid):

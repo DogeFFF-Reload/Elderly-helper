@@ -5,17 +5,19 @@
 - **交互端**（§2–§6）：语音链路（ASR / TTS）、三块屏、健康口述、回声风格档案、教学库、scripted 台词。
 - **主脑与安全内核**（§10）：总线、状态机、supervisor、llm 超时回落、演示参数配置化、`demo_driver`、回归与合并工具。
 
-> 当前为团队合并仓库。执行端统一使用仓库 `code/hand_controller/arm_service.py`，不用 kit 同名服务。最新分工与剩余验收见 `docs/26_field_handoff_vision_phone_debug.md`、`docs/27_计划执行结果与剩余验收.md`；模拟流程通过和设备现场验收分别记录。
+> 当前为团队合并仓库。主脑动作执行端使用 `code/hand_controller/arm_service.py`，床头原生App报警使用另一板上的 `bedside_family/service_handboard/arm_service.py`，两者不要互相覆盖，均不用 kit 同名服务。视觉报警操作见 [用户操作页](docs/31_用户_视觉报警怎么启动.md)，部署见 [Agent交接](docs/32_Agent_家属App报警接入交接.md)。模拟流程通过和设备现场验收分别记录。
 
 ## 1. 跑起来
 
-最新报警链路修复、35 套 470 条回归及 Gemini 一次网页复核的交接见 [修复与复核说明](docs/28_报警链路修复与Gemini一次复核.md)。家属通知是本地演示记录；尚未接入短信、微信或真实拨号，动作接收回执不等于实物完成。
+视觉已新增队友原生App报警接口，显式选择 `live` 才建立真实警报，详见 [用户操作页](docs/31_用户_视觉报警怎么启动.md)。主脑的本地演示通知与此通道分别记录；不提供短信、微信或真实自动拨号。此前报警修复和470条回归是 [历史记录](docs/28_报警链路修复与Gemini一次复核.md)，Gemini协作已暂停。动作接收回执不等于实物完成。
+
+最新离线检查：**41套570条通过、完整模拟10/10、9个合成场景符合标签、3个正常活动片段各0次事件**，见 [验证摘要](docs/verification/20261024_family_alarm.json)。这不代表板端已部署、手机已实际响铃或真人跌倒识别率。
 
 核心服务只需 Python 3.8+，零第三方依赖。完整回归的 UI JavaScript 检查还需 Node.js 在 PATH 中（本次已用本机 Node 执行）。
 
 ```powershell
 cd code
-python tests/run_all.py                  # 回归，必须 ALL PASS（当前 35 套 470 条）
+python tests/run_all.py                  # 回归，必须 ALL PASS；最新数量见docs/verification
 python -m master_service                 # 主脑 :8000（含三块屏）
 python -m demo_driver --pause            # 按 §3 主线一段一段走演示（另开终端，见 §10）
 python -m hand_controller.arm_service    # 臂+双手 mock :8013（另开终端，可不开）
@@ -711,14 +713,24 @@ X5 的 `bash deploy/start.sh phone` 是姿态观察，`phone-demo` 是上述完�
 
 默认电脑观察 `START_PC_CAMERA.bat` 和手机姿态观察只在本地提示、保存事件，不向主程序上报。完整模拟入口把疑似事件送到本次新建的本机 CareMate 主程序，再进行询问、取消或模拟求助。视觉从不直接调用机械臂。
 
-当前家属通知仅是主程序内的通知记录，由家属网页显示；没有短信、微信推送或电话服务，120也是模拟。完整模拟入口没有声音播放。现场版要发出可听询问，需要另接并验收 TTS/喇叭；真正通知家属还需确定并接入通知渠道。
+上述观察和模拟入口继续使用其原有通知路径，完整模拟入口没有声音播放。新原生App通道见§13，须显式选择 `live`；它不提供短信、微信或真实自动拨号。现场版要发出可听询问，需要另接并验收 TTS/喇叭。
 
 ## 13. 床头侧（老人端）+ 家属手机端 — 落地版
 
-`bedside_family/` 是把"警报真正响到家属手机"和"双向原声留言"做完的另一半系统（嘉立创 S3 床头屏固件 + X5 手板执行端服务 + 原生安卓 APK，全部真机验证）：
+`bedside_family/` 包含队友提供的嘉立创 S3 床头固件、X5床头服务及原生安卓 APK。队友此前反馈的真机结果见其README；本次由Codex完成视觉接口离线验证，尚未现场复验手机响铃或部署板端更新。
 
 - 家属端从"网页"升级为**可安装的原生 APK**（无第三方依赖，~30KB），点开就用；
-- 跌倒通知从"主程序内记录"升级为**手机全屏警报 + 警铃 + 震动**（前台 3 秒；关着 app 由常驻守护服务 10 秒内系统通知）；
-- §12.9 的"真正通知家属还需确定并接入通知渠道"由此补上：接入只需一行 `POST http://10.153.47.252:8013/fall_alarm`（姿势A），或跑 `bedside_family/bridges/fall_to_family.py` 桥接器零侵入转发主脑事件流（姿势B），详细见 `bedside_family/README.md`。
+- App通过床头 `/alarms` 拉取未确认警报并提供红色提示、警铃、震动与后台通知。3/10秒为队友提供的轮询描述，现场仍需核对系统权限和实际延迟；
+- 新入口 `START_FAMILY_ALARM.bat` 复用姿态模型和跌倒规则，后台POST `/fall_alarm`，稳定event_id重试；`off`不联网、`dry`无扰、`live`才报警。回放/合成拒绝live，不上传照片，不请求机械臂动作；
+- 床头源码5.7.1补上并发去重和同毫秒编号防冲突，仍需队友更新实际服务；主脑桥接备用通道改为严格首次倒地事件匹配、持久化重试和默认off。
+
+Windows仓库根目录：
+
+```powershell
+.\START_FAMILY_ALARM.bat --check-link --mode dry
+.\START_FAMILY_ALARM.bat --camera 0 --mode live --preview --duration 300
+```
+
+第一条只做无扰检查，第二条会读取摄像头并允许真实报警；本轮未执行这两条现场命令。iPhone输入、单条接口验收、补发及分工见 [用户操作页](docs/31_用户_视觉报警怎么启动.md) 和 [Agent交接](docs/32_Agent_家属App报警接入交接.md)。
 
 本目录与 §10.9 的两块 X5 各司其职、互不依赖；接口契约、部署拓扑、踩坑记录都在 `bedside_family/README.md`。
