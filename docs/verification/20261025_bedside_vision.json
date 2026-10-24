@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "verified_utc": "2026-10-24T16:17:24.552475+00:00",
+  "baseline_commit": "4017ad32fe0210ee8b9f7285209404abaeae5826",
+  "tested_merge_commit": "33d0bc23ad68dea71cf978aa100f7450c907e256",
+  "teammate_commit_merged": "41cd0365e8729ddd32920a35d2279dfc84c7aa5c",
+  "teammate_reported_state": "Bedside 5.7.1 deployed and dry handshake passed; App v1.2 foreground passed, v1.2/v1.3 background failed four times; v1.4 awaits device retest. These are teammate records, not rechecked on hardware in this task.",
+  "regression": {
+    "suites": 44,
+    "tests": 604,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "synthetic_scenarios": [
+    {
+      "scenario": "fall",
+      "expected": 1,
+      "events": 1,
+      "mode": "off",
+      "ok": true
+    },
+    {
+      "scenario": "stumble",
+      "expected": 0,
+      "events": 0,
+      "mode": "off",
+      "ok": true
+    },
+    {
+      "scenario": "sit",
+      "expected": 0,
+      "events": 0,
+      "mode": "off",
+      "ok": true
+    },
+    {
+      "scenario": "chair_fall",
+      "expected": 1,
+      "events": 1,
+      "mode": "off",
+      "ok": true
+    },
+    {
+      "scenario": "bend",
+      "expected": 0,
+      "events": 0,
+      "mode": "off",
+      "ok": true
+    },
+    {
+      "scenario": "bed",
+      "expected": 0,
+      "events": 0,
+      "mode": "off",
+      "ok": true
+    },
+    {
+      "scenario": "slow_floor",
+      "expected": 1,
+      "events": 1,
+      "mode": "off",
+      "ok": true
+    },
+    {
+      "scenario": "fall_occluded",
+      "expected": 1,
+      "events": 1,
+      "mode": "off",
+      "ok": true
+    },
+    {
+      "scenario": "refall",
+      "expected": 2,
+      "events": 2,
+      "mode": "off",
+      "ok": true
+    }
+  ],
+  "integration": "Fake phone coordinates -> actual alarm core/Handler extracted without hardware imports -> loopback HTTP receipt -> monitor status and memory JPEG; one input and one event, all resources closed.",
+  "monitor_checks": [
+    "read-only routes",
+    "local-only default",
+    "two viewers share one JPEG",
+    "bounded slow viewer handlers",
+    "latest-only asynchronous JPEG work",
+    "stale frame rejection",
+    "no false phone receipt",
+    "detector snapshot isolation",
+    "browser Chinese states and late image/disconnect race",
+    "no GUI calls"
+  ],
+  "deploy_checks": [
+    "static config no I/O to devices",
+    "off default",
+    "relative config paths",
+    "fake sudo installs only a new unit without starting services",
+    "PC/phone continuous input crosses demo duration without detector reset",
+    "model SystemExit converted to redacted error result"
+  ],
+  "layout": {
+    "kind": "isolated headless browser with offline synthetic image; no user browser profile",
+    "sizes": [
+      "1920x1080",
+      "1366x768"
+    ],
+    "visual_reviewed": true
+  },
+  "devices": {
+    "real_camera_opened": false,
+    "real_phone_stream_contacted": false,
+    "real_bedside_or_master_contacted": false,
+    "real_notification_sent": false,
+    "microphone_speaker_or_actuator_used": false,
+    "hardware_deployment_performed": false,
+    "external_monitor_output_verified": false
+  },
+  "limits": [
+    "X5 ARM64 dependency/model compatibility and speed require field checks.",
+    "Bedside receipt is not family phone delivery; App uses existing polling.",
+    "No real fall labels, recall or precision claim.",
+    "Direct sender does not resume pending events automatically across process restart.",
+    "Systemd restart reinitializes pose/detector; input gaps are not lossless.",
+    "Monitor LAN mode is read-only without login; local-only is the default."
+  ],
+  "source_hash_basis": "Working tree files normalized to LF, excluding documentation/evidence.",
+  "source_sha256": {
+    "code/vision/bedside_watch.py": "53b3a902b4aa87762475c31e121310ea20aa75a5914bea0a756a090c94b8d8be",
+    "code/vision/web_monitor.py": "381586c2ad21a345762d202079c0c8845c59e2c2df8d5a2c38b6707f8f5c6e04",
+    "code/vision/monitor.html": "cc1222ac93ef0208ade373c1b34cf17738806d3fef79c0ebe0a462df10f58cbb",
+    "code/vision/family_watch.py": "64b0db1d8acd1dae393c4f1ec88c1180a53e49b09b38192ef3c48b2698a46cda",
+    "code/vision/live_input.py": "4677076e207aff628904105c793e40a71e65dbeae6a1a14fabf83bd6ef5ab396",
+    "code/vision/phone_input.py": "55ea06be713252cefbf42bed60477309f0f47b59632fa4968ab62d02a31aa8b6",
+    "code/vision/preview.py": "458f8a5c193ffb27572f7aa995bbe48b16f1b333f88805f780703656f7dc9e3a",
+    "code/tests/test_web_monitor.py": "5077190b0f6f1732854ae35fa6cf74f328887694b2c607d01846e154039110ba",
+    "code/tests/test_bedside_watch.py": "a20371aa3edbb595149e146bd63d47ccb6971762141f33346b39f9e0e19bb8e4",
+    "code/tests/test_family_watch.py": "c7f73079c1531671839fba829da463609217dcf40e2377a67d3da700e8eb4bee",
+    "code/tests/test_live_input.py": "3d1f4ddf5bc1341d258992bf95bd9fc8597261bbc7afc9073b52c74af3fbf858",
+    "code/tests/test_phone_pose.py": "c9d6cb9014359a73ce4f49330d1fbe9aabe40359c8054c74156b01e7b2e56222",
+    "code/tools/owners.py": "af646949d3ce09a91066e6ed5d136de1d7357a7f3d9c6ce36d9381b4f718110d",
+    "run_bedside_vision.py": "908c8d4cc9dccda539e8c75fd8cdce041b82e2ba45ad1a337ba4025888700e3c",
+    "START_BEDSIDE_VISION.bat": "96d2977ae8399d1f8f40efa28fdd7e3cc884660955a8b71d385575d9e2b283f7",
+    "deploy/bedside_vision.json.example": "7c98c39dabf08903c5082bfc921574c909ea8f246de0f4e2fb4c333078097806",
+    "deploy/install_bedside_vision.sh": "9c584c25c0a3646c517d2a1957d0d9b505bcf0d333f5cf1e6352c813608a6880",
+    ".github/workflows/vision-monitor-ci.yml": "64da4825afedd20d62b79ed576a926b9ca2a93e2373c7bcf6d1918a18fb93624"
+  },
+  "evidence_sha256": {
+    "monitor_1366x768.png": "36b3ffd73014f77012f852ab5ba9de34a6cc13c623940a883d3ab5e926b687fc",
+    "monitor_1920x1080.png": "4601bbf7de909c06bc89b800f041dee95782f02e30eb33e6aab3778d8ca3fb5b",
+    "premerge_regression.txt": "2500d5615e601858fa9b6ccaf940cb5fbecc7d4ea7a9cb218e30b083d515958c",
+    "regression.txt": "b5ce092ccead0f245dc980e00a37a85ef2ea86cafba7a0c8bd17a61815088807",
+    "scenarios/bed/summary.json": "727aa2bdfd3b149e620afe41300df45a322738d53e7cb0307f828c339ef99485",
+    "scenarios/bend/summary.json": "b714590c865c17d708cce27b58b89f75e5f59a1cb50313ecd506fa2b8b6b99f3",
+    "scenarios/chair_fall/events.jsonl": "0738f9c4d31fdc5c4f160c73573a3f4aa1895a7e1bb00cca4fce81be1a2c5d34",
+    "scenarios/chair_fall/summary.json": "b5afb857a7a2a2de1fe26e395262cb838a11da5af68aa194685e4d2f2f628285",
+    "scenarios/fall/events.jsonl": "557724e28435c4ac3db0e129e8a8118a57babaccf02124679f3a4df1339c2d6c",
+    "scenarios/fall/summary.json": "1e6df9d89d6710456292c4fd3cdeb3ff0eb898feca46d3ede1b23f75aeecbc60",
+    "scenarios/fall_occluded/events.jsonl": "abd985e71b2f993bdb44042e2f8e709a849bbbf34f9e73d394afa6348759d5ea",
+    "scenarios/fall_occluded/summary.json": "d6d01b6f36f83947682802a922de2f701d1297e0278efd48f07a5dec496bc34c",
+    "scenarios/refall/events.jsonl": "9ed2d5da9285352d40c81f464aaa244e667c0d72bbfd22f9763eb2e818fc62d0",
+    "scenarios/refall/summary.json": "aa726180eb26d989ca0b6f402191bfad1146e4be994559acf5e20541eb371c6d",
+    "scenarios/sit/summary.json": "09ee9c5315b670d091fa0e15c5b50d4ad4ee23bd0875ef2ce71c1ca3eccd7a89",
+    "scenarios/slow_floor/events.jsonl": "c512fc09c9f51b4955ab3aaa4d92345f5f7fb887e757a6b101351b8f456f46c7",
+    "scenarios/slow_floor/summary.json": "918a6b7de46baa8624bc0db76160e2eec78f5823f89e667fdf11e43f5eed0112",
+    "scenarios/stumble/summary.json": "cb3fa7af7a2a84c30a0d7b2e763566ec0fe473b7a9e154e6a8ad6d8eb158665a",
+    "smoke.json": "2bb66baea5ef6325008865f6adfec032391fe21ba069495f335b4438fe2ae482"
+  }
+}
