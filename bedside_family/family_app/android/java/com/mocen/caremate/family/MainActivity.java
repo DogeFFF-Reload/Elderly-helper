@@ -435,24 +435,8 @@ public class MainActivity extends Activity {
 
     private void fillList() {
         cardBox.removeAllViews();
-        // —— 警报历史(红卡,置顶) ——
-        if (!alarms.isEmpty()) {
-            cardBox.addView(sepTitle("— 跌倒警报记录 —"));
-            boolean openShown = false;
-            for (Alarm a : alarms) {
-                if (a.acked && !openShown) {
-                    cardBox.addView(sepTitle("— 已确认 —"));
-                    openShown = true;
-                }
-                TextView c = text((a.acked ? "✓ 已确认 · " : "⚠ 未确认 · ")
-                        + a.time + " 检测到跌倒" + (a.src.isEmpty() ? "" : "(来源 " + a.src + ")"),
-                        13, a.acked ? GRAY : RED, !a.acked);
-                c.setBackground(round(a.acked ? 0xFFF1F0F5 : 0xFFFCE9EA, 14));
-                c.setPadding(dp(14), dp(11), dp(14), dp(11));
-                LinearLayout.LayoutParams cl = mp(-1, -2, 0, 0, 0, dp(8));
-                cardBox.addView(c, cl);
-            }
-        }
+        // v1.6:已确认警报记录卡撤下(用户反馈:置顶的历史红卡差点让人以为留言收不到);
+        // 真警报的表达只有两处:顶部全屏红条+警铃(前台) / 系统高优通知(后台),历史不再列表展示
         int newCnt = 0;
         String seen = getPreferences(0).getString("seen", "");
         String newest = newestElderId();
