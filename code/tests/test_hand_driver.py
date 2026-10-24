@@ -19,6 +19,7 @@ from hand_controller import arm_service, poses
 from hand_controller import rh56_register_map
 from hand_controller import rh56_register_map as RM
 from hand_controller import rh56f2_driver
+from hand_controller.arm_backend import MockArm
 from hand_controller.rh56f2_driver import HandError, RH56F2, checksum, frame_read, frame_write, pack_shorts
 from master_service import ArmClient
 
@@ -471,10 +472,13 @@ class ServiceTest(unittest.TestCase):
         rh56f2_driver._PORTS.clear()
         arm_service._HANDS.clear()
         arm_service.HISTORY.clear()
+        arm_service.use_arm(arm_service.ArmWorker(MockArm(time_scale=0)))
         self.url, stop = start_arm()
         self.addCleanup(stop)
 
     def tearDown(self):
+        arm_service.arm().stop()
+        arm_service.arm().wait_idle(1.0)
         current = list(arm_service._HANDS.values())
         for w in current:
             w.stop()
@@ -597,6 +601,7 @@ class ServiceTest(unittest.TestCase):
         clock.advance(6, bus)
         bus.family_ack("daughter")
         bus.arm.drain()
+        self.assertTrue(arm_service.arm().wait_idle(3.0), arm_service.arm().status())
         for w in arm_service.hands().values():
             w.drain()
 
@@ -615,14 +620,15 @@ class ServiceTest(unittest.TestCase):
         fresh_hands(mock_driver(1), mock_driver(2))
         lines = []
         self.assertTrue(arm_service.probe(out=lines.append))
-        self.assertEqual(len(lines), 2)
-        for line in lines:
+        self.assertEqual(len(lines), 3)
+        for line in lines[:2]:
             self.assertIn("实际角度", line)
+        self.assertIn("关节角", lines[2])
 
         fresh_hands(mock_driver(1), RH56F2("", 2, mock=False))
         lines = []
         self.assertFalse(arm_service.probe(out=lines.append))
-        self.assertEqual(len(lines), 2)
+        self.assertEqual(len(lines), 3)
         self.assertTrue(any("读不到" in line for line in lines), lines)
 
     # ---- 急停写真机 ----
@@ -713,13 +719,20 @@ class ReviewFixTest(unittest.TestCase):
         self.assertTrue(any("做到一半出错" in t for t in danger), danger)
         self.assertEqual(bus.snapshot()["hands"]["1"]["status"], "failed")
 
-    def test_stop_also_stops_vendor_arm(self):
-        from hand_controller import arm_backend_vendor
-        stopped = []
-        with mock.patch.object(arm_service, "ARM_BACKEND", "vendor_sdk"), \
-                mock.patch.object(arm_backend_vendor, "stop", create=True, new=lambda: stopped.append(True)):
-            arm_service._stop_arm()
-        self.assertEqual(stopped, [True])
-        with mock.patch.object(arm_service, "ARM_BACKEND", "mock"):
-            arm_service._stop_arm()                  # mock 后端什么都不调
-        self.assertEqual(stopped, [True])
+    def test_arm_background_failure_is_reported_as_hand1(self):
+        # 臂线程做到一半出错（SDK 断了）：/status 的 arm 带 fail_seq，主脑按手#1 补报；被打断、急停不算出错
+        a = arm_service.ArmWorker(MockArm(time_scale=0))
+        with mock.patch.object(a, "_run_skill", side_effect=RuntimeError("SDK 断了")):
+            self.assertEqual(a.request("deliver_medicine"), (200, ""))
+            self.assertTrue(a.wait_idle(3.0))
+        st = a.status()
+        self.assertEqual((st["fail_seq"], st["fail_pose"]), (1, "deliver_medicine"))
+        from master_service import ArmClient
+        client = ArmClient("http://127.0.0.1:9")
+        got = []
+        client.on_result = lambda *x: got.append(x)
+        body = lambda seq: json.dumps({"mock": True, "hands": {}, "arm": {
+            "fail_seq": seq, "fail_pose": "deliver_medicine", "last_error": "deliver_medicine：SDK 断了"}}).encode()
+        client._note_status(body(1))
+        client._note_status(body(2))
+        self.assertEqual(got, [("deliver_medicine", 1, False, "failed", "deliver_medicine：SDK 断了")])
