@@ -11,7 +11,7 @@
 
 | 设备 | IP | 跑什么 | 来源 |
 |---|---|---|---|
-| X5#A(手板) | 10.153.47.252 | `bedside_family/service_handboard/arm_service.py`(v5.6,systemd `arm_service`,:8013) | **本目录** |
+| X5#A(手板) | 10.153.47.252 | `bedside_family/service_handboard/arm_service.py`(v5.7,systemd `arm_service`,:8013) | **本目录** |
 | 嘉立创 S3 床头屏 | DHCP | `bedside_family/firmware_s3/bedside_s3_arm_kiosk.ino`(v5.4 烧录件) | **本目录** |
 | 家属手机 | DHCP | `bedside_family/family_app/`(APK v1.1,桌面安装) | **本目录** |
 | X5(主脑/视觉,本仓库) | 10.153.47.251 | 本仓库 `master_service` / `vision` | 本仓库 |
@@ -35,10 +35,11 @@
 | POST | `/message_end?id=..&d=秒` | 结束落盘 + 自动 PUSH 家属端 |
 | GET | `/messages` / `/messages/<id>.wav` | 留言列表(新在前) / 原声 WAV |
 | POST | `/family_message` | 家属回话 WAV(裸 body,octet-stream) |
-| **POST** | **`/fall_alarm`** | **跌倒上报;body 可选 `{"kind":"fall","src":"cam-A","conf":0.9}`,空 body 也收** |
+| **POST** | **`/fall_alarm`** | **跌倒上报;body 可选 `{"kind":"fall","src":"cam-A","conf":0.9,"event_id":"唯一事件号"}`,空 body 也收;同 event_id 重试自动去重只响一次(v5.7)** |
 | GET | `/alarms` | 警报列表(新在前,50 条,含 acked) |
 | POST | `/alarms/ack` | `{"id":"al_..."}` 确认 |
-| GET | `/fall_alarm` | 检测端连通性自检 |
+| POST | `/fall_alarm` `{"dry":true}` | 无扰自检:只回执不落账,手机不响(v5.7) |
+| GET | `/fall_alarm` | 检测端健康检查:`{"ok":true,"ver":"5.7",...}`,无副作用 |
 | POST | `/pose/<name>` | 手部姿态(wave/ok/thumbs_up/...) |
 | POST | `/voice_cmd` | S3 语音 PCM 4s → 本地 Vosk → 动作 |
 
@@ -61,14 +62,14 @@ python bridges/fall_to_family.py --master http://<主脑IP>:8000 --family http:/
 
 它订阅主脑事件流(`GET /api/events?since=`),看到 fall/fall_hint 类事件就转发 `/fall_alarm`。视觉、主脑、操作台都不用改一行,警报通道独立于大屏流程。
 
-**姿势 C——操作台"触发摔倒"演示**:直接 `curl -X POST http://10.153.47.252:8013/fall_alarm -d '{}'`,家属手机立刻响。
+**姿势 C——操作台"触发摔倒"演示**:直接 `curl -X POST http://10.153.47.252:8013/fall_alarm -d '{}'`,家属手机立刻响;不响手机的验证用 `curl -X POST .../fall_alarm -d '{"dry":true}'`(v5.7,只回执不落账)。
 
 ## 5. 目录结构
 
 ```
 bedside_family/
 ├── firmware_s3/bedside_s3_arm_kiosk.ino   # S3 床头屏固件 v5.4(huge_app 分区,COM7 烧录/COM8 日志)
-├── service_handboard/arm_service.py       # X5#A 服务 v5.6:留言 + 家属推送/回话 + 跌倒警报 + 姿态 + Vosk 语音
+├── service_handboard/arm_service.py       # X5#A 服务 v5.7:留言 + 家属推送/回话 + 跌倒警报(event_id 去重/dry 无扰测) + 姿态 + Vosk 语音
 ├── family_app/                            # 家属 App(原生安卓,无第三方依赖,纯手工工具链构建)
 │   ├── android/                           #   源码(Manifest / MainActivity / GuardService / Cfg)
 │   ├── build_app.py                       #   构建脚本(aapt2→javac→d8→zipalign→apksigner,无需 gradle)

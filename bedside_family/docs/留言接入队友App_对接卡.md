@@ -65,3 +65,21 @@ A/B 之外没有第三种能"打开即用"的路(手机 4G 网络里 app 够不�
 3. 演示当天,手板连的热点(Mocen_Bear)确认有外网(现在有,能调通 LLM 网关)——你们 app 端手机演示时用 4G 还是同热点?**都不影响 app 体验**,只影响我们确认中转站选型。
 
 回完 1,当天就能联调通;2、3 只是顺手记一下。
+---
+
+## 5. 跌倒警报契约(v5.7,2026-10-24 新增)
+
+检测端(你们的摄像头跌倒识别)→ 家属手机警报,一条 HTTP 就接上:
+
+| 项 | 内容 |
+|---|---|
+| 上报 | POST http://10.153.47.252:8013/fall_alarm |
+| body(推荐) | {"kind":"fall","src":"cam-A","conf":0.9,"event_id":"唯一事件号"} |
+| event_id | **强烈建议**:同号重发/网络重试服务端自动去重,只响一次(返回 dedup:true + 原条目 id) |
+| 空 body | 也收(兼容旧姿势) |
+| 成功返回 | {"ok":true,"dedup":false,"id":"al_..._毫秒","time":...,"kind":...,"acked":false};ok=true=床头已落账 |
+| 手机侧 | 拉模式:app 前台 3s 内全屏红条+警铃+震动;关着由守护服务 10s 内系统通知;「知道了」→ POST /alarms/ack {"id":..} |
+| 无扰测试 | POST /fall_alarm body {"dry":true} → 只回执({"ok":true,"dry":true,"ver":"5.7",...}),不落账、手机不响 |
+| 健康检查 | GET /fall_alarm → {"ok":true,"service":"arm_service","ver":"5.7",...} 无任何副作用 |
+| 警报列表 | GET /alarms → {"ok":true,"alarms":[...]} 新在前,50 条(含 acked);id 格式 l_日期_时分秒_毫秒(同秒必不撞号) |
+| 版本 | 手板服务 v5.7(alarms.json 掉电恢复,id 毫秒化,v5.6 兼容) |

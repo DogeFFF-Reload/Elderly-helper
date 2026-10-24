@@ -4,6 +4,8 @@
 
 订阅主脑事件流(GET /api/events?since=<id>),看到跌倒类事件立刻转发到
 床头执行端的 POST /fall_alarm,家属手机 App 3~10 秒内响警报。
+转发时带 event_id=bus-<主脑事件id>:同一事件的轮询重放/网络重试在床头
+自动去重,只响一次(SVC_VER >= 5.7)。
 
 用法:
     python bridges/fall_to_family.py --master http://127.0.0.1:8000 \\
@@ -66,6 +68,7 @@ def one_round(master: str, family: str, since: int, warn_missing: bool) -> int:
         last_id = max(last_id, eid)
         if looks_like_fall(ev):
             body = json.dumps({"kind": "fall", "src": "master-bus",
+                               "event_id": "bus-%s" % ev.get("id", ""),
                                "conf": None if ev.get("conf") is None
                                else round(float(ev.get("conf") or 0), 2)}).encode()
             try:
