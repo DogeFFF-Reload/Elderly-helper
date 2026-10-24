@@ -222,13 +222,13 @@ function renderMed(s) {
   const m = s.med, box = $("med");
   box.hidden = !(m && m.enabled);
   if (box.hidden) return;
-  const chip = (d) => d.state === "taken" ? `<span class="chip taken">✓ 已服 ${UI.time(d.taken_ts, false)}</span>`
+  const chip = (d) => d.state === "taken" ? `<span class="chip taken">✓ 已服 ${UI.esc(d.taken_at)}</span>`
     : d.state === "missed" ? `<span class="chip missed">⚠ 漏服</span>`
     : `<span class="chip waiting">${d.state === "delivered" ? "已递药，等打卡" : "已提醒，等打卡"}</span>`;
   const rows = m.doses.length
     ? [...m.doses].reverse().map((d) => `<div class="med-row"><time>${UI.esc(d.slot)}</time><span>${UI.esc(d.name)}</span>${chip(d)}</div>`).join("")
     : `<div class="empty">今天还没到吃药时间</div>`;
-  $("med").innerHTML = `<h2>💊 用药<span class="sub">每天 ${m.times.map(UI.esc).join(" / ")}</span></h2>${rows}
+  $("med").innerHTML = `<h2>💊 用药<span class="sub">每天 ${m.times.map(UI.esc).join(" / ")}${m.utc_offset === 8 ? "（北京时间）" : ""}</span></h2>${rows}
     <div class="note">到点 CareMate 提醒，${UI.esc(s.elder_title)}说“吃了”才打卡；提醒后 ${Math.round(m.missed_after / 60) || 1} 分钟没打卡会通知你。</div>`;
 }
 

@@ -52,7 +52,7 @@ DEFAULTS = {
     # 用药提醒闭环（agent/med_reminder.py）：off（默认）/ on；运行中也可经 /api/med/enable 切换
     "med_reminder": "off",
     "med_name": "降压药",
-    "med_times": ["08:00", "20:00"],   # 按本机时钟；演示用操作台“用药提醒”按钮当场触发
+    "med_times": ["08:00", "20:00"],   # 按 expected_utc_offset 的钟点（默认北京时间），不跟本机时区；演示用操作台按钮当场触发
     "med_missed_after": 120.0,         # 提醒后多少秒没说“吃了”算漏服、通知家属
     # 家属端对老人的称呼
     "elder_title": "妈妈",

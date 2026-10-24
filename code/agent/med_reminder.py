@@ -4,8 +4,11 @@
 保命链进行中（询问 / SOS / 等家属）不提醒、不判漏服，等回到空闲再说。
 
 开关 cfg["med_reminder"]：off（默认）/ on；运行中可经 /api/med/enable 切换。
-定时按本机时钟（med_times，"HH:MM"）；演示用操作台“用药提醒”按钮当场触发，不依赖钟点。
+定时和显示的钟点一律按 cfg["expected_utc_offset"]（默认 UTC+8 北京时间），不跟本机时区走：
+演示笔记本是太平洋时区、X5 默认 UTC，按本机时钟的话 08:00 会在北京时间下午才提醒。
+演示用操作台“用药提醒”按钮当场触发，不依赖钟点。
 """
+import calendar
 import time
 
 STATE_TEXT = {"reminded": "已提醒", "delivered": "已递药", "taken": "已服", "missed": "漏服"}
@@ -40,6 +43,13 @@ class MedReminder:
         self.doses = []
         self.next_id = 1
 
+    def _wall(self, ts):
+        """ts 换成北京时间（expected_utc_offset）的 struct_time，和本机时区无关。"""
+        return time.gmtime(ts + self.cfg["expected_utc_offset"] * 3600)
+
+    def _hhmm(self, ts):
+        return time.strftime("%H:%M", self._wall(ts))
+
     @property
     def name(self):
         return self.cfg["med_name"]
@@ -69,7 +79,7 @@ class MedReminder:
         p = self.pending
         if p:   # 上一顿还没打卡：再提醒一声，不新开一顿
             return [_ev("med", "再次提醒：%s（%s）还没打卡" % (self.name, p["slot"])), _say("med_remind", med=self.name)]
-        slot = slot or time.strftime("%H:%M", time.localtime(now))
+        slot = slot or self._hhmm(now)
         self.doses.append({"id": self.next_id, "name": self.name, "slot": slot, "ts": now, "source": source,
                            "state": "reminded", "delivered": False, "taken_ts": None})
         self.next_id += 1
@@ -91,7 +101,7 @@ class MedReminder:
             return [_say("med_none")]
         p["state"] = "taken"
         p["taken_ts"] = self.clock()
-        at = time.strftime("%H:%M", time.localtime(p["taken_ts"]))
+        at = self._hhmm(p["taken_ts"])
         return [_ev("med", "服药打卡：%s（%s 的那顿）%s 已服" % (self.name, p["slot"], at), "ok"),
                 {"do": "notify", "contact": self.primary["id"], "kind": "med",
                  "text": "%s按时吃了%s（%s 提醒，%s 打卡）" % (self.cfg["elder_title"], self.name, p["slot"], at)},
@@ -117,14 +127,15 @@ class MedReminder:
                       "text": "%s %s 的%s还没吃（提醒后没有打卡），方便的话打个电话问问" % (
                           self.cfg["elder_title"], p["slot"], self.name)},
                      _say("med_missed", med=self.name)]
-        lt = time.localtime(now)
-        day = time.strftime("%Y-%m-%d", lt)
+        wt = self._wall(now)
+        day = time.strftime("%Y-%m-%d", wt)
+        offset = self.cfg["expected_utc_offset"] * 3600
         for slot in self.cfg["med_times"]:
             key = "%s %s" % (day, slot)
             if key in self.fired:
                 continue
             h, m = parse_hhmm(slot)
-            due = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, h, m, 0, 0, 0, -1))
+            due = calendar.timegm((wt.tm_year, wt.tm_mon, wt.tm_mday, h, m, 0, 0, 0, 0)) - offset
             if now < due:
                 continue
             self.fired.add(key)
@@ -139,4 +150,6 @@ class MedReminder:
         return {"enabled": self.enabled, "name": self.name, "times": list(self.cfg["med_times"]),
                 "missed_after": self.cfg["med_missed_after"],
                 "pending": dict(p, state_text=STATE_TEXT[p["state"]]) if p else None,
-                "doses": [dict(d, state_text=STATE_TEXT[d["state"]]) for d in self.doses[-8:]]}
+                "utc_offset": self.cfg["expected_utc_offset"],
+                "doses": [dict(d, state_text=STATE_TEXT[d["state"]],
+                               taken_at=self._hhmm(d["taken_ts"]) if d["taken_ts"] else None) for d in self.doses[-8:]]}
