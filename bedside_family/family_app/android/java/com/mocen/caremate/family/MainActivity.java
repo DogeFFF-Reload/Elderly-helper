@@ -131,7 +131,6 @@ public class MainActivity extends Activity {
         alarmBar.setOnClickListener(v -> {});          // 拦截点击,防穿到列表
         alarmText = text("⚠ 跌倒警报", 15, 0xFFFFFFFF, true);
         alarmText.setPadding(0, dp(6), 0, dp(6));
-        ((LinearLayout.LayoutParams) alarmText.getLayoutParams()).weight = 1;
         alarmText.setLayoutParams(new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         Button okb = btn("知道了", 0xFFFFFFFF, RED, v -> ackAlarm());

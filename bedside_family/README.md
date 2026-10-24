@@ -87,7 +87,7 @@ bedside_family/
 ├── family_app/                            # 家属 App(原生安卓,无第三方依赖,纯手工工具链构建)
 │   ├── android/                           #   源码(Manifest / MainActivity / GuardService / Cfg)
 │   ├── build_app.py                       #   构建脚本(aapt2→javac→d8→zipalign→apksigner,无需 gradle)
-│   ├── family_app_v1.1.apk                #   签名成品(~30KB;桌面交付别名"家人留言v2.apk"=同一构建)
+│   ├── family_app_v1.2.apk                 #   签名成品(~29KB;桌面交付别名"家人留言v3.apk";v1.1 有首开崩溃 bug 已移除)
 │   ├── README.md                          #   行为规格 / 4G 中转升级法 / 构建坑位
 │   └── legacy_webview_v1/                 #   初版 WebView+MIC 原型(考古)
 ├── bridges/fall_to_family.py              # 视觉/主脑 → 家属警报 桥接器(姿势 B,带 event_id=bus-<事件id>)

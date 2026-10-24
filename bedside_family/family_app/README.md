@@ -29,11 +29,10 @@ CLOUD_BASE = ""                             // 中转站落地后填这里,填�
 
 ```powershell
 python family_app/build_app.py
-# 产出 family_app_v1.1.apk,自动同步桌面
+# 产出 family_app_v1.2.apk,自动同步桌面(家人留言v3.apk)
 ```
 
-> 交付别名勘误:桌面"家人留言v2.apk"与 family_app_v1.1.apk 为**同一构建**(字节哈希一致),v2 只是给家属的易读叫法。
-> CI 版:仓库的 `family-app-ci` 用同样流水线产出**临时 debug 签名**的冒烟 APK(Artifact 可下载);稳定签名密钥永不进 CI/仓库。
+> 版本沿革:v1.1(versionCode 2)从未在真机跑通——MainActivity 警报条初始化有一处对未挂载 View 取 LayoutParams 的 NPE,一点开即闪退,**javac/CI 抓不到运行期 NPE,真机首开才现形**。v1.2(versionCode 3)删掉冗余行修复;同签名升级覆盖安装即可。桌面交付别名"家人留言v2.apk"=当时的 broken v1.1,v3=v1.2。
 
 | 依赖 | 值 | 坑 |
 |---|---|---|
