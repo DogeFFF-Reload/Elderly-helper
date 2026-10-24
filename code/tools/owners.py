@@ -49,6 +49,7 @@ TESTS = {
     "test_merge_gate": ("software",),
     "test_arm_link": ("software",),
     "test_estop": ("software",),
+    "test_med_reminder": ("software",),
     "test_preflight": ("software",),
     "test_handover_chain": ("hardware",),
     "test_exercise": ("hardware",),
