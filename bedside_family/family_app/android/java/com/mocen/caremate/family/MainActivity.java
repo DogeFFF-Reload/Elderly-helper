@@ -79,6 +79,9 @@ public class MainActivity extends Activity {
     private Vibrator vib;
     private volatile boolean alarming = false;   // app 内警报进行中
     private String lastAckFired = "";
+    private LinearLayout permBar;                // 琥珀色权限提醒条(通知权限/后台常驻)
+    private TextView permText;
+    private boolean notifAsked = false;          // 本次进程只自动弹一次通知权限
 
     static class Msg { String id, time; double dur; boolean own; }
     static class Alarm { String id, time, src; boolean acked; }
@@ -96,6 +99,12 @@ public class MainActivity extends Activity {
         stopRec(true);
         if (player != null) { player.release(); player = null; }
         if (recFile != null && recFile.exists()) recFile.delete();
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        refreshPermBanner();
+        fetchAlarms(true);
     }
 
     /* ================= UI(纯代码,无 XML 布局) ================= */
@@ -138,6 +147,23 @@ public class MainActivity extends Activity {
         alarmBar.addView(alarmText);
         alarmBar.addView(okb);
         root.addView(alarmBar);
+
+        // 权限提醒条(琥珀色,可点):通知权限/后台常驻 —— 熄屏收警报的生死线,缺哪样亮哪条
+        permBar = new LinearLayout(this);
+        permBar.setOrientation(LinearLayout.HORIZONTAL);
+        permBar.setGravity(Gravity.CENTER_VERTICAL);
+        permBar.setBackgroundColor(0xFFFFB300);
+        permBar.setPadding(dp(14), dp(6), dp(10), dp(6));
+        permBar.setVisibility(View.GONE);
+        permText = text("⚠ 提醒权限未开全——熄屏/退后台将收不到警报", 13, 0xFF3E2C00, true);
+        permText.setPadding(0, dp(4), 0, dp(4));
+        permText.setLayoutParams(new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        Button pb = btn("去开启", 0xFF3E2C00, 0xFFFFB300, v -> openPermSettings());
+        pb.setAllCaps(false);
+        permBar.addView(permText);
+        permBar.addView(pb);
+        root.addView(permBar);
 
         // 顶部
         LinearLayout header = new LinearLayout(this);
@@ -421,16 +447,10 @@ public class MainActivity extends Activity {
 
     /* ================= 跌倒警报(app 内) ================= */
 
-    /** 初始化:启动守护服务 + 通知权限 + 3 秒轮询循环 */
+    /** 初始化:启动守护服务 + 权限体检 + 3 秒轮询循环 */
     private void alarmInit() {
         vib = (Vibrator) getSystemService(VIBRATOR_SERVICE);
-        // Android 13+ 通知权限(一次)
-        if (Build.VERSION.SDK_INT >= 33 &&
-                checkSelfPermission("android.permission.POST_NOTIFICATIONS")
-                        != PackageManager.PERMISSION_GRANTED) {
-            try { requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 9); }
-            catch (Exception e) {}
-        }
+        refreshPermBanner();
         try { startForegroundService(new Intent(this, GuardService.class)); } catch (Exception e) {}
         // 3 秒一轮警报轮询(app 在前台时最快触达;关 app 后由 GuardService 接管)
         ui.postDelayed(new Runnable() {
@@ -527,6 +547,49 @@ public class MainActivity extends Activity {
         try { if (alarmSnd != null) { alarmSnd.stop(); alarmSnd.release(); } } catch (Exception e) {}
         alarmSnd = null;
         try { if (vib != null) vib.cancel(); } catch (Exception e) {}
+    }
+
+    /** 权限体检:通知权限(Android13+)/电池优化白名单。后台通知 nm.notify 在无通知权限时静默丢弃——
+     *  前台红条不需要该权限,所以"前台能响、熄屏没影"的头号真凶就是它;缺哪样亮哪条。 */
+    private void refreshPermBanner() {
+        boolean need = false;
+        String msg = "";
+        try {
+            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                    != PackageManager.PERMISSION_GRANTED) {
+                need = true; msg = "⚠ 未开通知权限——熄屏/退后台收不到警报提醒";
+            }
+        } catch (Exception e) {}
+        try {
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            if (!pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                need = true;
+                msg = msg.isEmpty() ? "⚠ 未设后台常驻——系统可能清理守护服务造成漏报"
+                                    : "⚠ 未开通知权限+未设后台常驻——熄屏将收不到警报";
+            }
+        } catch (Exception e) {}
+        permText.setText(msg.isEmpty() ? "⚠ 提醒权限未开全——熄屏/退后台将收不到警报" : msg);
+        permBar.setVisibility(need ? View.VISIBLE : View.GONE);
+        if (need && Build.VERSION.SDK_INT >= 33 && !notifAsked) {   // 自动弹一次,其余靠横幅引导
+            notifAsked = true;
+            try { requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 9); }
+            catch (Exception e) {}
+        }
+    }
+
+    private void openPermSettings() {
+        try {
+            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                    != PackageManager.PERMISSION_GRANTED)
+                requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 9);
+        } catch (Exception e) {}
+        try {
+            startActivity(new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    android.net.Uri.parse("package:" + getPackageName())));
+        } catch (Exception e) {
+            try { startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.parse("package:" + getPackageName()))); } catch (Exception e2) {}
+        }
     }
 
     /* ================= 播放 ================= */
@@ -711,7 +774,9 @@ public class MainActivity extends Activity {
     private void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_SHORT).show(); }
 
     @Override public void onRequestPermissionsResult(int code, String[] p, int[] g) {
-        if (code == REQ_MIC && g.length > 0 && g[0] == PackageManager.PERMISSION_GRANTED) startRec();
-        else toast("需要麦克风权限才能给老人留话");
+        if (code == REQ_MIC) {
+            if (g.length > 0 && g[0] == PackageManager.PERMISSION_GRANTED) startRec();
+            else toast("需要麦克风权限才能给老人留话");
+        } else if (code == 9) refreshPermBanner();   // 通知权限回执后刷新提醒条
     }
 }

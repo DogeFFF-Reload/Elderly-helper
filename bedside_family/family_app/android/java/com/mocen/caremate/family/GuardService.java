@@ -36,7 +36,9 @@ public class GuardService extends Service {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         Notification ch = mkChannel(nm, "caremate_alive", "守护在线");
         try {
-            startForeground(1, ch);
+            if (Build.VERSION.SDK_INT >= 29)
+                startForeground(1, ch, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+            else startForeground(1, ch);
         } catch (Exception e) { return; }
         if (threadUp) return;                       // 已在轮询,不重复起线程
         threadUp = true;
@@ -111,6 +113,9 @@ public class GuardService extends Service {
                 .setContentTitle("⚠ 跌倒警报")
                 .setContentText("检测到老人疑似跌倒!" + who)
                 .setContentIntent(pi)
+                .setCategory(Notification.CATEGORY_ALARM)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)   // 锁屏上也可见
+                .setFullScreenIntent(pi, true)   // 锁屏全屏弹出;未授权时系统自动降级为横幅
                 .setAutoCancel(true);
         nm.notify(1001, b.build());
     }
