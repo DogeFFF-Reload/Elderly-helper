@@ -1,5 +1,7 @@
 # Mocen CareMate · 床头屏侧 + 家属端模块(嘉立创屏 + 手板 + 家属 App + 跌倒警报推送)
 
+[![bedside-ci](https://github.com/DogeFFF-Reload/Elderly-helper/actions/workflows/bedside-ci.yml/badge.svg)](https://github.com/DogeFFF-Reload/Elderly-helper/actions/workflows/bedside-ci.yml)
+
 本目录是团队仓库之外的另一半系统——**床头侧(老人端)** 与 **家属手机端** 的完整实现。
 与本仓库其他模块的关系,一句话:**视觉模块(§11)负责"发现跌倒",本目录负责"警报立刻响到家属手机上"**,同时床头屏、留言互通、家属语音回话也都从这里完成。
 

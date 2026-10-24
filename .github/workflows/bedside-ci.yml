@@ -1,0 +1,29 @@
+name: bedside-ci
+
+# 床头侧/家属端(bedside_family)的保底 CI:
+#   ① 全部服务 Python 文件语法检查(py_compile,不 import,所以不需要任何依赖);
+#   ② bedside_core 离线单测——零硬件、零第三方依赖:
+#      测试自会给 serial/vosk 打桩(缺库机器/CI 裸环境都能跑),
+#      覆盖警报 id 唯一性/去重/ack/掉电恢复、语音长词优先、留言 id 安全。
+on:
+  push:
+    paths: ["bedside_family/**"]
+  pull_request:
+    paths: ["bedside_family/**"]
+  workflow_dispatch:
+
+jobs:
+  handboard-core:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bedside_family
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 语法检查(服务/测试全部 Python 文件)
+        run: python -m py_compile service_handboard/*.py tests/*.py
+      - name: 离线单测(警报/语音/留言安全)
+        run: python tests/test_bedside_core.py
