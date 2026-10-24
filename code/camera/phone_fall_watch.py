@@ -58,9 +58,10 @@ def to_small_gray(jpeg_bytes):
     return img.resize((W, H))
 
 def energy_profile(g1, g2):
-    """返回 (动作能量0-100, 纵向重心0-1(0=顶部,1=底部), ASCII 预览行列表)"""
+    """返回 (动作能量0-21.25, 纵向重心0-1(0=顶部,1=底部), ASCII 预览行列表)"""
     diff = ImageChops.difference(g1, g2)
-    px = list(diff.getdata())
+    pixels = getattr(diff, "get_flattened_data", diff.getdata)
+    px = list(pixels())
     tot = sum(px)
     energy = min(100.0, tot / (len(px) * 12))          # 经验缩放
     # 纵向重心：diff 亮点的行分布

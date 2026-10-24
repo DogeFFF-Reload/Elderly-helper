@@ -53,6 +53,7 @@ TESTS = {
     "test_rps_engine": ("demo",),
     "test_fall_detector": ("demo",),
     "test_phone_fall_watch": ("demo",),
+    "test_phone_calibrate": ("demo",),
     "test_rh56_driver": ("hardware",),
     "test_rps_hook": ("software",),
     "test_vision_teach_report": ("demo", "captain"),  # 跌倒/夜间归演示，教学/日报/健康归队长

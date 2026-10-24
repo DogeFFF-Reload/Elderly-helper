@@ -18,7 +18,7 @@ $env:PYTHONUNBUFFERED = "1"
 
 Push-Location $code
 try {
-    if (-not $Quiet) { Write-Host "[offline] running 22 test suites..." -ForegroundColor Cyan }
+    if (-not $Quiet) { Write-Host "[offline] running regression tests..." -ForegroundColor Cyan }
     python tests/run_all.py
     if (-not $Quiet) { Write-Host "[offline] compiling Python modules..." -ForegroundColor Cyan }
     python -m compileall -q .
