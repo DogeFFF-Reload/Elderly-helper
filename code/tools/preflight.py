@@ -61,6 +61,9 @@ def check(n):
     elif arm.get("failed") and "rejected" in (arm.get("last_error") or ""):
         add(WARN, "执行端", "在线，但有动作被拒绝：%s" % arm["last_error"],
             "动作名和 hand_controller/poses.py 对不上，找硬件同学")
+    elif arm.get("mock"):
+        add(WARN, "执行端", "在线，但是模拟（mock）：臂和手不会真动，大屏“床边执行端”照常演",
+            "真手 / 臂就绪后 MOCK_SERIAL=0 重启 arm_service；演示时这就是 Plan B，台词别说“真机”")
     else:
         add(OK, "执行端", "在线 %s%s" % (arm.get("url", ""), "，已做 %d 个动作" % arm["done"] if arm.get("done") else ""))
 

@@ -177,6 +177,20 @@ class BusArmFeedbackTest(unittest.TestCase):
         self.assertEqual((h["1"]["pose"], h["1"]["status"]), ("press_sos", "offline"))
         self.assertEqual((h["2"]["pose"], h["2"]["status"]), ("gentle_hold", "offline"))
 
+    def test_status_reports_mock_executor(self):
+        # 执行端是 mock 时，大屏 / 操作台 / 自检都不能说“真机”：主脑从 /status 读 mock 字段
+        url, stop = start_arm()
+        self.addCleanup(stop)
+        arm = ArmClient(url)
+        self.assertTrue(arm.probe())
+        self.assertIs(arm.status()["mock"], True)
+        from tools import preflight
+        nodes = {"bus": {"state": "IDLE"}, "arm": arm.status(), "box": {"online": False}, "vision": {"online": False}, "clients": {},
+                 "heard": None, "llm": {"mode": "scripted"}, "params_changed": {}}
+        rows = [r for r in preflight.check(nodes) if r[1] == "执行端"]
+        self.assertEqual(rows[0][0], "warn")
+        self.assertIn("模拟", rows[0][2])
+
     def test_end_to_end_with_real_arm_service(self):
         url, stop = start_arm()
         self.addCleanup(stop)

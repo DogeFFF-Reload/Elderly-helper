@@ -120,6 +120,7 @@ class ArmClient:
         self.on_result = None
         self.on_link = None
         self.online = None
+        self.mock = None          # 执行端 /status 自报的 mock：True 时手和臂不会真动，大屏不能写“真机同步”
         self.last_ok = None       # 执行端最近一次有回应的时间
         self.last_error = None
         self.counts = {"done": 0, "failed": 0, "dropped": 0}
@@ -160,16 +161,24 @@ class ArmClient:
     def probe(self):
         return self._call("GET", "/status")[0]
 
+    def _note_status(self, body):
+        try:
+            self.mock = bool(json.loads(body.decode("utf-8")).get("mock"))
+        except Exception:  # noqa: BLE001 老版执行端或非 JSON：不知道就当不知道
+            self.mock = None
+
     def status(self):
         ago = None if self.last_ok is None else round(self.clock() - self.last_ok, 1)
         return dict(self.counts, online=self.online, url=self.base, ok_ago=ago, last_error=self.last_error,
-                    halted=self.halted)
+                    halted=self.halted, mock=self.mock)
 
     def _call(self, method, path):
         """返回 (ok, why, detail)。HTTP 错误码 = 执行端在线但拒绝（多半是动作表里没有这个 pose）。"""
         req = urllib.request.Request(self.base + path, data=b"" if method == "POST" else None, method=method)
         try:
-            urllib.request.urlopen(req, timeout=self.timeout).read()
+            body = urllib.request.urlopen(req, timeout=self.timeout).read()
+            if path == "/status":
+                self._note_status(body)
         except urllib.error.HTTPError as e:
             self._link(True)
             return False, "rejected", _http_error_text(e)

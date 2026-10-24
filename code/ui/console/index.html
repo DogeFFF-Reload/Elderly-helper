@@ -304,7 +304,7 @@ function renderState(s) {
   const guardText = { IDLE: "守护中", ASKING: "询问中 " + UI.secs(g.remaining), SOS: "SOS · 等家属", HELP_COMING: name(g.acked_by) + "马上到" }[g.state];
   pill("pGuard", g.state === "IDLE" ? "good" : g.state === "HELP_COMING" ? "good" : g.state === "ASKING" ? "warn" : "bad", "<i></i>" + guardText);
   pill("pNight", s.night.active ? "night" : "", (s.night.active ? "🌙 夜间" : "☀️ 日间") + (s.night.mode === "auto" ? "（按时钟）" : "（强制）"));
-  pill("pArm", s.arm.online === true ? "good" : s.arm.online === false ? "bad" : "", "<i></i>执行端" + (s.arm.online === true ? "在线" : s.arm.online === false ? "离线（动作只记录）" : "未调用"));
+  pill("pArm", s.arm.online === true ? "good" : s.arm.online === false ? "bad" : "", "<i></i>执行端" + (s.arm.online === true ? (s.arm.mock ? "在线（模拟，真机不动）" : "在线") : s.arm.online === false ? "离线（动作只记录）" : "未调用"));
   pill("pMode", "", "台词：" + s.mode);
   const stop = !!s.estop;
   $("estop").classList.toggle("on", stop);
