@@ -28,6 +28,9 @@
  *      最长 60 秒自动发送（服务端合成 WAV 落盘 + 网页收件箱）。
  * v5.5 听留言电流声修复：HTTP 分块奇数字节导致样本错位(白噪声)，跨块 1 字节
  *      进位对齐修复(详见 messagePlay 注释)。烧录后重测：App 发 fam_ 留言→屏播应清亮。
+ * v5.6 WiFi 抗掉线：手机热点会踢省电设备，setAutoReconnect 卡死不回来
+ *      (20261025 现场复现：屏掉线后按钮全"离线,没发")。三重加固=关 WiFi 省电
+ *      + 按钮路径先自救重连 6s 再报错 + 15s 看门狗强制重连；掉线原因进串口日志。
  *
  * v5.2 留言收发版：按键表 [招手|手指操|猜拳 / 留言|听留言|语音]（归位仍在语音里说）。
  *      听留言=播最新留言/家属回话，没有则喇叭播"还没有"；
@@ -257,9 +260,25 @@ static bool getTouch(int16_t &tx, int16_t &ty) {
 /* ---- 网络：直发 arm_service ---- */
 static bool wifi_up() { return WiFi.status() == WL_CONNECTED; }
 
+/* v5.6:掉线自救。手机热点(AP)会踢省电设备,setAutoReconnect 卡死时当场
+   disconnect+begin 拉回;最多等 ms 毫秒,成功才放行发送/播放。 */
+static bool net_wait(uint32_t ms) {
+  if (wifi_up()) return true;
+  Serial.println("[net] 掉线,尝试重连…");
+  WiFi.disconnect(false);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  uint32_t t0 = millis();
+  while (millis() - t0 < ms) {
+    if (WiFi.status() == WL_CONNECTED) { Serial.println("[net] 重连成功"); return true; }
+    delay(120);
+  }
+  Serial.println("[net] 重连失败");
+  return wifi_up();
+}
+
 static void armSend(int i) {
   String url = String("http://") + ARM_HOST + ":" + String(ARM_PORT) + BTN_EP[i];
-  if (!wifi_up()) {
+  if (!net_wait(6000)) {
     Serial.println("[net] 离线,没发");
     g_chip = 3; g_strip = 2; present();
     return;
@@ -530,7 +549,7 @@ static void spk_prompt(const uint8_t *pcm, int len) {
    → 留言后半段全成白噪声(20261025 真机定位)。修法:1 字节进位缓存,
    悬空奇字节并入下一块,保证喂给 spk_play_pcm 的永远从头对齐、偶数字节。 */
 static void messagePlay() {
-  if (!wifi_up()) {
+  if (!net_wait(6000)) {
     Serial.println("[net] 离线,听不了留言");
     g_chip = 3; g_strip = 2; present();
     return;
@@ -620,7 +639,7 @@ static void messagePlay() {
 }
 
 static void voiceSend() {
-  if (!wifi_up()) {
+  if (!net_wait(6000)) {
     Serial.println("[net] 离线,语音没发");
     g_chip = 3; g_strip = 2; present();
     return;
@@ -726,7 +745,7 @@ static int mic_record_msg(uint8_t *buf, int buf_bytes, int &hit) {
 }
 
 static void messageSend() {
-  if (!wifi_up()) {
+  if (!net_wait(6000)) {
     Serial.println("[net] 离线,留言没发");
     g_chip = 3; g_strip = 2; present();
     return;
@@ -800,7 +819,7 @@ static void messageSend() {
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.println("\n[boot] CareMate bedside_s3_arm_kiosk v5.5 留言收发(听留言电流声修复)");
+  Serial.println("\n[boot] CareMate bedside_s3_arm_kiosk v5.6 留言收发+WiFi抗掉线");
 
   /* I2C 先行（PCA/触摸都在上面） */
   Wire.begin(BSP_I2C_SDA, BSP_I2C_SCL, 100000);
@@ -827,6 +846,10 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   WiFi.setAutoReconnect(true);
+  WiFi.setSleep(false);   /* v5.6:关 WiFi 省电,手机热点环境防踢 */
+  WiFi.onEvent([](WiFiEvent_t e, WiFiEventInfo_t i) {
+    Serial.printf("[wifi] ev=%d rsn=%d\n", (int)e, (int)i.wifi_sta_disconnected.reason);
+  });
   Serial.print("[wifi] 连接 "); Serial.println(WIFI_SSID);
 
   /* v5.3:开机自检音撤下——自检就是播放链路首跑,之前 spk_play_pcm 的写越界让它
@@ -888,6 +911,16 @@ static void chipPoll() {
 }
 
 void loop() {
+  /* v5.6 WiFi 看门狗:每 15s 查一次,断线就强制 begin 拉回 */
+  static uint32_t tWifiWd = 0;
+  if (millis() - tWifiWd > 15000) {
+    tWifiWd = millis();
+    if (!wifi_up()) {
+      Serial.println("[wifi] 看门狗:断线,强制重连");
+      WiFi.disconnect(false);
+      WiFi.begin(WIFI_SSID, WIFI_PASS);
+    }
+  }
   /* 校准窗口 */
   if (tCalEnd == 0) tCalEnd = millis() + CAL_WINDOW_MS;
   if (cal_k < 4 && millis() < tCalEnd) {
