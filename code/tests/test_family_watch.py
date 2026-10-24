@@ -175,6 +175,29 @@ class FamilyWatchTest(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertEqual(report["status"], "no_usable_input")
 
+    def test_camera_errors_explain_login_or_stream_problem_without_exposing_other_exceptions(self):
+        from camera.phone_calibrate import CAMERA_ERROR_MESSAGES, CollectionError
+        for label, text in (("auth", CAMERA_ERROR_MESSAGES["auth"]),
+                            ("page", CAMERA_ERROR_MESSAGES["page"]),
+                            ("secret", "secret-password-and-camera-url")):
+            with self.subTest(label=label):
+                logs = []
+                args = watch.parser().parse_args(["--phone-stream", "http://phone.invalid/",
+                                                 "--output", str(self.root / label)])
+                client = AlarmClient(transport=lambda *_a, **_kw: self.fail("Off mode accessed bedside"))
+                class Broken:
+                    def __enter__(self):
+                        raise CollectionError(text)
+
+                    def __exit__(self, *_args):
+                        pass
+                report = watch.execute(args, client=client, live_factory=lambda **_kw: Broken(), log=logs.append)
+                if label != "secret":
+                    self.assertEqual(report["message"], text)
+                    self.assertIn(text, "".join(logs))
+                else:
+                    self.assertNotIn(text, json.dumps(report) + "".join(logs))
+
     def test_launcher_help_works_from_unrelated_directory_without_model_or_devices(self):
         launcher = Path(__file__).resolve().parents[2] / "run_family_alarm.py"
         result = subprocess.run([sys.executable, "-X", "utf8", str(launcher), "--help"],

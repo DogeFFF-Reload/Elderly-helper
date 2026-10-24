@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CareMate · 看护监看</title>
+<title>CareMate · 实时监看</title>
 <style>
 :root{color-scheme:dark;font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;background:#0c1423;color:#edf2fa}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;padding:26px 32px}header{display:flex;align-items:center;gap:16px;margin-bottom:22px}
@@ -22,12 +22,12 @@ footer{margin-top:16px;font-size:12px;color:#91a2ba;display:flex;justify-content
 </style>
 <header>
   <div class="logo" aria-hidden="true">+</div><div><h1>CareMate 看护监看</h1><p>iPhone 取景 · 姿态识别 · 床头报警</p></div>
-  <div class="spacer"></div><span id="mode" class="badge">正在连接</span><button id="fullscreen" type="button">全屏显示</button>
+  <div class="spacer"></div><span id="liveStatus" class="badge">等待直播</span><span id="mode" class="badge">正在连接</span><button id="fullscreen" type="button">全屏显示</button>
 </header>
 <main>
   <section class="viewer" aria-label="摄像头画面">
     <div id="source" class="video-label">等待输入</div>
-    <img id="video" alt="摄像头画面及人体骨架">
+    <img id="video" alt="摄像头当前画面及人体骨架" draggable="false">
     <div id="overlay" class="overlay"><strong id="overlayTitle">正在连接监看服务</strong><span id="overlayText">画面接通后将在这里显示</span></div>
     <div class="video-foot"><span id="connection">等待更新</span><span id="fps">— 帧/秒</span></div>
   </section>
@@ -37,14 +37,14 @@ footer{margin-top:16px;font-size:12px;color:#91a2ba;display:flex;justify-content
     <div class="flow">iPhone 提供画面<br>运行视觉程序的设备负责识别<br>床头服务登记警报<br>家属 App 轮询接收并提醒</div>
   </aside>
 </main>
-<footer><span>监看画面只在内存中转发，不保存录像；关闭本页不会停止识别。</span><span>手机是否响铃，需由持有家属 App 的人现场确认。</span></footer>
+<footer><span>仅显示当前画面 · 无暂停和回放功能 · 不保存录像；关闭本页不会停止识别。</span><span>手机是否响铃，需由持有家属 App 的人现场确认。</span></footer>
 <script>
 'use strict';
 const $=id=>document.getElementById(id), video=$('video');
 const inputs={waiting:'等待画面',observing:'正在观察',no_person:'未检测到人',pose_unavailable:'身体关键点不完整',input_gap:'画面间隔过长',candidate:'疑似倒地，正在确认',suspected_fall:'疑似跌倒已触发',input_error:'画面已中断'};
 const modes={off:'仅观察 · 不发送报警',dry:'无扰测试 · 不建立警报',live:'正式报警 · 自动上报'};
-let imageBusy=false,lastFrame=-1,watchdog=0,viewGeneration=0,frameAllowed=false;
-function cover(title,detail){viewGeneration++;frameAllowed=false;video.style.display='none';$('overlay').style.display='grid';$('overlayTitle').textContent=title;$('overlayText').textContent=detail;}
+let imageBusy=false,lastFrame=-1,watchdog=0,viewGeneration=0,frameAllowed=false,pollTimer=0,pollGeneration=0,isCamera=false;
+function cover(title,detail){viewGeneration++;frameAllowed=false;video.style.display='none';$('liveStatus').textContent='等待新画面';$('liveStatus').className='badge';$('overlay').style.display='grid';$('overlayTitle').textContent=title;$('overlayText').textContent=detail;}
 function offline(){clearTimeout(watchdog);cover('监看连接已断开','请检查监看地址、网络和视觉服务；本页无法判断后台是否仍在识别。');$('connection').textContent='监看连接中断';$('state').textContent='状态未知';$('fps').textContent='— 帧/秒';}
 async function fetchTimed(path){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),2200);try{return await fetch(path,{cache:'no-store',signal:controller.signal});}finally{clearTimeout(timer);}}
 async function updateImage(sequence){
@@ -52,16 +52,17 @@ async function updateImage(sequence){
   imageBusy=true;
   const generation=viewGeneration;
   let objectUrl;
-  try{const response=await fetchTimed('/frame.jpg?seq='+sequence);if(!response.ok)throw Error('frame');objectUrl=URL.createObjectURL(await response.blob());
+  try{const response=await fetchTimed('/frame.jpg?seq='+sequence);if(!response.ok)throw Error('frame');const data=await response.blob();if(generation!==viewGeneration||!frameAllowed||document.hidden)return;objectUrl=URL.createObjectURL(data);
     await new Promise((resolve,reject)=>{video.onload=resolve;video.onerror=reject;video.src=objectUrl;});
-    if(frameAllowed&&generation===viewGeneration){lastFrame=sequence;video.style.display='block';$('overlay').style.display='none';}
-  }catch(_){cover('暂时没有新画面','请检查手机摄像头 App 是否仍在前台，等待画面恢复。');}
+    if(frameAllowed&&generation===viewGeneration&&!document.hidden){lastFrame=sequence;video.style.display='block';$('overlay').style.display='none';$('liveStatus').textContent=isCamera?'● 实时直播':'离线测试';$('liveStatus').className='badge '+(isCamera?'accent':'warning');}
+  }catch(_){if(generation===viewGeneration)cover('暂时没有新画面','请检查手机摄像头 App 是否仍在前台，等待画面恢复。');}
   finally{if(objectUrl)URL.revokeObjectURL(objectUrl);imageBusy=false;}
 }
 function display(s){
   clearTimeout(watchdog);watchdog=setTimeout(offline,3500);
   $('mode').textContent=modes[s.mode]||'运行模式未知';$('mode').className='badge '+(s.mode==='live'?'warning':'');
   const isPhone=s.input_kind==='phone_mjpeg';$('source').textContent=isPhone?'iPhone 摄像头 + 姿态骨架':s.input_kind==='pc_camera'?'电脑摄像头 + 姿态骨架':'离线演示 · 非实时摄像头';
+  isCamera=isPhone||s.input_kind==='pc_camera';
   $('frames').textContent=s.sequence+' 帧';$('fps').textContent=s.processing_fps+' 帧/秒';$('count').textContent=s.alarm_count+' 次';
   $('state').textContent=inputs[s.input_state]||'等待画面';$('state').className='state '+(s.input_state==='suspected_fall'?'danger':s.input_state==='candidate'?'warning':'accent');
   $('stateHelp').textContent=s.stale?'当前没有持续更新的识别结果。':s.input_state==='no_person'||s.input_state==='pose_unavailable'?'调整取景，让肩部和髋部清楚入镜。':s.input_state==='candidate'?'仍在规则确认阶段，尚未因此建立新警报。':'保持手机固定，让肩部和髋部持续入镜。';
@@ -73,7 +74,12 @@ function display(s){
   else if(s.frame_ready){frameAllowed=true;$('connection').textContent='监看已连接 · '+s.frame_age_s+' 秒前更新';updateImage(s.jpeg_sequence);}
   else{cover('正在准备监看画面','姿态处理已启动，等待画面编码。');$('connection').textContent='等待画面显示';}
 }
-async function poll(){try{const response=await fetchTimed('/api/status');if(!response.ok)throw Error('status');display(await response.json());}catch(_){offline();}finally{setTimeout(poll,400);}}
+async function poll(){const generation=pollGeneration;try{const response=await fetchTimed('/api/status');if(!response.ok)throw Error('status');const status=await response.json();if(generation===pollGeneration&&!document.hidden)display(status);}catch(_){if(generation===pollGeneration&&!document.hidden)offline();}finally{if(generation===pollGeneration&&!document.hidden)pollTimer=setTimeout(poll,400);}}
+function reconnect(){pollGeneration++;clearTimeout(pollTimer);clearTimeout(watchdog);lastFrame=-1;cover('正在连接当前画面','直播只显示新画面，不补播离开期间的内容。');if(!document.hidden)poll();}
+video.addEventListener('contextmenu',event=>event.preventDefault());
+document.addEventListener('visibilitychange',reconnect);
+window.addEventListener('pagehide',()=>{pollGeneration++;clearTimeout(pollTimer);clearTimeout(watchdog);cover('等待重新连接','返回页面后将直接显示当前画面。');});
+window.addEventListener('pageshow',event=>{if(event.persisted)reconnect();});
 $('fullscreen').addEventListener('click',async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}catch(_){$('fullscreen').textContent='请按 F11 全屏';}});
 document.addEventListener('fullscreenchange',()=>{$('fullscreen').textContent=document.fullscreenElement?'退出全屏':'全屏显示';});
 poll();

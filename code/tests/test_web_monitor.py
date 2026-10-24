@@ -77,6 +77,16 @@ class WebMonitorTest(unittest.TestCase):
         self.assertFalse(snapshot["frame_ready"])
         self.assertEqual(self.request("/frame.jpg")[0], 503)
 
+    def test_old_sequence_query_cannot_replay_a_previous_frame(self):
+        self.monitor.encoder = lambda _frame, kp, _detector: kp
+        self.monitor.show(None, b"first-image", self.detector)
+        eventually(lambda: self.monitor.jpeg_sequence == 1)
+        self.now += .3
+        self.monitor.show(None, b"current-image", self.detector)
+        eventually(lambda: self.monitor.jpeg_sequence == 2)
+        self.assertEqual(self.request("/frame.jpg?seq=1")[2], b"current-image")
+        self.assertEqual(self.request("/replay")[0], 404)
+
     def test_slow_encoder_keeps_one_latest_frame_and_does_not_hold_detector(self):
         self.monitor.close()
         entered, release = threading.Event(), threading.Event()
@@ -170,7 +180,7 @@ class WebMonitorTest(unittest.TestCase):
 const assert=require('node:assert/strict'),vm=require('node:vm');
 const elements={};let resolveImage;
 const document={getElementById(id){return elements[id]||(elements[id]={textContent:'',className:'',style:{},addEventListener(){},set src(v){if(this.onload)this.onload();}});},addEventListener(){}};
-const context={document,console,setTimeout:()=>1,clearTimeout(){},AbortController,
+const context={document,window:{addEventListener(){}},console,setTimeout:()=>1,clearTimeout(){},AbortController,
  URL:{createObjectURL:()=> 'blob:memory',revokeObjectURL(){}},
  fetch:path=>path.startsWith('/frame')?new Promise(resolve=>{resolveImage=resolve;}):new Promise(()=>{})};
 vm.createContext(context);vm.runInContext(SCRIPT,context);
@@ -188,6 +198,45 @@ offline();
 `,context);
 resolveImage({ok:true,blob:async()=>new Uint8Array([1])});
 context.pending.then(()=>{assert.equal(elements.video.style.display,'none');assert.equal(elements.overlay.style.display,'grid');assert.equal(elements.state.textContent,'状态未知');console.log('Browser states and stale image race passed');}).catch(error=>{console.error(error);process.exitCode=1;});
+"""
+        result = subprocess.run([shutil.which("node"), "-e", harness.replace("SCRIPT", json.dumps(script))],
+                                capture_output=True, text=True, encoding="utf-8", timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("passed", result.stdout)
+
+    @unittest.skipUnless(shutil.which("node"), "Node required for browser script state tests")
+    def test_hidden_or_restored_page_jumps_to_current_frame_without_playing_missed_frames(self):
+        script = Path(__file__).resolve().parents[1].joinpath("vision/monitor.html").read_text(
+            encoding="utf-8").split("<script>")[1].split("</script>")[0]
+        harness = r"""
+const assert=require('node:assert/strict'),vm=require('node:vm');
+const elements={},events={},pageEvents={},requests=[],timers=new Map();let timerId=0;
+const document={hidden:false,getElementById(id){return elements[id]||(elements[id]={style:{},textContent:'',addEventListener(){},set src(v){this.onload();}});},addEventListener(n,f){events[n]=f;}};
+const context={document,window:{addEventListener(n,f){pageEvents[n]=f;}},console,AbortController,
+ setTimeout(f,ms){timers.set(++timerId,{f,ms});return timerId;},clearTimeout(id){timers.delete(id);},
+ URL:{createObjectURL:()=> 'blob:latest',revokeObjectURL(){}},
+ fetch(path){return new Promise(resolve=>requests.push({path,resolve}));}};
+vm.createContext(context);vm.runInContext(SCRIPT,context);
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+const status=n=>({mode:'off',input_kind:'phone_mjpeg',sequence:n,jpeg_sequence:n,processing_fps:10,
+ alarm_count:0,input_state:'observing',stale:false,frame_ready:true,frame_age_s:0});
+async function show(request,n){request.resolve({ok:true,json:async()=>status(n)});await tick();
+ const frame=requests.at(-1);assert.equal(frame.path,'/frame.jpg?seq='+n);
+ frame.resolve({ok:true,blob:async()=>new Uint8Array([n])});await tick();}
+(async()=>{
+ await show(requests[0],1);assert.equal(elements.liveStatus.textContent,'● 实时直播');
+ const pollTimer=[...timers.values()].find(t=>t.ms===400);pollTimer.f();const outdated=requests.at(-1);
+ document.hidden=true;events.visibilitychange();assert.equal(elements.video.style.display,'none');
+ document.hidden=false;events.visibilitychange();const fresh=requests.at(-1);
+ outdated.resolve({ok:true,json:async()=>status(2)});await tick();
+ assert.equal(elements.video.style.display,'none');
+ await show(fresh,100);assert.equal(elements.video.style.display,'block');
+ assert.deepEqual(requests.filter(r=>r.path.startsWith('/frame')).map(r=>r.path),['/frame.jpg?seq=1','/frame.jpg?seq=100']);
+ pageEvents.pagehide();assert.equal(elements.video.style.display,'none');
+ pageEvents.pageshow({persisted:true});await show(requests.at(-1),200);
+ assert.equal(elements.liveStatus.textContent,'● 实时直播');
+ console.log('Live-only resume passed');
+})().catch(error=>{console.error(error);process.exitCode=1;});
 """
         result = subprocess.run([shutil.which("node"), "-e", harness.replace("SCRIPT", json.dumps(script))],
                                 capture_output=True, text=True, encoding="utf-8", timeout=15)

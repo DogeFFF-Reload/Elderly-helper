@@ -213,6 +213,31 @@ class PhonePoseTest(unittest.TestCase):
         with self.assertRaises(phone_input.CollectionError):
             phone_input.decode_frame(b"not an image")
 
+    def test_login_gets_separate_startup_budget_while_steady_input_keeps_short_timeout(self):
+        waits = []
+
+        class Reader:
+            def __init__(self, *_args):
+                pass
+
+            def start(self):
+                pass
+
+            def get(self, *, after, not_before, timeout):
+                waits.append(timeout)
+                return after + 1, b"fake-jpeg", time.monotonic(), "unused"
+
+            def close(self):
+                pass
+
+        import numpy as np
+        with patch.object(phone_input, "LatestFrame", Reader), \
+                patch.object(phone_input, "wait_until"), \
+                patch.object(phone_input, "decode_frame", return_value=np.zeros((2, 3, 3))):
+            frames = list(phone_input.phone_source(object(), FakeEstimator(), continuous=True, max_frames=2))
+        self.assertEqual(len(frames), 2)
+        self.assertEqual(waits, [12, 3])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -111,6 +111,14 @@ class _PhoneHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html")
             self.end_headers()
             self.wfile.write(b"<html>Not a video</html>")
+        elif self.path in ("/page", "/external", "/snapshot-page"):
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write({
+                "/page": b'<img src="/logo.svg"><img id="video" src="/camera.mjpg?quality=low&amp;live=1"><a href="/archive">Archive</a>',
+                "/external": b'<img id="video" src="http://external.invalid/stream">',
+                "/snapshot-page": b'<img id="video" src="/shot.jpg">',
+            }[self.path])
         else:
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=--BoundaryString")
             self.end_headers()
@@ -159,6 +167,25 @@ class IPhoneStreamTest(unittest.TestCase):
             self.assertGreater(light.getpixel((0, 0)), 230)
         self.assertEqual(_PhoneHandler.requests[-1], ("/", _PhoneHandler.authorization))
 
+    def test_camera_page_resolves_actual_live_image_with_auth_but_never_archive_or_logo(self):
+        with contextlib.closing(self.camera("/page", mjpeg=True).frames()) as frames:
+            self.assertTrue(next(frames).startswith(b"\xff\xd8"))
+        paths = [path for path, _auth in _PhoneHandler.requests]
+        self.assertIn("/camera.mjpg?quality=low&live=1", paths)
+        self.assertNotIn("/archive", paths)
+        self.assertNotIn("/logo.svg", paths)
+        self.assertEqual(_PhoneHandler.requests[-1][1], _PhoneHandler.authorization)
+
+    def test_camera_page_cannot_use_external_images_or_snapshots_as_live_video(self):
+        from camera.phone_source import CameraPageError, live_image_url
+        for suffix in ("/external", "/snapshot-page"):
+            with self.subTest(suffix=suffix), self.assertRaises(CameraPageError):
+                next(self.camera(suffix, mjpeg=True).frames())
+        for html in ('<img src="/one"><img src="/two">',
+                     '<a href="/archive">Replay</a>', '<img src="http://u:p@127.0.0.1:1/">'):
+            with self.subTest(html=html), self.assertRaises(CameraPageError):
+                live_image_url(html, self.base + "/")
+
     def test_android_snapshot_still_works(self):
         with contextlib.closing(self.camera("/shot.jpg").frames()) as frames:
             picture = watch.to_small_gray(next(frames))
@@ -196,7 +223,7 @@ class IPhoneStreamTest(unittest.TestCase):
 
     def test_html_page_is_not_treated_as_video(self):
         with contextlib.closing(self.camera("/html", mjpeg=True).frames()) as frames:
-            with self.assertRaisesRegex(ValueError, "text/html"):
+            with self.assertRaisesRegex(ValueError, "视频流地址"):
                 next(frames)
 
     def test_observe_mode_never_posts_even_when_motion_triggers(self):

@@ -23,9 +23,9 @@ def decode_frame(jpeg):
 
 
 def phone_source(camera, estimator, *, duration=60.0, fps=10.0, max_frames=0, frame_timeout=3.0,
-                 continuous=False):
+                 continuous=False, startup_timeout=12.0):
     """Use fresh frames and actual receipt times; inference never queues MJPEG."""
-    if not all(math.isfinite(n) and n > 0 for n in (duration, fps, frame_timeout)) or max_frames < 0:
+    if not all(math.isfinite(n) and n > 0 for n in (duration, fps, frame_timeout, startup_timeout)) or max_frames < 0:
         raise ValueError("时长、帧率和超时必须为正数，帧数不得为负数")
     if type(continuous) is not bool:
         raise ValueError("continuous须为布尔值")
@@ -42,8 +42,11 @@ def phone_source(camera, estimator, *, duration=60.0, fps=10.0, max_frames=0, fr
             if remaining <= 0:
                 return
             try:
+                # Login and homepage discovery may take longer than an ordinary
+                # gap. This never relaxes the live-frame freshness threshold.
+                budget = startup_timeout if sequence == 0 else frame_timeout
                 sequence, jpeg, received, _utc = reader.get(
-                    after=sequence, not_before=due, timeout=min(frame_timeout, remaining))
+                    after=sequence, not_before=due, timeout=min(budget, remaining))
             except FrameWaitTimeout:
                 if time.monotonic() < deadline:
                     raise

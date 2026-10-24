@@ -117,6 +117,7 @@ def execute(args, *, client=None, live_factory=LiveInput, preview_factory=None, 
                 from vision.web_monitor import MonitorPreview
                 preview = MonitorPreview(monitor, preview)
             if args.camera is not None or args.phone_stream:
+                log("[画面] 正在加载姿态模型、连接摄像头；首次登录可能需要数秒。")
                 live = live_factory(camera=args.camera, phone_stream=args.phone_stream,
                                     username=args.phone_username, password=args.phone_password,
                                     duration=args.duration, fps=args.fps_cap, continuous=args.continuous)
@@ -136,7 +137,14 @@ def execute(args, *, client=None, live_factory=LiveInput, preview_factory=None, 
         report["status"] = "interrupted"
     except (Exception, SystemExit) as exc:
         report.update(status="error", error_type=type(exc).__name__)
-        log("[停止] %s；请检查输入和床头服务，详情见结果文件" % type(exc).__name__)
+        from camera.phone_calibrate import safe_camera_message
+        message = safe_camera_message(exc)
+        if message:
+            report["message"] = message
+            log("[停止] " + message)
+        else:
+            log("[停止] %s；请检查输入%s，详情见结果文件" % (
+                type(exc).__name__, "和床头服务" if args.mode != "off" else "及模型环境"))
     finally:
         if preview:
             preview.close()

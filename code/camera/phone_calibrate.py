@@ -26,10 +26,10 @@ import wave
 import zipfile
 
 if __package__:
-    from .phone_source import PhoneFrameSource
+    from .phone_source import CameraPageError, PhoneFrameSource
     from .phone_fall_watch import Image, energy_profile, to_small_gray
 else:
-    from phone_source import PhoneFrameSource
+    from phone_source import CameraPageError, PhoneFrameSource
     from phone_fall_watch import Image, energy_profile, to_small_gray
 
 STAGES = (
@@ -55,6 +55,24 @@ class CollectionError(Exception):
 
 class FrameWaitTimeout(CollectionError):
     """No new frame within this wait budget; source errors remain distinct."""
+
+
+CAMERA_ERROR_MESSAGES = {
+    "auth": "摄像头登录失败，请核对账号和密码。",
+    "page": "已打开摄像头网页，但没找到可读的MJPEG直播流。请在原网页的画面上右键，复制图片地址后重新启动。",
+    "format": "摄像头没有提供可读取的视频流，请核对 App 视频地址和分辨率。",
+    "connection": "摄像头连接失败或视频流断开。请保持 App 在前台，检查网络后重新采集。",
+    "timeout": "未能及时收到新的摄像头画面，本次采集不完整。",
+    "decode": "手机返回的画面无法解码，请检查视频地址。",
+    "stale": "视频流超过允许时间没有新画面，本次采集不完整。",
+}
+
+
+def safe_camera_message(exc):
+    """Only these fixed messages may reach logs; never echo arbitrary exceptions."""
+    if isinstance(exc, CollectionError) and str(exc) in CAMERA_ERROR_MESSAGES.values():
+        return str(exc)
+    return None
 
 
 def amplify_wave(wav_bytes, gain):
@@ -175,11 +193,13 @@ class LatestFrame:
         except Exception as exc:
             # Never serialize a URL, credential, urllib exception, or traceback.
             if isinstance(exc, urllib.error.HTTPError) and exc.code in (401, 403):
-                message = "摄像头登录失败，请核对账号和密码。"
+                message = CAMERA_ERROR_MESSAGES["auth"]
+            elif isinstance(exc, CameraPageError):
+                message = CAMERA_ERROR_MESSAGES["page"]
             elif isinstance(exc, ValueError):
-                message = "摄像头没有提供可读取的视频流，请核对 App 视频地址和分辨率。"
+                message = CAMERA_ERROR_MESSAGES["format"]
             else:
-                message = "摄像头连接失败或视频流断开。请保持 App 在前台，检查网络后重新采集。"
+                message = CAMERA_ERROR_MESSAGES["connection"]
             with self.condition:
                 self.error = message
                 self.condition.notify_all()

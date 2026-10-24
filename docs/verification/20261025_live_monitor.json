@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "checked_utc": "2026-10-24T17:47:59.355152+00:00",
+  "scope": "CareMate live-only phone monitor and authenticated MJPEG input",
+  "targeted": {
+    "suites": 7,
+    "tests": 86,
+    "result": "passed"
+  },
+  "regression": {
+    "suites": 45,
+    "tests": 617,
+    "skipped": 0,
+    "result": "passed"
+  },
+  "windows_bat_from_unrelated_directory": "--help passed without loading model or opening camera/browser",
+  "checks": [
+    "Authenticated MJPEG input and HTML live-image discovery on loopback",
+    "Same-origin image selection without reading logo or archive links",
+    "Snapshot and ambiguous/external page references rejected",
+    "Separate startup and ordinary frame wait budgets",
+    "Safe Chinese login and stream diagnostics without credential exposure",
+    "Old sequence requests return only the current frame; stale frames refused",
+    "Hidden or restored monitor page discards pending old responses and jumps to current frame"
+  ],
+  "real_camera_accessed": false,
+  "real_bedside_accessed": false,
+  "real_family_alarm_sent": false,
+  "field_acceptance": "Pending user launch with iPhone credentials. Does not establish real camera or end-to-end notification success.",
+  "limitations": [
+    "Automatic homepage discovery requires an explicit unambiguous same-origin img src returning MJPEG; JavaScript-only players and RTSP require separate handling."
+  ]
+}

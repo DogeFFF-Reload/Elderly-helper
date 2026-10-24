@@ -1,8 +1,49 @@
 """HTTP JPEG/MJPEG input; camera requests bypass system and environment proxies."""
 import urllib.request
-from urllib.parse import urlsplit
+from html.parser import HTMLParser
+from urllib.parse import urljoin, urlsplit
 
 MAX_FRAME_BYTES = 8 * 1024 * 1024
+MAX_PAGE_BYTES = 256 * 1024
+
+
+class CameraPageError(ValueError):
+    """A camera homepage did not advertise an unambiguous live MJPEG image."""
+
+
+def live_image_url(page, base):
+    """Read a same-origin image reference, never execute the camera's webpage.
+
+    Some phone apps serve HTML at / and MJPEG at an image's src. Do not guess
+    endpoint names, follow archive links, or load third-party page resources.
+    """
+    images = []
+
+    class Images(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            if tag != "img":
+                return
+            attrs = dict(attrs)
+            src = attrs.get("src", "").strip()
+            if not src:
+                return
+            target = urljoin(base, src)
+            parts, origin = urlsplit(target), urlsplit(base)
+            if ((parts.scheme, parts.hostname, parts.port) != (origin.scheme, origin.hostname, origin.port)
+                    or parts.username is not None or parts.password is not None or parts.fragment
+                    or target == base):
+                return
+            label = " ".join(attrs.get(key, "") for key in ("id", "class", "alt")).lower()
+            # Prefer the page's explicitly named camera image over its logo.
+            live = any(word in label for word in ("video", "stream", "mjpeg", "camera", "live"))
+            images.append((target, live))
+
+    Images().feed(page)
+    marked = {url for url, live in images if live}
+    candidates = marked or {url for url, _live in images}
+    if len(candidates) != 1:
+        raise CameraPageError("摄像头首页未提供唯一的视频流地址，请在原网页画面上右键复制图片地址后重试。")
+    return candidates.pop()
 
 
 def iter_mjpeg(response):
@@ -53,7 +94,9 @@ class PhoneFrameSource:
         handlers = [urllib.request.ProxyHandler({})]
         if username is not None:
             passwords = urllib.request.HTTPPasswordMgrWithDefaultRealm()
-            passwords.add_password(None, url, username, password or "")
+            # The homepage and its MJPEG image can be sibling paths. Scope
+            # credentials to this camera origin rather than just the first path.
+            passwords.add_password(None, "%s://%s/" % (parts.scheme, parts.netloc), username, password or "")
             handlers.append(urllib.request.HTTPBasicAuthHandler(passwords))
         self.opener = urllib.request.build_opener(*handlers)
 
@@ -61,8 +104,19 @@ class PhoneFrameSource:
         if self.mjpeg:
             with self.opener.open(self.url, timeout=5) as response:
                 content_type = response.headers.get_content_type()
-                if content_type != "multipart/x-mixed-replace":
+                if content_type == "multipart/x-mixed-replace":
+                    yield from iter_mjpeg(response)
+                    return
+                if content_type != "text/html":
                     raise ValueError("地址没有返回 MJPEG 视频流（收到 %s）" % content_type)
+                page = response.read(MAX_PAGE_BYTES + 1)
+                if len(page) > MAX_PAGE_BYTES:
+                    raise CameraPageError("摄像头首页过大，请复制原网页画面中的图片地址后重试。")
+                stream = live_image_url(page.decode(response.headers.get_content_charset() or "utf-8",
+                                                   errors="replace"), response.geturl())
+            with self.opener.open(stream, timeout=5) as response:
+                if response.headers.get_content_type() != "multipart/x-mixed-replace":
+                    raise CameraPageError("网页中的图片不是MJPEG直播流，请复制实际直播画面的图片地址后重试。")
                 yield from iter_mjpeg(response)
         else:
             while True:
