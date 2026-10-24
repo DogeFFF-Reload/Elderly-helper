@@ -31,6 +31,11 @@
  * v5.6 WiFi 抗掉线：手机热点会踢省电设备，setAutoReconnect 卡死不回来
  *      (20261025 现场复现：屏掉线后按钮全"离线,没发")。三重加固=关 WiFi 省电
  *      + 按钮路径先自救重连 6s 再报错 + 15s 看门狗强制重连；掉线原因进串口日志。
+ * v5.7 假密码灾后重建：20261025 凌晨屏反复 rsn=15(4WAY 超时)钉死=烧录源密码是
+ *      占位符(仓库脱敏文件误同步进编译正本,烧坏两版)。三处保险：
+ *      ①本头注声明"仓库版保持占位符,真密码只进 master 编译正本,烧前必查"；
+ *      ②ARM_HOST 换新段 10.170.215.251(热点重启换段后)；③连续 8 次看门狗
+ *      重连失败(~2 分钟)自动换一个 MAC 再试——绕开热点侧按 MAC 卡死的会话。
  *
  * v5.2 留言收发版：按键表 [招手|手指操|猜拳 / 留言|听留言|语音]（归位仍在语音里说）。
  *      听留言=播最新留言/家属回话，没有则喇叭播"还没有"；
@@ -50,6 +55,8 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <Wire.h>
+#include "esp_wifi.h"      /* v5.7:会话僵尸逃生用 esp_wifi_set_mac */
+#include "esp_mac.h"       /* v5.7:esp_read_mac */
 #include "driver/spi_master.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
@@ -70,8 +77,8 @@ static const uint16_t* const BTN_PRESSED[6] = {IMG_BTN_P0, IMG_BTN_P1, IMG_BTN_P
 
 /* ══════════════ 现场校正区（烧现场版前只改这里） ══════════════ */
 const char* WIFI_SSID = "Mocen_Bear";            // 现场热点(笔记本已连,同网)
-const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";;            // 从系统读出
-const char* ARM_HOST  = "10.153.47.252";         // X5#A 手板(手#2) IP——静态已固化(agent 语音+真手版)
+const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";    // !!仓库版是占位符!!真密码只进 master 编译正本(不入公开库);烧前必查这行
+const char* ARM_HOST  = "10.170.215.251";        // X5#A 手板 DHCP 地址(20261025 热点换段后;手机再重启它会auto跟上,屏端烧死需重烧)
 const int   ARM_PORT  = 8013;                    // arm_service 端口
 /* ═════════════════════════════════════════════════════════════ */
 
@@ -274,6 +281,21 @@ static bool net_wait(uint32_t ms) {
   }
   Serial.println("[net] 重连失败");
   return wifi_up();
+}
+
+/* v5.7:热点会话僵尸逃生。热点按 MAC 卡死老会话(拉黑/踢设备都无效)时,
+   换一个新 MAC 重来一次。每次 +1 递增(带溢出回绕),本地管理位保证不撞真厂段。 */
+static uint8_t g_macSpin = 0;
+static void wifi_mac_spin() {
+  uint8_t mac[6];
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  if (g_macSpin >= 250) g_macSpin = 0;
+  g_macSpin++;
+  mac[5] = (uint8_t)(mac[5] + g_macSpin);
+  mac[0] = (uint8_t)((mac[0] & 0xFE) | 0x02);   /* 单播 + 本地管理位 */
+  esp_err_t err = esp_wifi_set_mac(WIFI_IF_STA, mac);
+  Serial.printf("[wifi] 换MAC(#%u)=%02X:%02X:%02X:%02X:%02X:%02X err=%d\n",
+                (unsigned)g_macSpin, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], (int)err);
 }
 
 static void armSend(int i) {
@@ -819,7 +841,7 @@ static void messageSend() {
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.println("\n[boot] CareMate bedside_s3_arm_kiosk v5.6 留言收发+WiFi抗掉线");
+  Serial.println("\n[boot] CareMate bedside_s3_arm_kiosk v5.7 留言收发+WiFi抗掉线+换MAC逃生");
 
   /* I2C 先行（PCA/触摸都在上面） */
   Wire.begin(BSP_I2C_SDA, BSP_I2C_SCL, 100000);
@@ -911,15 +933,20 @@ static void chipPoll() {
 }
 
 void loop() {
-  /* v5.6 WiFi 看门狗:每 15s 查一次,断线就强制 begin 拉回 */
+  /* v5.6 WiFi 看门狗:每 15s 查一次,断线就强制 begin 拉回
+     v5.7:连续 8 次(~2 分钟)仍握不上手 → 换一个 MAC 再试(热点会话僵尸逃生) */
   static uint32_t tWifiWd = 0;
+  static int wdFail = 0;
   if (millis() - tWifiWd > 15000) {
     tWifiWd = millis();
     if (!wifi_up()) {
-      Serial.println("[wifi] 看门狗:断线,强制重连");
+      wdFail++;
+      Serial.printf("[wifi] 看门狗:断线,强制重连(连续%d)\n", wdFail);
       WiFi.disconnect(false);
+      if (wdFail % 8 == 0) wifi_mac_spin();
+      delay(80);
       WiFi.begin(WIFI_SSID, WIFI_PASS);
-    }
+    } else wdFail = 0;
   }
   /* 校准窗口 */
   if (tCalEnd == 0) tCalEnd = millis() + CAL_WINDOW_MS;
