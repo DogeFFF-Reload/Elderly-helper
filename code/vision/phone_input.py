@@ -9,6 +9,7 @@ import uuid
 from camera.phone_calibrate import CollectionError, FrameWaitTimeout, LatestFrame, wait_until
 from camera.phone_source import PhoneFrameSource
 from gesture.fall_rules import FallDetector, features
+from vision.input_quality import InputQuality
 from vision.kpio import KeypointWriter, load_rules
 
 
@@ -33,7 +34,7 @@ def phone_source(camera, estimator, *, duration=60.0, fps=10.0, max_frames=0, fr
     sequence, count = 0, 0
     try:
         while True:
-            wait_until(due, reader, frame_timeout)
+            wait_until(min(due, deadline), reader, frame_timeout)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return
@@ -89,6 +90,7 @@ def observe_phone(args, runner, *, estimator_factory=None, log=print):
                "limits": "Detection counts are availability, not accuracy; no fall ground truth."}
     estimator = preview = source = recorder = None
     poster = ObservationPoster()
+    quality = InputQuality(log=log)
     finished = False
     rules = load_rules(args.rules, args.set, args.bed)
     try:
@@ -117,7 +119,7 @@ def observe_phone(args, runner, *, estimator_factory=None, log=print):
                 source.close()
 
         log("[手机姿态观察] 画面只在内存中处理；保存骨架坐标，本地判断，不向主脑发送。")
-        found = runner(tracked_source(), detector, poster, args.room, recorder, preview, log=log)
+        found = runner(tracked_source(), detector, poster, args.room, recorder, preview, log=log, quality=quality)
         summary["local_suspected_events"] = found
         summary["status"] = "complete" if finished else "stopped"
         if not summary["usable_pose_frames"]:
@@ -143,6 +145,7 @@ def observe_phone(args, runner, *, estimator_factory=None, log=print):
         if estimator:
             estimator.close()
         summary["local_suspected_count"] = poster.falls
+        summary["input_quality"] = quality.snapshot()
         summary["ended_utc"] = datetime.now(timezone.utc).isoformat()
         path.with_suffix(".summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     log("[观察结果] 状态=%s，处理%d帧，检测到人%d帧，可用躯干骨架%d帧。" % (

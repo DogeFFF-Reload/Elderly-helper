@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.server import ThreadingHTTPServer
 from unittest.mock import patch
@@ -97,6 +98,13 @@ class PhonePoseTest(unittest.TestCase):
                 self.assertNotIn(sensitive, text)
         self.assertEqual(len(list(Path(self.temp.name).iterdir())), 2)
 
+    def test_low_sampling_rate_does_not_extend_session_past_deadline(self):
+        camera = PhoneFrameSource(self.base, mjpeg=True, username="collector_user", password="collector_secret")
+        started = time.monotonic()
+        frames = list(phone_input.phone_source(camera, FakeEstimator(), duration=.15, fps=.1))
+        self.assertEqual(len(frames), 1)
+        self.assertLess(time.monotonic() - started, 2)
+
     def test_missing_people_is_not_reported_as_success(self):
         result, summary, _ = self.observe(FakeEstimator(missing=True))
         self.assertEqual(result, 1)
@@ -116,6 +124,7 @@ class PhonePoseTest(unittest.TestCase):
         self.assertLess(summary["frames"], 20)
         self.assertTrue(self.path.is_file())
         self.assertTrue(estimator.closed)
+        self.assertEqual(summary["input_quality"]["state"], "input_error")
 
     def test_wrong_password_is_not_printed_or_saved(self):
         self.args.phone_password = "secret_wrong_password"
@@ -133,6 +142,14 @@ class PhonePoseTest(unittest.TestCase):
         self.assertEqual(summary["local_suspected_count"], 1)
         self.assertEqual(len(summary["local_suspected_events"]), 1)
         self.assertEqual(PacedCamera.requests, [], "Synthetic skeleton test must not connect even to loopback")
+        # Replay the actual observer output through the real master HTTP API.
+        # Input here is synthetic; no saved energy values are treated as poses.
+        from vision.rehearsal import run_case
+        meta, recorded = read_keypoints(self.path)
+        replay = run_case("observer_output", recorded, aspect=meta["aspect"], log=lambda *_: None)
+        self.assertTrue(replay["ok"], replay["checks"])
+        self.assertEqual(replay["states"], ["IDLE", "ASKING", "SOS", "HELP_COMING"])
+        self.assertEqual(len(replay["receipts"]), 1)
 
     def test_preview_stop_closes_input_generator(self):
         closed = []

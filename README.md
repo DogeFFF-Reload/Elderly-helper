@@ -14,7 +14,7 @@
 
 ```powershell
 cd code
-python tests/run_all.py                  # 回归，必须 ALL PASS（当前 27 套 367 条）
+python tests/run_all.py                  # 回归，必须 ALL PASS（当前 28 套 382 条）
 python -m master_service                 # 主脑 :8000（含三块屏）
 python -m demo_driver --pause            # 按 §3 主线一段一段走演示（另开终端，见 §10）
 python -m hand_controller.arm_service    # 臂+双手 mock :8013（另开终端，可不开）
@@ -604,3 +604,25 @@ cd code
 ```
 
 一轮固定机位的正常活动数值可作为当前参考，不足以验证真实跌倒检出、误报率或漏报率；没有更多设备条件时继续软件开发，把实景可靠性保留为待验收项。
+
+### 12.4 无设备的视觉完整模拟联调
+
+在 `code/` 目录只运行一条命令，无需手机、模型、OpenCV 或另开任何服务：
+
+```powershell
+python -m vision.rehearsal
+```
+
+程序回放明确标注的合成骨架，向随机端口上独立运行的本机主程序发送真实 HTTP 请求，验证询问、超时求助、模拟动作、模拟家属通知及确认。执行端为进程内的动作记录器，不创建 `ArmClient`，不加载真实设备 SDK；忽略现场配置和环境变量，不播放声音，完成后释放本机服务端口。
+
+默认检查 9 种动作以及无人、关键点低可见度和输入时间缺口，共 12 个场景。失败返回非零；结果保存在 `code/data/vision_rehearsal/批次/`，包括中文 `report.html`、详细 `report.json`、合成坐标和同名 ZIP。报告明确区分合成数据与未标注录制；检查通过表示软件行为符合这些输入的预期，不能当真人识别准确率。
+
+以后可把手机观察入口保存的骨架接到同一个隔离的模拟主程序：
+
+```powershell
+python -m vision.rehearsal --keypoints "data/phone_pose/批次/keypoints.jsonl"
+```
+
+录制文件默认未标注，不按文件名推断是否应当报警。原先第三轮保存的是画面变化能量，不能作为骨架回放。实际手机入口仍只观察，不向主程序上报。
+
+视觉过程会分别提示无人、身体关键点不足、疑似倒地确认和输入错误。相邻帧时间缺口超过 3 秒时，重新开始动作计时；已发出的疑似跌倒不会因此重新布防。持续收到新画面但人体被遮挡仍按原有遮挡规则处理。更新后的现场分工与操作见 [视觉、iPhone 摄像头与 Debug 交接](docs/26_field_handoff_vision_phone_debug.md)。

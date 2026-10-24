@@ -30,6 +30,7 @@ import urllib.request
 import config
 from gesture.fall_rules import FALLEN, FallDetector, is_fallen
 from vision import synth
+from vision.input_quality import InputQuality
 from vision.kpio import KeypointWriter, load_rules, read_keypoints
 
 SKELETON_INTERVAL = 0.2
@@ -163,13 +164,16 @@ def opencv_source(capture_arg, estimator, realtime, fps_cap=0.0, log=print):
 
 # ---------- 主循环 ----------
 
-def run(source, detector, poster, room, recorder=None, preview=None, log=print):
+def run(source, detector, poster, room, recorder=None, preview=None, log=print, quality=None):
     """跑完一个输入源；返回触发的报警列表。"""
     alarms, seen, frames, t_report = [], 0, 0, 0.0
+    quality = quality if quality is not None else InputQuality(log=log)
     try:
         for t, kp, frame, aspect in source:
+            quality.before_frame(t, aspect, detector)
             detector.aspect = aspect
             ev = detector.update(t, kp)
+            quality.after_frame(t, kp, aspect, detector)
             frames += 1
             seen += kp is not None
             poster.skeleton(kp, detector.state != FallDetector.WATCH)
@@ -182,8 +186,11 @@ def run(source, detector, poster, room, recorder=None, preview=None, log=print):
             if preview and not preview.show(frame, kp, detector):
                 break
             if t - t_report >= 5.0:
-                log("· %.0fs  检出率 %d%%  状态 %s" % (t, 100 * seen // max(frames, 1), detector.state))
+                log("· %.0fs  检测到人的帧占比 %d%%  状态 %s" % (t, 100 * seen // max(frames, 1), detector.state))
                 t_report, seen, frames = t, 0, 0
+    except Exception:
+        quality.set_state("input_error", quality.last_t)
+        raise
     finally:
         close = getattr(source, "close", None)
         if close:
