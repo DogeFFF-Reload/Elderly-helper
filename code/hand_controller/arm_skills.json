@@ -25,10 +25,11 @@
     "show_sign": {"q": [0.489, 0.463, 0.829, 0.017, 0.569, 0.0], "taught": false, "near_person": true, "note": "举牌给老人和观众看"}
   },
   "skills": {
-    "_说明": "动作名和 poses.POSES 一致。步骤：[move, 点位]、[grip, open|close|relax]、[wait, 秒]。grip 在夹爪上就是开合；在手#1 上 close = poses.JOINTS[本动作名]，open = release，relax = home",
+    "_说明": "动作名和 poses.POSES 一致。步骤：[move, 点位]、[grip, open|close|relax]、[wait, 秒]。grip 在夹爪上就是开合；在手#1 上 close = poses.JOINTS[本动作名]，open = release，relax = home；return_medicine（T5AI「还药」）= 张开手伸到老人手边，等 10 秒放进来，握住送回托盘松手，回 rest",
     "home": [["grip", "relax"], ["move", "rest"]],
     "deliver_medicine": [["grip", "open"], ["move", "above_tray"], ["move", "pick_med"], ["grip", "close"], ["wait", 0.8], ["move", "above_tray"], ["move", "handover"], ["wait", 3.0], ["grip", "open"], ["wait", 1.0], ["move", "rest"]],
     "press_sos": [["grip", "close"], ["wait", 0.5], ["move", "above_sos"], ["move", "sos_press"], ["wait", 0.6], ["move", "above_sos"], ["move", "rest"]],
-    "sign_family_received": [["grip", "close"], ["wait", 0.5], ["move", "show_sign"]]
+    "sign_family_received": [["grip", "close"], ["wait", 0.5], ["move", "show_sign"]],
+    "return_medicine": [["grip", "open"], ["move", "above_tray"], ["move", "handover"], ["wait", 10.0], ["grip", "close"], ["wait", 0.8], ["move", "above_tray"], ["move", "pick_med"], ["grip", "open"], ["wait", 0.5], ["move", "above_tray"], ["move", "rest"]]
   }
 }
