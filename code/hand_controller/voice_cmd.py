@@ -17,6 +17,7 @@ MODEL_DIR = os.environ.get("VOSK_MODEL", "/root/caremate/vosk-cn")
 RATE = 16000
 MIN_BYTES = 8000          # 0.25 秒；再短就是误触
 MAX_BYTES = 1 << 20       # 约 30 秒；屏上只录 4 秒
+MAX_UNK = 0.5             # 说的话一半以上不在词表里 = 闲聊，不当指令（见 recognize）
 
 RPS = "rps_random"        # 猜拳：随机出一手
 KEYWORDS = {
@@ -92,15 +93,21 @@ def preload():
 
 
 def recognize(pcm):
-    """裸 PCM → 识别出的文字（去掉空格和 [unk]）。只认词表里的词，口语别的字记成 [unk]。"""
+    """裸 PCM → (识别出的文字（去掉空格和 [unk]）, [unk] 占说话时长的比例)。
+    只认词表里的词，口语别的字记成 [unk]；但闲聊也会被硬凑成关键词（「今天天气不错」→「紧急」），
+    所以要看 [unk] 占多少：X5 实测指令 ≤ 0.41，闲聊 ≥ 0.68。"""
     model = _model()
     if model is None:
         raise VoiceError(_MODEL["error"])
     from vosk import KaldiRecognizer
     rec = KaldiRecognizer(model, RATE, _MODEL["grammar"])
+    rec.SetWords(True)
     rec.AcceptWaveform(pcm)
-    text = json.loads(rec.FinalResult()).get("text", "")
-    return text.replace("[unk]", "").replace(" ", "")
+    words = json.loads(rec.FinalResult()).get("result", [])
+    total = sum(w["end"] - w["start"] for w in words)
+    unk = sum(w["end"] - w["start"] for w in words if w["word"] == "[unk]")
+    text = "".join(w["word"] for w in words if w["word"] != "[unk]")
+    return text, (unk / total if total else 0.0)
 
 
 def strip_wav(data):
@@ -131,15 +138,16 @@ def handle(body, dispatch):
         return 400, {"ok": False, "error": "录音太短（%d 字节）" % len(pcm)}
     started = time.monotonic()
     try:
-        heard = recognize(pcm)
+        heard, unk = recognize(pcm)
     except VoiceError as e:
         return 503, {"ok": False, "error": "语音识别用不了：%s" % e}
     LAST.clear()
-    LAST.update(ts=time.time(), heard=heard, seconds=round(time.monotonic() - started, 2))
+    LAST.update(ts=time.time(), heard=heard, unk=round(unk, 2), seconds=round(time.monotonic() - started, 2))
     kw = match(heard)
-    if kw is None:
-        print("[语音] 听到「%s」，没有对得上的指令" % heard, flush=True)
-        return 200, {"ok": False, "heard": heard, "error": "没听清" if not heard else "没听懂：" + heard}
+    if kw is None or unk > MAX_UNK:
+        print("[语音] 听到「%s」（%d%% 听不懂），不算指令" % (heard, unk * 100), flush=True)
+        why = "没听清" if not heard else "没听懂：" + heard if kw is None else "大半没听懂，不算「%s」" % kw
+        return 200, {"ok": False, "heard": heard, "unk": round(unk, 2), "error": why}
     name = KEYWORDS[kw]
     if name == RPS:
         name = random.choice(("rps_rock", "rps_scissors", "rps_paper"))

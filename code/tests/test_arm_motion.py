@@ -938,8 +938,8 @@ class ServiceTest(unittest.TestCase):
 
     # ---- T5AI 大屏的语音键 /voice_cmd（识别换成假的，只验关键词 → 动作这条路） ----
 
-    def voice(self, heard, body=b"\0" * 16000):
-        with mock.patch.object(voice_cmd, "recognize", return_value=heard):
+    def voice(self, heard, body=b"\0" * 16000, unk=0.0):
+        with mock.patch.object(voice_cmd, "recognize", return_value=(heard, unk)):
             return post_body(self.url, "/voice_cmd", body)
 
     def test_voice_moves_arm_like_the_button(self):
@@ -986,7 +986,14 @@ class ServiceTest(unittest.TestCase):
             self.assertEqual(code, 200, body)
             self.assertFalse(body["ok"])
             self.assertIn(why, body["error"])
+        # X5 实测：「今天天气不错」被 grammar 硬凑成「紧急」，[unk] 占 0.68；指令最多 0.41（「我们来猜拳」）
+        code, body = self.voice("紧急", unk=0.68)
+        self.assertEqual((code, body["ok"]), (200, False), body)
+        self.assertIn("大半没听懂", body["error"])
         self.assertEqual(arm_service.HISTORY, [])
+        self.assertEqual(self.mock.moves, [])
+        code, body = self.voice("猜拳", unk=0.41)
+        self.assertTrue(body["ok"], body)
 
     def test_voice_rejects_short_audio_and_reports_missing_asr(self):
         code, body = self.voice("递药", b"\0" * 100)
