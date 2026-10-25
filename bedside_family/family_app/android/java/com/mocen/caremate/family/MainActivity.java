@@ -72,6 +72,40 @@ public class MainActivity extends Activity {
     private int playingPos = -1;                 // 列表播放中的位置
     private final java.util.ArrayList<TextView> playBtns = new java.util.ArrayList<>();  // v1.8:每张卡的播放按钮(按下反馈用)
 
+    /* ============ 预下载(v1.9:列表一刷新就后台缓存最新12条,点播放秒出声) ============
+     * 板子拉一条 wav 实测 0.3~5s,点播时才下=有时等好几秒。改为后台预下载到缓存:
+     * 点播时命中缓存→本地读,毫秒级起播;未命中才走网络(12s 超时,按钮有进度提示)。 */
+    private static final java.util.concurrent.ExecutorService PRE_FETCH =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> new Thread(r, "prefetch"));
+    private final java.util.HashSet<String> prefetched = new java.util.HashSet<>();
+
+    private java.io.File cacheOf(String id) {
+        try { return new java.io.File(getCacheDir(), id + ".wav"); } catch (Exception e) { return null; }
+    }
+
+    private void prefetchMsgs() {
+        if (msgs.isEmpty()) return;
+        final String b = base;
+        PRE_FETCH.execute(() -> {
+            try {
+                for (int i = msgs.size() - 1; i >= 0 && i >= msgs.size() - 12; i--) {
+                    Msg m = msgs.get(i);
+                    if (m == null || prefetched.contains(m.id)) continue;
+                    java.io.File f = cacheOf(m.id);
+                    if (f != null && f.exists() && f.length() > 1000) { prefetched.add(m.id); continue; }
+                    try {
+                        byte[] w = httpGetbin(b + "/messages/" + m.id + ".wav", 20000);
+                        java.io.File t = new java.io.File(getCacheDir(), m.id + ".tmp");
+                        java.io.FileOutputStream fo = new java.io.FileOutputStream(t);
+                        fo.write(w); fo.close();
+                        if (t.length() > 1000 && !t.renameTo(f)) t.delete();
+                        prefetched.add(m.id);
+                    } catch (Exception e) { break; }   // 链路抖:这轮先停,下次刷新再续
+                }
+            } catch (Exception e) {}
+        });
+    }
+
     // 跌倒警报
     private final List<Alarm> alarms = new ArrayList<>();
     private LinearLayout alarmBar;               // 顶部红色警报条(全局)
@@ -423,7 +457,7 @@ public class MainActivity extends Activity {
                     m.own = m.id.startsWith("fam_");
                     nm.add(m);
                 }
-                ui.post(() -> { msgs.clear(); msgs.addAll(nm); fillList(); });
+                ui.post(() -> { msgs.clear(); msgs.addAll(nm); fillList(); prefetchMsgs(); });
             } catch (Exception e) {
                 ui.post(() -> {
                     connState.setText("没找到床头设备(和床头连同一个网络再打开)");
@@ -758,26 +792,34 @@ public class MainActivity extends Activity {
     private void togglePlay(int pos) {
         if (pos < 0 || pos >= msgs.size()) return;
         final TextView btn = playBtns.size() > pos ? playBtns.get(pos) : null;
+        final java.io.File cf = cacheOf(msgs.get(pos).id);          // v1.9:点播先看缓存
+        final boolean cached = cf != null && cf.exists() && cf.length() > 1000;
         final int g = ++playGen;
         final String url = base + "/messages/" + msgs.get(pos).id + ".wav";
         final int p = pos;
-        if (btn != null) playBtnState(btn, "下载中…", true);   // 点按瞬间按钮立刻有反馈
+        if (btn != null) playBtnState(btn, cached ? "播放中…" : "下载中…", true);  // 点按瞬间立刻有反馈
         PLAY_EXEC.execute(() -> {
-            if (g != playGen) { resetPlayBtn(); return; }      // 期间又有新点击:本请求作废
-            if (p == playingPos && player != null) {           // 同一条再点=当"停止"用
-                ++playGen;                                     // 作废后续同 pos 旧任务
+            if (g != playGen) {                                     // 期间又有新点击:本请求作废
+                if (btn != null) playBtnState(btn, "▶ 播放原声", false);
+                return;
+            }
+            if (p == playingPos && player != null) {                // 同一条再点=当"停止"用
+                ++playGen;                                          // 作废后续同 pos 旧任务
                 releasePlayer();
                 resetPlayBtn();
                 return;
             }
             byte[] wav = null;
-            try { wav = httpGetbin(url, 12000); }
-            catch (Exception e) {
-                ui.post(() -> toast("下载失败,网络抖了,再点一次就好"));
-                resetPlayBtn();
-                return;
+            if (cached) { try { wav = readBytes(cf); } catch (Exception e) { wav = null; } }
+            if (wav == null) {
+                try { wav = httpGetbin(url, 12000); }
+                catch (Exception e) {
+                    ui.post(() -> toast("下载失败,网络抖了,再点一次就好"));
+                    resetPlayBtn();
+                    return;
+                }
             }
-            if (g != playGen) { resetPlayBtn(); return; }      // 下载完已被新点击顶掉:让位
+            if (g != playGen) { resetPlayBtn(); return; }           // 下载完已被新点击顶掉
             startPlay(g, wav, pos);
         });
     }
@@ -802,6 +844,8 @@ public class MainActivity extends Activity {
             mp.start();
             playingPos = pos;
             final TextView b2 = playBtns.size() > pos ? playBtns.get(pos) : null;
+            final TextView prev = playingBtn;                        // v1.9:换播另一条时,旧条按钮复原
+            if (prev != null && !prev.equals(b2)) playBtnState(prev, "▶ 播放原声", false);
             if (b2 != null) { playingBtn = b2; playBtnState(b2, "■ 停止播放", true); }
             ui.post(() -> toast("▶ 播放中"));
         } catch (Exception e) {
@@ -825,6 +869,16 @@ public class MainActivity extends Activity {
         int n;
         while ((n = is.read(b)) > 0) bo.write(b, 0, n);
         is.close(); c.disconnect();
+        return bo.toByteArray();
+    }
+
+    private static byte[] readBytes(java.io.File f) throws Exception {   // v1.9 缓存命中时本地直读
+        java.io.FileInputStream fi = new java.io.FileInputStream(f);
+        java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+        byte[] b = new byte[8192];
+        int n;
+        while ((n = fi.read(b)) > 0) bo.write(b, 0, n);
+        fi.close();
         return bo.toByteArray();
     }
 

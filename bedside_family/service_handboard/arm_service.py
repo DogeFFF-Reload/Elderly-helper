@@ -864,7 +864,7 @@ def _ensure_app_cert():
 #   无扰测试:POST {"dry":true}  → 只回执校验,不建警报,手机不响
 #   健康检查:GET  /fall_alarm   → ok+版本+用法,不动任何数据
 # 家属 app:GET /alarms(列 50 条,新在前);POST /alarms/ack {"id":..} 确认
-SVC_VER = "5.7.1"
+SVC_VER = "5.8.0"
 AL_DIR = os.environ.get("APP_ALARM_DIR", "/root/caremate/alarms")
 ALARMS_JSON = os.path.join(AL_DIR, "alarms.json")
 _alarm_lock = threading.RLock()  # incoming的查重和alarm_new的落账共用原子临界区
@@ -1071,7 +1071,16 @@ class Handler(BaseHTTPRequestHandler):
                 hand = int(dict(p.split("=") for p in
                                 (self.path.split("?")[1].split("&")
                                  if "?" in self.path else [])).get("hand", "1"))
-                r = do_pose(name, hand)
+                if name in SEQUENCES:
+                    # v5.9:序列(挥手/手部操等)是逐帧 sleep 的长动作,同步执行会拖死
+                    # 屏端 HTTP(实测 hand_exercise 超过屏端 6s 读超时→屏上显红失败,
+                    # 动作其实照做,纯属误报)。改为后台执行,请求立即应答。
+                    threading.Thread(target=do_pose, args=(name, hand),
+                                     daemon=True).start()
+                    r = {"ok": True, "did": "seq:" + name, "started": True,
+                         "hand": hand}
+                else:
+                    r = do_pose(name, hand)
                 self._send(r)
                 if r.get("ok") and name in RELAY_PAIRS and hand in (0, 1):
                     _relay(RELAY_PAIRS[name], name)   # 双板联动:配对动作发给对面手

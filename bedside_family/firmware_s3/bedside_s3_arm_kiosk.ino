@@ -787,6 +787,25 @@ static int mic_record_msg(uint8_t *buf, int buf_bytes, int &hit) {
   return got * sizeof(int16_t);
 }
 
+/* v5.9 留言分块后台上传:录下一段时,上一段已在后台发,话音不再被上传截断 */
+struct MsgPostJob {
+  const char *id;
+  uint8_t *buf;
+  int nbytes;
+  volatile bool busy;
+  int code;
+};
+
+static void msg_post_task(void *arg) {
+  MsgPostJob *j = (MsgPostJob *)arg;
+  j->code = msg_chunk_post(String(j->id), j->buf, j->nbytes);
+  Serial.printf("[msg] seg %dB -> HTTP %d (后台)\n", j->nbytes, j->code);
+  j->busy = false;
+  vTaskDelete(NULL);
+}
+
+/* 等后台分块传完(通常录音的 3 秒里已经跑完);等待逻辑直接内联在两处调用点 */
+
 static void messageSend() {
   g_pressed = 3; g_strip = 4; present();   /* v5.8:先亮"正在留言"条+留言键按下态,点按零延迟有反馈 */
   if (!net_wait(6000)) {
@@ -828,22 +847,61 @@ static void messageSend() {
     while (getTouch(tx, ty) && millis() - t0 < 3000) delay(20); }
   int nseg = 0;
   bool cancelled = false, failed = false, done = false;
+  /* v5.9 双缓冲接力:v5.8 是"录3秒→停下上传(1~6秒)→再录",上传期间麦克风是断的,
+   * 说话被截成一截一截(双端都嫌卡顿的主因)。现在录下一段的同时,后台任务上传
+   * 上一段,话音不中断;第二块内存申请不到就退回 v5.8 串行。 */
+  uint8_t *buf2 = (uint8_t *)malloc(sizeof(s_pcmbuf));
+  Serial.printf("[msg] buffer2 %s\n", buf2 ? "OK(边录边传)" : "FAIL(退回边录边停)");
+  MsgPostJob pj; pj.id = id.c_str(); pj.buf = 0; pj.nbytes = 0;
+  pj.busy = false; pj.code = 0;
+  bool pj_alive = false;                            /* 有分块正被后台上传 */
   for (; nseg < 20 && !done; nseg++) {              /* 20×3s = 60s 上限 */
+    /* 先收上一块的账(它本该在刚才3秒里并行跑完了) */
+    if (pj_alive) {
+      uint32_t t0 = millis();
+      while (pj.busy && millis() - t0 < 9000) delay(10);   /* 等后台传完(最多9s) */
+      if (pj.busy) { Serial.println("[msg] 后台上传卡死,终止"); g_chip = 2; failed = true; break; }
+      pj_alive = false;
+      Serial.printf("[msg] seg(前) -> HTTP %d\n", pj.code);
+      if (pj.code < 200 || pj.code >= 300) { g_chip = 2; failed = true; break; }
+    }
     /* 边录边查触摸(32ms 粒度):再点留言键=发送,点语音键=取消,点空白=继续录 */
     int hit = 0;
-    int nbytes = mic_record_msg(s_pcmbuf, sizeof(s_pcmbuf), hit);
-    if (nbytes >= 1000) {
-      int c2 = msg_chunk_post(id, s_pcmbuf, nbytes);   /* 提前打断时不足整段也照传 */
+    uint8_t *buf = (buf2 && (nseg % 2 == 1)) ? buf2 : s_pcmbuf;
+    int nbytes = mic_record_msg(buf, sizeof(s_pcmbuf), hit);
+    if (nbytes < 1000) { Serial.println("[msg] mic 无数据"); failed = true; break; }
+    if (hit) {                                      /* 结束段:同步传立拿回执 */
+      int c2 = msg_chunk_post(id, buf, nbytes);     /* 提前打断时不足整段也照传 */
+      Serial.printf("[msg] seg%d(末) %dB -> HTTP %d\n", nseg + 1, nbytes, c2);
+      if (c2 < 200 || c2 >= 300) { g_chip = 2; failed = true; break; }
+    } else if (buf2) {                              /* 后台传,马上回去录下一段 */
+      pj.buf = buf; pj.nbytes = nbytes; pj.code = 0; pj.busy = true; pj_alive = true;
+      if (xTaskCreate(msg_post_task, "msgpost", 6144, &pj, 3, NULL) != pdPASS) {
+        pj_alive = false;                           /* 任务起不来:退回同步传 */
+        int c2 = msg_chunk_post(id, buf, nbytes);
+        Serial.printf("[msg] seg%d %dB -> HTTP %d\n", nseg + 1, nbytes, c2);
+        if (c2 < 200 || c2 >= 300) { g_chip = 2; failed = true; break; }
+      }
+    } else {                                        /* 无第二块:v5.8 串行行为 */
+      int c2 = msg_chunk_post(id, buf, nbytes);
       Serial.printf("[msg] seg%d %dB -> HTTP %d\n", nseg + 1, nbytes, c2);
       if (c2 < 0) { g_chip = 2; failed = true; break; }
       if (c2 < 200 || c2 >= 300) { failed = true; break; }
-    } else {
-      Serial.println("[msg] mic 无数据"); failed = true; break;
     }
     if (hit == 1)      done = true;                    /* 再点留言键=发送 */
     else if (hit == 2) { cancelled = true; done = true; }  /* 语音键=取消 */
   }
   if (nseg >= 20) Serial.println("[msg] 60s 满,自动发送");  /* 满 60s 自动发送 */
+  if (!failed && pj_alive) {                        /* 收尾:把挂着的后台分块收账 */
+    uint32_t t0 = millis();
+    while (pj.busy && millis() - t0 < 9000) delay(10);
+    if (!pj.busy) {
+      pj_alive = false;
+      Serial.printf("[msg] seg(尾) -> HTTP %d\n", pj.code);
+      if (pj.code < 200 || pj.code >= 300) { g_chip = 2; failed = true; }
+    }
+  }
+  if (buf2 && !pj.busy) { free(buf2); buf2 = nullptr; }  /* 还在传就不free(防踩) */
   int c3 = -1;
   if (!failed) {
     c3 = msg_end_post(id, cancelled);
@@ -863,7 +921,7 @@ static void messageSend() {
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.println("\n[boot] CareMate bedside_s3_arm_kiosk v5.8 触摸防吞+留言易用性加固");
+  Serial.println("\n[boot] CareMate bedside_s3_arm_kiosk v5.9 边录边传+省电已关");
 
   /* I2C 先行（PCA/触摸都在上面） */
   Wire.begin(BSP_I2C_SDA, BSP_I2C_SCL, 100000);
