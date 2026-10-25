@@ -70,6 +70,7 @@ public class MainActivity extends Activity {
     private File recFile;                        // 录完的 wav
     private MediaPlayer player;                  // 播放列表/试听共用
     private int playingPos = -1;                 // 列表播放中的位置
+    private final java.util.ArrayList<TextView> playBtns = new java.util.ArrayList<>();  // v1.8:每张卡的播放按钮(按下反馈用)
 
     // 跌倒警报
     private final List<Alarm> alarms = new ArrayList<>();
@@ -267,7 +268,7 @@ public class MainActivity extends Activity {
         talkPanel.setGravity(Gravity.CENTER);
         talkPanel.setVisibility(View.GONE);
         talkPanel.addView(btn("重录", 0xFFEEEEEE, TXT, v -> { clearRec(); stateLabel.setText("松开=说完,重录吧"); }));
-        talkPanel.addView(btn("▶ 试听", 0xFFFFFFFF, PURPLE, v -> playFile(getRecFile())));
+        talkPanel.addView(btn("▶ 试听", 0xFFFFFFFF, PURPLE, v -> playFileOrToast()));
         talkPanel.addView(btn("发给 TA", GREEN, 0xFFFFFFFF, v -> sendRec()));
         LinearLayout.LayoutParams pl = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -435,7 +436,8 @@ public class MainActivity extends Activity {
 
     private void fillList() {
         cardBox.removeAllViews();
-        // v1.6:已确认警报记录卡撤下(用户反馈:置顶的历史红卡差点让人以为留言收不到);
+        playBtns.clear();                        // v1.8:重建列表时按钮注册表一并清空
+        // v1.6:已确认警报记录卡撤下(用户反馈:置顶红卡差点让人以为留言收不到);
         // 真警报的表达只有两处:顶部全屏红条+警铃(前台) / 系统高优通知(后台),历史不再列表展示
         int newCnt = 0;
         String seen = getPreferences(0).getString("seen", "");
@@ -511,6 +513,8 @@ public class MainActivity extends Activity {
         pb.setLayoutParams(pl);
         int pos = msgs.indexOf(m);
         pb.setOnClickListener(v -> togglePlay(pos));
+        while (playBtns.size() <= pos) playBtns.add(null);
+        playBtns.set(pos, pb);
         card.addView(pb);
         return card;
     }
@@ -726,49 +730,112 @@ public class MainActivity extends Activity {
         } catch (Exception e) {}
     }
 
-    /* ================= 播放(v1.7:全部操作串行进单一 player 线程) ================= */
+    /* ================= 播放(v1.8:先下载后播放+全程按钮反馈) =================
+     * 板子 WiFi 链路抖(实测单请求 0.3~47s 随机抖),MediaPlayer 网络流一旦卡住
+     * 用户毫无感知=「点了没反应」。改为:点按→按钮立刻变「下载中…」→拿全文件
+     * (超时 12s)→本地 prepare(毫秒级)→播放,按钮变「■ 停止」;完成/失败复原。
+     * 永不给"点了不吭声"的机会。 */
 
     private static final java.util.concurrent.ExecutorService PLAY_EXEC =
             java.util.concurrent.Executors.newSingleThreadExecutor(r -> new Thread(r, "player"));
-    private int playGen = 0;                     // 每次点播/试听 +1;旧请求自动作废,不再抢状态
+    private int playGen = 0;                     // 每次点播 +1;旧请求自动作废
+    private TextView playingBtn = null;          // 正在下载/播放的那个按钮(反馈用)
 
-    private void togglePlay(int pos) {
-        if (pos < 0 || pos >= msgs.size()) return;
-        final int g = ++playGen;
-        final String url = base + "/messages/" + msgs.get(pos).id + ".wav";
-        final int p = pos;
-        PLAY_EXEC.execute(() -> {                // 与其他播放操作串行执行,无竞态
-            if (g != playGen) return;            // 期间又有新点击:本请求静默作废
-            if (p == playingPos && player != null) {   // 同一条:当暂停/继续键用
-                try { if (player.isPlaying()) { player.pause(); return; } } catch (Exception e) {}
-                try { player.start(); return; } catch (Exception e) {}
-            }
-            startPlay(g, url, p);
+    private void playBtnState(final TextView btn, final String s, final boolean busy) {
+        ui.post(() -> {
+            btn.setText(s);
+            btn.setTextColor(busy ? 0xFFFFFFFF : PURPLE);
+            btn.setBackground(round(busy ? 0xFF6C4CE0 : PURPLE_L, 20));
         });
     }
 
-    private void startPlay(int g, String url, int pos) {
+    private void resetPlayBtn() {
+        final TextView b = playingBtn;
+        playingBtn = null;
+        if (b != null) playBtnState(b, "▶ 播放原声", false);
+    }
+
+    private void togglePlay(int pos) {
+        if (pos < 0 || pos >= msgs.size()) return;
+        final TextView btn = playBtns.size() > pos ? playBtns.get(pos) : null;
+        final int g = ++playGen;
+        final String url = base + "/messages/" + msgs.get(pos).id + ".wav";
+        final int p = pos;
+        if (btn != null) playBtnState(btn, "下载中…", true);   // 点按瞬间按钮立刻有反馈
+        PLAY_EXEC.execute(() -> {
+            if (g != playGen) { resetPlayBtn(); return; }      // 期间又有新点击:本请求作废
+            if (p == playingPos && player != null) {           // 同一条再点=当"停止"用
+                ++playGen;                                     // 作废后续同 pos 旧任务
+                releasePlayer();
+                resetPlayBtn();
+                return;
+            }
+            byte[] wav = null;
+            try { wav = httpGetbin(url, 12000); }
+            catch (Exception e) {
+                ui.post(() -> toast("下载失败,网络抖了,再点一次就好"));
+                resetPlayBtn();
+                return;
+            }
+            if (g != playGen) { resetPlayBtn(); return; }      // 下载完已被新点击顶掉:让位
+            startPlay(g, wav, pos);
+        });
+    }
+
+    private void startPlay(int g, byte[] wav, int pos) {
         releasePlayer();                         // 串行线程内执行
         final MediaPlayer mp = new MediaPlayer();
         try {
+            java.io.File f = new java.io.File(getCacheDir(), "play.wav");
+            java.io.FileOutputStream fo = new java.io.FileOutputStream(f);
+            fo.write(wav); fo.close();
             player = mp;
-            mp.setAudioStreamType(android.media.AudioManager.STREAM_MUSIC);
-            mp.setDataSource(url);
-            mp.setOnErrorListener((m, w, x) -> true);      // 引擎级错误吞掉,统一走完成/失败路径
-            mp.setOnCompletionListener(m -> { playingPos = -1; });
-            mp.prepare();                        // 同步网络 prepare,player 线程
-            if (g != playGen) { releasePlayer(); return; } // prepare 期间来了新点击:静默让位
+            java.io.FileInputStream fis = new java.io.FileInputStream(f);
+            mp.setDataSource(fis.getFD());
+            mp.setOnErrorListener((m, w, x) -> true);
+            mp.setOnCompletionListener(m -> {
+                playingPos = -1;
+                resetPlayBtn();                  // 播完自动复原按钮
+            });
+            mp.prepare();                        // 本地文件,毫秒级
+            if (g != playGen) { releasePlayer(); return; }
             mp.start();
             playingPos = pos;
+            final TextView b2 = playBtns.size() > pos ? playBtns.get(pos) : null;
+            if (b2 != null) { playingBtn = b2; playBtnState(b2, "■ 停止播放", true); }
             ui.post(() -> toast("▶ 播放中"));
         } catch (Exception e) {
-            ui.post(() -> toast("播放失败:" + e.getClass().getSimpleName()));
+            ui.post(() -> toast("播放失败,再点一次试试"));
+            resetPlayBtn();
             releasePlayer();
         }
     }
 
-    private void playFile(final File f) {
-        final int g = ++playGen;                 // 试听与列表播放共用同一串行线程与作废计数
+    private void releasePlayer() {               // 只允许在 PLAY_EXEC(player)线程调用
+        try { if (player != null) { player.stop(); player.release(); } } catch (Exception e) {}
+        player = null; playingPos = -1;
+    }
+
+    private byte[] httpGetbin(String u, int timeoutMs) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(u).openConnection();
+        c.setConnectTimeout(5000); c.setReadTimeout(timeoutMs);
+        java.io.InputStream is = c.getInputStream();
+        java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+        byte[] b = new byte[8192];
+        int n;
+        while ((n = is.read(b)) > 0) bo.write(b, 0, n);
+        is.close(); c.disconnect();
+        return bo.toByteArray();
+    }
+
+    /** 试听自己刚录的(本地文件,毫秒级);没录过给提示。 */
+    private void playFileOrToast() {
+        final File f = getRecFile();
+        if (f == null || !f.exists() || f.length() < 1000) {
+            toast("还没录,先按住说话");
+            return;
+        }
+        final int g = ++playGen;                 // 试听共用同一串行线程与作废计数
         PLAY_EXEC.execute(() -> {
             if (g != playGen) return;
             releasePlayer();
@@ -788,12 +855,7 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void releasePlayer() {               // 只允许在 PLAY_EXEC(player)线程调用
-        try { if (player != null) { player.stop(); player.release(); } } catch (Exception e) {}
-        player = null; playingPos = -1;
-    }
-
-    /* ================= 录音(按下说,松手停;16k/16bit/mono) ================= */
+        /* ================= 录音(按下说,松手停;16k/16bit/mono) ================= */
 
     private void startRec() {
         if (recing) return;
