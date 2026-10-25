@@ -10,6 +10,9 @@
 - mock（默认，MOCK_SERIAL 不为 0）只记帧不碰串口；读角度返回模拟值
 - 真机模式下 rh56_register_map.VERIFIED 为 False 时只读不写
 - 任何模式都只许写 WRITABLE 里的寄存器（角度 / 力度 / 速度），改 ID、波特率、存 FLASH、恢复出厂一律拒绝
+- 任何模式都只许读 [0, READ_LIMIT) 里的地址：F2 读到 4032 起就卡死
+- 手一次没回话就不再往它发任何帧（不自动重试）：F2 没回话时接着发，断电前都恢复不了。
+  按 24V + 蓝盒的顺序断电重启后，重启 arm_service（或调 clear_silent()）才重新收发
 """
 import collections
 import os
@@ -51,6 +54,9 @@ class HandError(Exception):
     pass
 
 
+POWER_CYCLE = "按顺序断电重启——24V 和蓝盒 USB 都断开 → 先插蓝盒 USB → 再插 24V → 等 10 秒以上，然后重启 arm_service"
+
+
 def _pyserial(port):
     import serial  # 真机才需要：pip install pyserial
     return serial.Serial(port, RM.BAUD, parity=RM.PARITY, stopbits=RM.STOPBITS, timeout=RM.TIMEOUT)
@@ -69,6 +75,7 @@ class RH56F2:
         self.ser = None
         self.lock = None
         self.error = None
+        self.silent = None                        # 手没回过话：记下原因，之后一帧都不发，等断电重启
         self.last = None                          # 最近一次下发的开合度
         self.sim_angles = [RM.VALUE_MAX] * 6      # mock 下的"实际角度"：开机张开，move 后跟着变
         self.log = collections.deque(maxlen=50)   # 最近的收发帧，排错用
@@ -107,7 +114,13 @@ class RH56F2:
 
     # ---------- 收发 ----------
 
+    def clear_silent(self):
+        """手已经按顺序断电重启过：允许重新收发。"""
+        self.silent = None
+
     def _transact(self, req, expect_len):
+        if self.silent:
+            raise HandError(self.silent)
         self.log.append("TX " + req.hex(" "))
         if not self.connect():
             raise HandError(self.error)
@@ -126,7 +139,9 @@ class RH56F2:
 
     def _check(self, resp, cmd, addr, expect_len):
         if not resp:
-            raise HandError("手 %d 没回应：查 24V、A/B 线、手的 ID、波特率，以及型号是不是 RS485 版（E2）" % self.slave)
+            self.silent = ("手 %d 没回应，已停止再发指令（F2 没回话时接着发会一直卡住）：%s。"
+                           "还不回就查 24V、A/B 线、手的 ID、波特率，以及型号是不是 RS485 版（E2）" % (self.slave, POWER_CYCLE))
+            raise HandError(self.silent)
         if len(resp) < expect_len:
             raise HandError("手 %d 回包不完整（%d/%d 字节）：%s" % (self.slave, len(resp), expect_len, resp.hex(" ")))
         resp = resp[:expect_len]
@@ -140,6 +155,9 @@ class RH56F2:
 
     def read(self, addr, nbytes):
         """读 nbytes 个字节，返回数据部分。"""
+        if addr < 0 or nbytes <= 0 or addr + nbytes > RM.READ_LIMIT:
+            raise HandError("不许读地址 %d 起 %d 字节：只许读 0~%d（F2 读到 %d 起会卡死，要断电重启）"
+                            % (addr, nbytes, RM.READ_LIMIT - 1, RM.READ_LIMIT))
         req = frame_read(self.slave, addr, nbytes)
         if self.mock:
             self.log.append("TX " + req.hex(" "))
@@ -211,4 +229,5 @@ class RH56F2:
 
     def status(self):
         return {"port": self.port, "id": self.slave, "mock": self.mock,
-                "connected": self.mock or self.ser is not None, "error": self.error, "last": self.last}
+                "connected": self.mock or self.ser is not None, "error": self.silent or self.error,
+                "silent": bool(self.silent), "last": self.last}

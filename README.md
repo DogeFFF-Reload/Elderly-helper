@@ -355,6 +355,16 @@ CareMate 联调自检 · http://127.0.0.1:8000
 
 **实测（2026-10-23，详见 `docs/RH56F2_实测.md`）**：EB 90 协议经蓝盒（COM7）能和手通信（ID 1、115200），但 **F2 的寄存器地址和 V1.09 不一样**——V1.09 的 1486~1617 在 F2 上全是 0xFF，实际角度地址还没找到，所以 `VERIFIED` 仍是 False。**读 4032 及以上的地址会把手卡死**，恢复要 24V 和蓝盒都断电、先插蓝盒再插 24V、等 10 秒。臂（Panthera-HT）见 §10.14。
 
+驱动照实测加了两道门：读的地址 + 字节数不许超过 `READ_LIMIT`（4032），mock 下也拦；手**一次没回话就不再发任何帧**（不自动重试，接着发只会一直卡住），`/status` 里这只手 `silent: true`、动作回 503，按顺序断电重启后重启 `arm_service` 才恢复。
+
+**找真实地址：官方上位机 + 抓包桥**（`hand_controller/rh56_sniff.py`，自己一帧都不发，只在上位机和蓝盒之间原样转发并解码 EB 90 帧）：
+
+1. 装 com0com，建一对虚拟口：`setupc install PortName=COM20 PortName=COM21`（驱动自己装）。关掉 `arm_service`。
+2. `python -m hand_controller.rh56_sniff`（默认 COM21 ↔ COM7、115200；要 `pip install -r requirements-hardware.txt`）。
+3. 官方上位机连 **COM20**（RH56FX、115200、ID 1）。每做一步之前在抓包窗口敲个备注回车：`live`（不动，看 10 秒实时数据）→ `angle`（拖设置角度，先往张开那头）→ `speed` → `force`。
+4. Ctrl+C 出汇总：每个读地址读了几次、回了几次、值在不在变（在变且在 -1~2000 的标"像实时量"）；每个写地址写了什么、第一次是在哪个备注之后。同时写 `<日志>.summary.json`；`--summarize <日志>` 可以离线重看。
+5. 拿汇总里的实际角度 / 角度设置 / 速度 / 力度地址改 `rh56_register_map.py`，`--probe` 读出来和上位机界面一致，再按上面第 4 步打开 `VERIFIED`。
+
 ### 10.14 执行端接机械臂（Panthera-HT）
 
 **和主脑的接口没变**（`POST /pose?name=&hand=`、`/stop`、`/status`），主脑一行没改。`hand=1` 的 `home`、`deliver_medicine`、`press_sos`、`sign_family_received` 走臂，其余动作照旧走手。笔记本上默认 mock，`ARM_BACKEND=panthera` 才连真臂。
