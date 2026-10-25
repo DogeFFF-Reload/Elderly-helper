@@ -28,6 +28,12 @@
  *      最长 60 秒自动发送（服务端合成 WAV 落盘 + 网页收件箱）。
  * v5.5 听留言电流声修复：HTTP 分块奇数字节导致样本错位(白噪声)，跨块 1 字节
  *      进位对齐修复(详见 messagePlay 注释)。烧录后重测：App 发 fam_ 留言→屏播应清亮。
+ * v5.8 触摸/留言易用性加固(路演版)：
+ *      ①FT6336 双触点寄存器(0x09..0x0E)补读,防 INT 未清导致"点好几下才有反应"
+ *      ②留言录音:留言键/听留言键/顶部条随便点=结束发送,语音键=取消(防老人找"结束")
+ *      ③留言/听留言:点按瞬间亮条(g_pressed 按下态)——拉列表那两秒不再像死屏
+ *      ④播放头 800ms 点屏不认:防习惯性补点把播放掐掉
+ *      ⑤chipPoll 超时 1.5s→1s、间隔 8s→12s:板子病着时主循环不再被卡死到吞触摸
  * v5.6 WiFi 抗掉线：手机热点会踢省电设备，setAutoReconnect 卡死不回来
  *      (20261025 现场复现：屏掉线后按钮全"离线,没发")。三重加固=关 WiFi 省电
  *      + 按钮路径先自救重连 6s 再报错 + 15s 看门狗强制重连；掉线原因进串口日志。
@@ -77,7 +83,7 @@ static const uint16_t* const BTN_PRESSED[6] = {IMG_BTN_P0, IMG_BTN_P1, IMG_BTN_P
 
 /* ══════════════ 现场校正区（烧现场版前只改这里） ══════════════ */
 const char* WIFI_SSID = "Mocen_Bear";            // 现场热点(笔记本已连,同网)
-const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";    // !!仓库版是占位符!!真密码只进 master 编译正本(不入公开库);烧前必查这行
+const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";            // 本机档案读回(不入公开库,仓库版保持占位符)    // !!仓库版是占位符!!真密码只进 master 编译正本(不入公开库);烧前必查这行
 const char* ARM_HOST  = "10.170.215.251";        // X5#A 手板 DHCP 地址(20261025 热点换段后;手机再重启它会auto跟上,屏端烧死需重烧)
 const int   ARM_PORT  = 8013;                    // arm_service 端口
 /* ═════════════════════════════════════════════════════════════ */
@@ -249,7 +255,9 @@ static void present(void) {
   }
 }
 
-/* ---- 触摸（v3.5 原样：FT6336@0x38 寄存器0x02 连读5字节；v4.5 垃圾帧过滤） ---- */
+/* ---- 触摸（v3.5 原样：FT6336@0x38 寄存器0x02 连读5字节；v4.5 垃圾帧过滤）
+   v5.8:双触点时把 touch2 寄存器(0x09..0x0E)也读掉——FT6336 的 INT 要等全部
+   触点寄存器被读才清,否则后续读数卡在旧帧,表现为"要点好几下才有反应"。 ---- */
 static bool getTouch(int16_t &tx, int16_t &ty) {
   Wire.beginTransmission(TP_ADDR);
   Wire.write(0x02);
@@ -260,6 +268,11 @@ static bool getTouch(int16_t &tx, int16_t &ty) {
   if (d[0] == 0 || d[0] > 2) return false;          /* 触点数要 1~2 */
   tx = ((d[1] & 0x0F) << 8) | d[2];
   ty = ((d[3] & 0x0F) << 8) | d[4];
+  if (d[0] == 2) {                                  /* 读掉 touch2,给控制器清中断 */
+    Wire.beginTransmission(TP_ADDR); Wire.write(0x09);
+    if (Wire.endTransmission(false) == 0) Wire.requestFrom((int)TP_ADDR, 5);
+    for (int i = 0; i < 5 && Wire.available(); i++) Wire.read();
+  }
   if (tx > 500 || ty > 500) return false;            /* 释放沿的垃圾帧(1024等)别当点击 */
   return true;
 }
@@ -571,6 +584,7 @@ static void spk_prompt(const uint8_t *pcm, int len) {
    → 留言后半段全成白噪声(20261025 真机定位)。修法:1 字节进位缓存,
    悬空奇字节并入下一块,保证喂给 spk_play_pcm 的永远从头对齐、偶数字节。 */
 static void messagePlay() {
+  g_pressed = 4; g_strip = 5; present();   /* v5.8:点按零延迟亮青条,老人立刻知道"收到了" */
   if (!net_wait(6000)) {
     Serial.println("[net] 离线,听不了留言");
     g_chip = 3; g_strip = 2; present();
@@ -606,7 +620,8 @@ static void messagePlay() {
   }
   Serial.println("[msg] play " + id);
   if (!spk_start()) { g_strip = 2; present(); delay(1200); g_strip = 0; present(); return; }
-  g_strip = 5; present();               /* 青条:正在播放留言 */
+  /* v5.8:青条改在函数开头就亮(拉列表也要一两秒,不能让老人对着死屏点) */
+  uint32_t playT0 = millis();
   HTTPClient h;
   h.begin(String("http://") + ARM_HOST + ":" + String(ARM_PORT) + "/messages/" + id + ".wav");
   h.setConnectTimeout(2500);
@@ -650,7 +665,9 @@ static void messagePlay() {
       }
       if (nbytes > 0 && !spk_play_pcm(buf + base, nbytes, false)) { ok = false; break; }
       int16_t tx, ty;
-      if (getTouch(tx, ty)) { stopped = true; break; }   /* 点屏即停 */
+      /* v5.8:点屏即停,但开播头 800ms 不认——防止点完"听留言"的第二下习惯性
+         补点把播放当场掐掉(老人以为点不动,再戳几下,声音刚起就被停) */
+      if (millis() - playT0 > 800 && getTouch(tx, ty)) { stopped = true; break; }   /* 点屏即停 */
     }
   }
   h.end();
@@ -738,7 +755,9 @@ static int msg_end_post(const String &id, bool cancel) {
 }
 
 /* 留言专用录音:边采边查触摸(32ms 粒度,I2S 每 512 帧一读)。
-   hit: 0=无 1=留言键(该发送) 2=语音键(该取消);命中即提前返回已采字节(不足 3s 也照传)。 */
+   v5.8:结束更容易——留言键/听留言键/顶部条随便点哪个=发送(老人不用找"结束"在哪);
+   语音键=取消;点其它空白=继续录。
+   hit: 0=无 1=该发送 2=该取消;命中即提前返回已采字节(不足 3s 也照传)。 */
 static int mic_record_msg(uint8_t *buf, int buf_bytes, int &hit) {
   int16_t *out = (int16_t *)buf;
   int cap = buf_bytes / sizeof(int16_t);
@@ -756,17 +775,20 @@ static int mic_record_msg(uint8_t *buf, int buf_bytes, int &hit) {
       int16_t tx, ty;
       if (getTouch(tx, ty)) {
         int lx = mapX(ty), ly = mapY(tx);
-        if (lx >= BTN_X[3] && lx < BTN_X[3] + BTN_W && ly >= BTN_Y[3] && ly < BTN_Y[3] + BTN_H) hit = 1;
+        if (ly < 36)                                    hit = 1;   /* 顶部条=也当结束 */
+        else if (lx >= BTN_X[3] && lx < BTN_X[3] + BTN_W && ly >= BTN_Y[3] && ly < BTN_Y[3] + BTN_H) hit = 1;
+        else if (lx >= BTN_X[4] && lx < BTN_X[4] + BTN_W && ly >= BTN_Y[4] && ly < BTN_Y[4] + BTN_H) hit = 1;
         else if (lx >= BTN_X[5] && lx < BTN_X[5] + BTN_W && ly >= BTN_Y[5] && ly < BTN_Y[5] + BTN_H) hit = 2;
-        /* 点到空白/其他键:忽略,继续录 */
+        /* 点到中间空白:忽略,继续录 */
       }
     }
-    if (hit) break;
+    if (hit) { Serial.printf("[msg] 提前结束 hit=%d @%.1fs\n", hit, millis() / 1000.0); break; }
   }
   return got * sizeof(int16_t);
 }
 
 static void messageSend() {
+  g_pressed = 3; g_strip = 4; present();   /* v5.8:先亮"正在留言"条+留言键按下态,点按零延迟有反馈 */
   if (!net_wait(6000)) {
     Serial.println("[net] 离线,留言没发");
     g_chip = 3; g_strip = 2; present();
@@ -841,7 +863,7 @@ static void messageSend() {
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.println("\n[boot] CareMate bedside_s3_arm_kiosk v5.7 留言收发+WiFi抗掉线+换MAC逃生");
+  Serial.println("\n[boot] CareMate bedside_s3_arm_kiosk v5.8 触摸防吞+留言易用性加固");
 
   /* I2C 先行（PCA/触摸都在上面） */
   Wire.begin(BSP_I2C_SDA, BSP_I2C_SCL, 100000);
@@ -923,8 +945,8 @@ static void chipPoll() {
   if (wifi_up()) {
     HTTPClient h;
     h.begin(String("http://") + ARM_HOST + ":" + String(ARM_PORT) + "/status");
-    h.setConnectTimeout(1500);
-    h.setTimeout(1500);
+    h.setConnectTimeout(1000);           /* v5.8:板子病着时别把主循环卡太久(触摸全吞) */
+    h.setTimeout(1000);
     int code = h.GET();
     h.end();
     c = (code >= 200 && code < 300) ? 1 : 2;
@@ -990,8 +1012,8 @@ void loop() {
     g_strip = 0; present();                   /* 撤掉校准条,亮主屏 */
   }
 
-  /* 在线灯（标题栏右上，每8秒查一次：WiFi + arm_service 可达性） */
-  if (millis() - tChipChk > 8000UL) {
+  /* 在线灯（标题栏右上，每12秒查一次：WiFi + arm_service 可达性） */
+  if (millis() - tChipChk > 12000UL) {
     tChipChk = millis();
     chipPoll();
   }
