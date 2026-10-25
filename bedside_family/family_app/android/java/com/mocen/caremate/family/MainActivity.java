@@ -98,7 +98,7 @@ public class MainActivity extends Activity {
     @Override protected void onDestroy() {
         super.onDestroy();
         stopRec(true);
-        if (player != null) { player.release(); player = null; }
+        PLAY_EXEC.execute(this::releasePlayer);   // 播放器只允许在 player 线程动:串行排队释放
         if (recFile != null && recFile.exists()) recFile.delete();
     }
 
@@ -726,49 +726,69 @@ public class MainActivity extends Activity {
         } catch (Exception e) {}
     }
 
-    /* ================= 播放 ================= */
+    /* ================= 播放(v1.7:全部操作串行进单一 player 线程) ================= */
+
+    private static final java.util.concurrent.ExecutorService PLAY_EXEC =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> new Thread(r, "player"));
+    private int playGen = 0;                     // 每次点播/试听 +1;旧请求自动作废,不再抢状态
 
     private void togglePlay(int pos) {
         if (pos < 0 || pos >= msgs.size()) return;
-        if (playingPos == pos && player != null) {
-            try { if (player.isPlaying()) { player.pause(); return; } } catch (Exception e) {}
-        }
+        final int g = ++playGen;
         final String url = base + "/messages/" + msgs.get(pos).id + ".wav";
         final int p = pos;
-        new Thread(() -> playUrl(url, p)).start();   // MediaPlayer.prepare 走网络,必须在后台线程
+        PLAY_EXEC.execute(() -> {                // 与其他播放操作串行执行,无竞态
+            if (g != playGen) return;            // 期间又有新点击:本请求静默作废
+            if (p == playingPos && player != null) {   // 同一条:当暂停/继续键用
+                try { if (player.isPlaying()) { player.pause(); return; } } catch (Exception e) {}
+                try { player.start(); return; } catch (Exception e) {}
+            }
+            startPlay(g, url, p);
+        });
     }
 
-    private void playUrl(String url, int pos) {
-        stopPlayer();
+    private void startPlay(int g, String url, int pos) {
+        releasePlayer();                         // 串行线程内执行
+        final MediaPlayer mp = new MediaPlayer();
         try {
-            player = new MediaPlayer();
-            player.setAudioStreamType(android.media.AudioManager.STREAM_MUSIC);
-            player.setDataSource(url);
-            player.setOnCompletionListener(mp -> { playingPos = -1; });
-            player.prepare();        // 同步,后台线程调
-            player.start();
+            player = mp;
+            mp.setAudioStreamType(android.media.AudioManager.STREAM_MUSIC);
+            mp.setDataSource(url);
+            mp.setOnErrorListener((m, w, x) -> true);      // 引擎级错误吞掉,统一走完成/失败路径
+            mp.setOnCompletionListener(m -> { playingPos = -1; });
+            mp.prepare();                        // 同步网络 prepare,player 线程
+            if (g != playGen) { releasePlayer(); return; } // prepare 期间来了新点击:静默让位
+            mp.start();
             playingPos = pos;
             ui.post(() -> toast("▶ 播放中"));
         } catch (Exception e) {
             ui.post(() -> toast("播放失败:" + e.getClass().getSimpleName()));
+            releasePlayer();
         }
     }
 
     private void playFile(final File f) {
-        new Thread(() -> {
-            stopPlayer();
+        final int g = ++playGen;                 // 试听与列表播放共用同一串行线程与作废计数
+        PLAY_EXEC.execute(() -> {
+            if (g != playGen) return;
+            releasePlayer();
             try {
                 player = new MediaPlayer();
                 FileInputStream fis = new FileInputStream(f);
                 player.setDataSource(fis.getFD());
+                player.setOnErrorListener((m, w, x) -> true);
                 player.setOnCompletionListener(mp -> ui.post(() -> {}));
                 player.prepare();
+                if (g != playGen) { releasePlayer(); return; }
                 player.start();
-            } catch (Exception e) { ui.post(() -> toast("试听失败")); }
-        }).start();
+            } catch (Exception e) {
+                ui.post(() -> toast("试听失败"));
+                releasePlayer();
+            }
+        });
     }
 
-    private void stopPlayer() {
+    private void releasePlayer() {               // 只允许在 PLAY_EXEC(player)线程调用
         try { if (player != null) { player.stop(); player.release(); } } catch (Exception e) {}
         player = null; playingPos = -1;
     }
@@ -781,7 +801,7 @@ public class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_MIC);
             return;
         }
-        stopPlayer();
+        PLAY_EXEC.execute(this::releasePlayer);   // 开录前把正在放的静音,串行线程内释放
         pcmBuf.reset(); recFile = null;
         final int SR = 16000;
         int min = AudioRecord.getMinBufferSize(SR, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
