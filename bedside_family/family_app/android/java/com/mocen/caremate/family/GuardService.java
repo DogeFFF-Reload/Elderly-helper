@@ -60,7 +60,13 @@ public class GuardService extends Service {
                             org.json.JSONObject a = arr.getJSONObject(k);
                             if (!a.optBoolean("acked")) { newest = a.optString("id"); break; }
                         }
-                        if (newest != null && !newest.equals(pf.getString("sent", ""))) {
+                        if (newest == null) {
+                            // 全部已确认(可能是别的家人点了「知道了」):收回还挂着的警报通知
+                            try { nm.cancel(1001); } catch (Exception e) {}
+                        } else if (MainActivity.visible) {
+                            // App 在前台:红条 + 警铃已经在响,这里不再叠一个系统通知铃声;
+                            // 也不记 sent —— 用户不点确认就退到后台,下一轮照样弹通知
+                        } else if (!newest.equals(pf.getString("sent", ""))) {
                             String who = "";
                             for (int k = 0; k < arr.length(); k++) {
                                 org.json.JSONObject a = arr.getJSONObject(k);
@@ -96,9 +102,10 @@ public class GuardService extends Service {
 
     private String pickBase() {
         if (!Cfg.CLOUD_BASE.isEmpty() && ok(Cfg.CLOUD_BASE + "/alarms")) return Cfg.CLOUD_BASE;
-        if (ok(Cfg.LAN_BASE + "/alarms")) return Cfg.LAN_BASE;
+        // 先试上次找到的地址:热点换网段后写死的 LAN_BASE 必然超时,别每 10 秒都先白等它 2.5 秒
         String saved = getSharedPreferences("alarm", 0).getString("base", "");
         if (!saved.isEmpty() && ok(saved + "/alarms")) return saved;
+        if (!Cfg.LAN_BASE.equals(saved) && ok(Cfg.LAN_BASE + "/alarms")) return Cfg.LAN_BASE;
         // v1.5 自愈:静态/记住的都失联 → 全段扫描找回(App 关着时也能跟上换网段)
         String hit = MainActivity.subnetScan();
         if (hit != null) {
@@ -110,7 +117,7 @@ public class GuardService extends Service {
 
     private boolean ok(String u) {
         try {
-            java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(u).openConnection();
+            java.net.HttpURLConnection c = MainActivity.open(u);
             c.setConnectTimeout(2500); c.setReadTimeout(2500);
             int code = c.getResponseCode(); c.disconnect();
             return code == 200;
@@ -118,7 +125,7 @@ public class GuardService extends Service {
     }
 
     private String httpGet(String u) throws Exception {
-        java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(u).openConnection();
+        java.net.HttpURLConnection c = MainActivity.open(u);
         c.setConnectTimeout(3500); c.setReadTimeout(5000);
         java.io.InputStream is = c.getInputStream();
         java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();

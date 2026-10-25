@@ -99,10 +99,10 @@ run('"%s" sign --ks caremate.ks --ks-key-alias caremate '
 run('"%s" verify --print-certs family_app.apk' % os.path.join(BT, "apksigner.bat"),
     "apksigner verify")
 
-# 9) 交付:项目目录 + 桌面(v10 = v1.9 预下载缓存+秒播版)
+# 9) 交付:项目目录 + 桌面(v11 = v2.0 稳定性与漏报修复版)
 OUT_APK = os.path.join(B, "family_app.apk")
-dst1 = r"D:\文档\Default Project\caremate_code\family_app_v1.9.apk"
-dst2 = os.path.join(os.path.expanduser("~"), "Desktop", "家人留言v10.apk")
+dst1 = r"D:\文档\Default Project\caremate_code\family_app_v2.0.apk"
+dst2 = os.path.join(os.path.expanduser("~"), "Desktop", "家人留言v11.apk")
 shutil.copy2(OUT_APK, dst1)
 if os.path.isdir(os.path.dirname(dst2)): shutil.copy2(OUT_APK, dst2)
 print("== APK OK")

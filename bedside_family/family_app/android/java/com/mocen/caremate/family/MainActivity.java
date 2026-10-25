@@ -5,13 +5,14 @@ import android.app.Activity;
 import android.app.NotificationManager;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaPlayer;
 import android.media.RingtoneManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -21,6 +22,7 @@ import android.os.Vibrator;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -38,39 +40,44 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * CareMate 家人留言 —— 原生安卓版
  * 听 TA 说:老人的语音留言列表播放(msg_*)
  * 我来说:按住说话→试听→发给 TA(fam_*)
- * 数据源:自动探测 公网中转(Cfg.CLOUD_BASE)→ 床头直连(Cfg.LAN_BASE)
+ * 数据源:自动探测 公网中转(Cfg.CLOUD_BASE)→ 记住的地址 → 床头直连(Cfg.LAN_BASE)→ 扫网段
+ *
+ * v1.8 线程规则:主线程只动界面;所有网络请求走 NET 单线程(不并发、不堆积),播放只走 PLAY_EXEC。
  */
 public class MainActivity extends Activity {
 
     private static final int REQ_MIC = 7;
     private static final int PURPLE = 0xFF623FD2, PURPLE_L = 0xFFEDE7FB, BG = 0xFFF6F4FB,
             TXT = 0xFF2A2140, GREEN = 0xFF3BA55D, RED = 0xFFE5484D, GRAY = 0xFF9A94AC;
+    private static final int ALARM_NOTIFY_ID = 1001;   // 与 GuardService 的警报通知同号
+    private static final long POLL_MS = 3000;
+
+    /** 前台可见时 GuardService 不再弹系统警报通知(避免 app 内警铃 + 通知铃声两声叠响)。 */
+    static volatile boolean visible = false;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private String base = Cfg.LAN_BASE;          // 当前生效的数据源
+    private static final ExecutorService NET = Executors.newSingleThreadExecutor(r -> new Thread(r, "net"));
+    private final AtomicBoolean pollQueued = new AtomicBoolean(false);
+    private volatile String base = Cfg.LAN_BASE;  // 当前生效的数据源(NET 线程写,主线程读)
     private LinearLayout pageListen, pageTalk;
     private TextView connState, tabL, tabR, stateLabel, listTip, timerLabel;
     private LinearLayout cardBox;                // 留言卡片容器(在 ScrollView 里)
     private LinearLayout talkPanel;
+    private Button sendBtn;
     private final List<Msg> msgs = new ArrayList<>();
-
-    // 录音
-    private AudioRecord rec;
-    private Thread recThread;
-    private volatile boolean recing = false;
-    private final ByteArrayOutputStream pcmBuf = new ByteArrayOutputStream();
-    private long recStart;
-    private File recFile;                        // 录完的 wav
-    private MediaPlayer player;                  // 播放列表/试听共用
-    private int playingPos = -1;                 // 列表播放中的位置
-    private final java.util.ArrayList<TextView> playBtns = new java.util.ArrayList<>();  // v1.8:每张卡的播放按钮(按下反馈用)
+    private final ArrayList<TextView> playBtns = new ArrayList<>();   // v1.8:每张卡的播放按钮(按下反馈用)
 
     /* ============ 预下载(v1.9:列表一刷新就后台缓存最新12条,点播放秒出声) ============
      * 板子拉一条 wav 实测 0.3~5s,点播时才下=有时等好几秒。改为后台预下载到缓存:
@@ -106,14 +113,27 @@ public class MainActivity extends Activity {
         });
     }
 
+    private String listSig = "";                 // 列表内容签名:没变就不重建,滚动位置不跳
+
+    // 录音
+    private AudioRecord rec;
+    private Thread recThread;
+    private volatile boolean recing = false;
+    private boolean holding = false;             // 手指是否还按在录音钮上
+    private final ByteArrayOutputStream pcmBuf = new ByteArrayOutputStream();
+    private long recStart;
+    private File recFile;                        // 录完的 wav
+    private MediaPlayer player;                  // 播放列表/试听共用(只在 PLAY_EXEC 线程动)
+    private int playingPos = -1;                 // 列表播放中的位置(只在 PLAY_EXEC 线程动)
+
     // 跌倒警报
     private final List<Alarm> alarms = new ArrayList<>();
     private LinearLayout alarmBar;               // 顶部红色警报条(全局)
     private TextView alarmText;
     private MediaPlayer alarmSnd;
     private Vibrator vib;
-    private volatile boolean alarming = false;   // app 内警报进行中
-    private String lastAckFired = "";
+    private String ringingId = null;             // app 内正在响的警报;null = 没在响
+    private final Set<String> ackedHere = new HashSet<>();   // 本机已点「知道了」的(不再重响)
     private LinearLayout permBar;                // 琥珀色权限提醒条(通知权限/后台常驻)
     private TextView permText;
     private boolean notifAsked = false;          // 本次进程只自动弹一次通知权限
@@ -125,22 +145,34 @@ public class MainActivity extends Activity {
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
         buildUi();
+        vib = (Vibrator) getSystemService(VIBRATOR_SERVICE);
+        try { startForegroundService(new Intent(this, GuardService.class)); } catch (Exception e) {}
         probeBase();
         refresh();
-        alarmInit();
-    }
-
-    @Override protected void onDestroy() {
-        super.onDestroy();
-        stopRec(true);
-        PLAY_EXEC.execute(this::releasePlayer);   // 播放器只允许在 player 线程动:串行排队释放
-        if (recFile != null && recFile.exists()) recFile.delete();
     }
 
     @Override protected void onResume() {
         super.onResume();
+        visible = true;
         refreshPermBanner();
-        fetchAlarms(true);
+        ui.removeCallbacks(alarmPoll);
+        ui.post(alarmPoll);                       // 立刻拉一次,之后 3 秒一轮(只在前台跑)
+    }
+
+    @Override protected void onPause() {
+        super.onPause();
+        visible = false;                          // 退到后台:轮询交给 GuardService
+        ui.removeCallbacks(alarmPoll);
+    }
+
+    @Override protected void onDestroy() {
+        super.onDestroy();
+        visible = false;
+        ui.removeCallbacksAndMessages(null);      // 停掉轮询 / 录音计时等所有排队任务
+        stopRec(true);
+        stopAlarmNoise();
+        PLAY_EXEC.execute(this::releasePlayer);   // 播放器只允许在 player 线程动:串行排队释放
+        if (recFile != null && recFile.exists()) recFile.delete();
     }
 
     /* ================= UI(纯代码,无 XML 布局) ================= */
@@ -179,7 +211,6 @@ public class MainActivity extends Activity {
         alarmText.setLayoutParams(new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         Button okb = btn("知道了", 0xFFFFFFFF, RED, v -> ackAlarm());
-        okb.setAllCaps(false);
         alarmBar.addView(alarmText);
         alarmBar.addView(okb);
         root.addView(alarmBar);
@@ -196,7 +227,6 @@ public class MainActivity extends Activity {
         permText.setLayoutParams(new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         Button pb = btn("去开启", 0xFF3E2C00, 0xFFFFB300, v -> openPermSettings());
-        pb.setAllCaps(false);
         permBar.addView(permText);
         permBar.addView(pb);
         root.addView(permBar);
@@ -216,7 +246,7 @@ public class MainActivity extends Activity {
         header.setPadding(dp(16), dp(28), dp(16), dp(10));
         TextView title = text("CareMate 家人留言", 19, 0xFFFFFFFF, true);
         title.setGravity(Gravity.CENTER);
-        connState = text("连接中…", 12, 0xD8D2F0, false);
+        connState = text("连接中…", 12, 0xFFD8D2F0, false);   // v1.7 少了 alpha 字节,整行透明看不见
         connState.setGravity(Gravity.CENTER);
         connState.setPadding(0, dp(3), 0, 0);
         header.addView(title); header.addView(connState);
@@ -234,12 +264,11 @@ public class MainActivity extends Activity {
         tabR = text("我来说", 15, 0xFFFFFFFF, true);
         tabR.setGravity(Gravity.CENTER); tabR.setPadding(0, dp(9), 0, dp(9));
         tabR.setBackground(round(0x29FFFFFF, 12)); tabR.setLayoutParams(tl);
-        LinearLayout spacer = new LinearLayout(this); spacer.setMinimumWidth(dp(8)); spacer.setLayoutParams(
-                new LinearLayout.LayoutParams(dp(8), 1));
+        LinearLayout spacer = new LinearLayout(this);
+        spacer.setLayoutParams(new LinearLayout.LayoutParams(dp(8), 1));
         tabs.addView(tabL); tabs.addView(spacer); tabs.addView(tabR);
-        View finalTabs = tabs;
-        tabL.setOnClickListener(v -> swTab(0, finalTabs));
-        tabR.setOnClickListener(v -> swTab(1, finalTabs));
+        tabL.setOnClickListener(v -> swTab(0));
+        tabR.setOnClickListener(v -> swTab(1));
         root.addView(tabs);
 
         // 列表页
@@ -260,8 +289,9 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         Button re = new Button(this);
         re.setText("↻ 刷新"); re.setTextSize(14); re.setTextColor(PURPLE);
+        re.setAllCaps(false);
         re.setBackground(round(0xFFFFFFFF, 22));
-        re.setOnClickListener(v -> { probeBase(); refresh(); });
+        re.setOnClickListener(v -> { listSig = ""; probeBase(); refresh(); });
         LinearLayout.LayoutParams rl = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         rl.gravity = Gravity.CENTER_HORIZONTAL; rl.setMargins(0, dp(8), 0, dp(16));
@@ -275,6 +305,7 @@ public class MainActivity extends Activity {
         pageTalk.setGravity(Gravity.CENTER);
         pageTalk.setVisibility(View.GONE);
         timerLabel = text("0.0s", 30, PURPLE, true);
+        timerLabel.setGravity(Gravity.CENTER);           // 整行宽的 TextView:文字要自己居中(v1.7 贴左边)
         pageTalk.addView(timerLabel);
 
         TextView rbtn = text("🎙  按住说话", 18, 0xFFFFFFFF, true);
@@ -286,24 +317,30 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams rl2 = new LinearLayout.LayoutParams(dp(190), dp(190));
         rl2.topMargin = dp(28); rl2.bottomMargin = dp(24);
         rbtn.setOnTouchListener((v, e) -> {
-            switch (e.getAction()) {
-                case 0: startRec(); return true;                       // DOWN
-                case 1: case 3: stopRec(false); return true;           // UP / CANCEL
+            switch (e.getActionMasked()) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    holding = true; startRec(); return true;
+                case android.view.MotionEvent.ACTION_UP:
+                case android.view.MotionEvent.ACTION_CANCEL:
+                    holding = false; stopRec(false); return true;
             }
             return true;
         });
         pageTalk.addView(rbtn, rl2);
 
         stateLabel = text("按住圆钮开始,松手说完", 14, GRAY, false);
+        stateLabel.setGravity(Gravity.CENTER);
+        stateLabel.setPadding(dp(16), 0, dp(16), 0);
         pageTalk.addView(stateLabel);
 
         talkPanel = new LinearLayout(this);
         talkPanel.setOrientation(LinearLayout.HORIZONTAL);
         talkPanel.setGravity(Gravity.CENTER);
         talkPanel.setVisibility(View.GONE);
-        talkPanel.addView(btn("重录", 0xFFEEEEEE, TXT, v -> { clearRec(); stateLabel.setText("松开=说完,重录吧"); }));
+        talkPanel.addView(btn("重录", 0xFFEEEEEE, TXT, v -> { clearRec(); stateLabel.setText("按住圆钮重新说"); }));
         talkPanel.addView(btn("▶ 试听", 0xFFFFFFFF, PURPLE, v -> playFileOrToast()));
-        talkPanel.addView(btn("发给 TA", GREEN, 0xFFFFFFFF, v -> sendRec()));
+        sendBtn = btn("发给 TA", GREEN, 0xFFFFFFFF, v -> sendRec());
+        talkPanel.addView(sendBtn);
         LinearLayout.LayoutParams pl = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         pl.topMargin = dp(20);
@@ -327,7 +364,7 @@ public class MainActivity extends Activity {
         return b;
     }
 
-    private void swTab(int i, View tabs) {
+    private void swTab(int i) {
         pageListen.setVisibility(i == 0 ? View.VISIBLE : View.GONE);
         pageTalk.setVisibility(i == 1 ? View.VISIBLE : View.GONE);
         tabL.setBackground(round(i == 0 ? BG : 0x29FFFFFF, 12));
@@ -340,27 +377,23 @@ public class MainActivity extends Activity {
     /* ================= 数据源探测 ================= */
 
     private void probeBase() {
-        new Thread(() -> {
+        NET.execute(() -> {
             String pick = null;
             if (!Cfg.CLOUD_BASE.isEmpty() && ok200(Cfg.CLOUD_BASE + "/messages")) pick = Cfg.CLOUD_BASE;
+            String saved = getSharedPreferences("alarm", 0).getString("base", "");
+            if (pick == null && !saved.isEmpty() && ok200(saved + "/messages")) pick = saved;   // 先试上次找到的
             if (pick == null && ok200(Cfg.LAN_BASE + "/messages")) pick = Cfg.LAN_BASE;
-            if (pick == null) {                          // v1.5 链级自愈:板子换网段/换 IP 也能找回来
-                String hit = discoverBase();
-                if (hit != null) pick = hit;
-            }
+            if (pick == null) pick = discoverBase();     // v1.5 链级自愈:板子换网段/换 IP 也能找回来
             final String f = pick;
-            ui.post(() -> {
-                if (f != null) { base = f; connState.setText("已连接老人床头 · Mocen"); }
-                else connState.setText("没找到床头设备(和床头连同一个网络再打开)");
-            });
-        }).start();
+            if (f != null) base = f;
+            ui.post(() -> connState.setText(f != null ? "已连接老人床头 · Mocen"
+                    : "没找到床头设备(和床头连同一个网络再打开)"));
+        });
     }
 
     /** v1.5 网络自愈:静态地址连不上时,扫本机每个网段(/24)的 8013 端口,
      *  命中 /status 即为床头;找到后存 prefs,本轮直接可用(热点换网段不再断链)。 */
-    static String remembered = null;                     // 进程级缓存,避免每轮全扫
-
-    private static String scanCache() { return remembered; }
+    static volatile String remembered = null;            // 进程级缓存,避免每轮全扫
 
     private String discoverBase() {
         String saved = getSharedPreferences("alarm", 0).getString("base", "");
@@ -377,14 +410,16 @@ public class MainActivity extends Activity {
     static volatile long lastScan = 0;                   // 扫描冷却:别每轮轮询都全扫
 
     static String subnetScan() {
-        long now = System.currentTimeMillis();
-        if (now - lastScan < 20000) return null;         // 20s 冷却
-        lastScan = now;
+        synchronized (MainActivity.class) {              // App 与守护服务可能同时触发:只放一个进去
+            long now = System.currentTimeMillis();
+            if (now - lastScan < 20000) return null;     // 20s 冷却
+            lastScan = now;
+        }
         java.util.Set<String> nets = new java.util.LinkedHashSet<>();
         try {
             java.util.Enumeration<java.net.NetworkInterface> ifs =
                     java.net.NetworkInterface.getNetworkInterfaces();
-            while (ifs.hasMoreElements()) {
+            while (ifs != null && ifs.hasMoreElements()) {
                 java.net.NetworkInterface ni = ifs.nextElement();
                 if (!ni.isUp() || ni.isLoopback()) continue;
                 java.util.Enumeration<java.net.InetAddress> ads = ni.getInetAddresses();
@@ -405,16 +440,15 @@ public class MainActivity extends Activity {
         // 命中即返回(短路):并行 24 线程,单目标 350ms 超时,/24 最坏 ~4s
         java.util.concurrent.atomic.AtomicReference<String> found =
                 new java.util.concurrent.atomic.AtomicReference<>(null);
-        java.util.concurrent.ExecutorService pool =
-                java.util.concurrent.Executors.newFixedThreadPool(24);
+        ExecutorService pool = Executors.newFixedThreadPool(24);
         List<java.util.concurrent.Future<?>> fs = new ArrayList<>();
         for (final String b : bases) {
             fs.add(pool.submit(() -> {
                 if (found.get() != null) return;
                 try {
-                    HttpURLConnection c = (HttpURLConnection) new URL(b + "/status").openConnection();
+                    HttpURLConnection c = open(b + "/status");
                     c.setConnectTimeout(350); c.setReadTimeout(350);
-                    java.io.InputStream is = c.getInputStream();
+                    InputStream is = c.getInputStream();
                     byte[] bb = new byte[64];
                     int n = is.read(bb); is.close(); c.disconnect();
                     if (n > 0 && new String(bb, 0, n, "UTF-8").contains("backend")) {
@@ -430,9 +464,28 @@ public class MainActivity extends Activity {
         return found.get();
     }
 
+    /** 连床头一律直连:局域网地址绕过系统 HTTP 代理(手机开了翻墙 / 代理软件时,v1.7 的请求全被送进代理,
+     *  代理够不到家里的局域网 → 整台手机连不上床头)。公网中转(CLOUD_BASE)仍按系统设置走。 */
+    static HttpURLConnection open(String u) throws java.io.IOException {
+        URL url = new URL(u);
+        return (HttpURLConnection) (isLan(url.getHost())
+                ? url.openConnection(java.net.Proxy.NO_PROXY) : url.openConnection());
+    }
+
+    static boolean isLan(String h) {
+        if (h == null) return false;
+        if (h.startsWith("10.") || h.startsWith("192.168.") || h.startsWith("169.254.")
+                || h.startsWith("127.") || h.equals("localhost")) return true;
+        if (h.startsWith("172.")) {
+            try { int b = Integer.parseInt(h.split("\\.")[1]); return b >= 16 && b <= 31; }
+            catch (Exception e) { return false; }
+        }
+        return false;
+    }
+
     private boolean ok200(String u) {
         try {
-            HttpURLConnection c = (HttpURLConnection) new URL(u).openConnection();
+            HttpURLConnection c = open(u);
             c.setConnectTimeout(Cfg.PROBE_TIMEOUT); c.setReadTimeout(Cfg.PROBE_TIMEOUT);
             int code = c.getResponseCode();
             c.disconnect();
@@ -442,13 +495,14 @@ public class MainActivity extends Activity {
 
     /* ================= 列表 ================= */
 
-    /** 刷新列表:后台拉 JSON → 主线程重建卡片 */
+    /** 刷新列表:NET 线程拉 JSON → 主线程重建卡片(内容没变就不重建) */
     private void refresh() {
-        new Thread(() -> {
+        NET.execute(() -> {
             try {
                 String j = httpGet(base + "/messages");
                 JSONArray arr = new JSONObject(j).getJSONArray("messages");
                 List<Msg> nm = new ArrayList<>();
+                StringBuilder sig = new StringBuilder();
                 for (int i = 0; i < arr.length(); i++) {
                     JSONObject o = arr.getJSONObject(i);
                     Msg m = new Msg();
@@ -456,22 +510,29 @@ public class MainActivity extends Activity {
                     m.dur = o.optDouble("duration", 0);
                     m.own = m.id.startsWith("fam_");
                     nm.add(m);
+                    sig.append(m.id).append('|');
                 }
-                ui.post(() -> { msgs.clear(); msgs.addAll(nm); fillList(); prefetchMsgs(); });
+                final String s = sig.toString();
+                ui.post(() -> {
+                    connState.setText("已连接老人床头 · Mocen");
+                    if (s.equals(listSig)) return;        // 没有新留言:不动列表,正在看的位置不跳
+                    listSig = s;
+                    msgs.clear(); msgs.addAll(nm); fillList(); prefetchMsgs();   // v1.9:后台预缓存最新 12 条
+                });
             } catch (Exception e) {
                 ui.post(() -> {
                     connState.setText("没找到床头设备(和床头连同一个网络再打开)");
                     listTip.setText("连不上床头:手机要和床头在同一个网络,点刷新重试");
-                    msgs.clear(); fillList();
+                    if (!listSig.isEmpty()) { listSig = ""; msgs.clear(); fillList(); }
                 });
             }
-        }).start();
+        });
     }
 
     private void fillList() {
         cardBox.removeAllViews();
-        playBtns.clear();                        // v1.8:重建列表时按钮注册表一并清空
-        // v1.6:已确认警报记录卡撤下(用户反馈:置顶红卡差点让人以为留言收不到);
+        playBtns.clear();
+        // v1.6:已确认警报记录卡撤下(用户反馈:置顶的历史红卡差点让人以为留言收不到);
         // 真警报的表达只有两处:顶部全屏红条+警铃(前台) / 系统高优通知(后台),历史不再列表展示
         int newCnt = 0;
         String seen = getPreferences(0).getString("seen", "");
@@ -500,14 +561,8 @@ public class MainActivity extends Activity {
                 cardBox.addView(sepTitle("— 我发过去的回话 —"));
                 shownMine = true;
             }
-            cardBox.addView(msgCard(m), mp(-1, -2, 0, 0, 0, dp(10)));
+            cardBox.addView(msgCard(m, i));
         }
-    }
-
-    private LinearLayout.LayoutParams mp(int w, int h, int l, int t, int r, int b) {
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(w, h);
-        p.setMargins(l, t, r, b);
-        return p;
     }
 
     private TextView sepTitle(String s) {
@@ -517,10 +572,9 @@ public class MainActivity extends Activity {
         return t;
     }
 
-    private int countMine() { int n = 0; for (Msg m : msgs) if (m.own) n++; return n; }
     private String newestElderId() { for (Msg m : msgs) if (!m.own) return m.id; return null; }
 
-    private View msgCard(Msg m) {
+    private View msgCard(Msg m, int pos) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setBackground(round(0xFFFFFFFF, 16));
@@ -545,7 +599,6 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         pl.topMargin = dp(8);
         pb.setLayoutParams(pl);
-        int pos = msgs.indexOf(m);
         pb.setOnClickListener(v -> togglePlay(pos));
         while (playBtns.size() <= pos) playBtns.add(null);
         playBtns.set(pos, pb);
@@ -555,81 +608,69 @@ public class MainActivity extends Activity {
 
     /* ================= 跌倒警报(app 内) ================= */
 
-    /** 初始化:启动守护服务 + 权限体检 + 3 秒轮询循环 */
-    private void alarmInit() {
-        vib = (Vibrator) getSystemService(VIBRATOR_SERVICE);
-        refreshPermBanner();
-        try { startForegroundService(new Intent(this, GuardService.class)); } catch (Exception e) {}
-        // 3 秒一轮警报轮询(app 在前台时最快触达;关 app 后由 GuardService 接管)
-        ui.postDelayed(new Runnable() {
-            @Override public void run() {
-                new Thread(() -> fetchAlarms(true)).start();
-                ui.postDelayed(this, 3000);
+    /** 前台 3 秒一轮;退后台由 GuardService 接管。上一轮没跑完就不再排新的,网络慢也不会堆积。 */
+    private final Runnable alarmPoll = new Runnable() {
+        @Override public void run() {
+            if (pollQueued.compareAndSet(false, true)) {
+                NET.execute(() -> { try { fetchAlarms(); } finally { pollQueued.set(false); } });
             }
-        }, 1500);
+            refreshGuardLine();
+            ui.postDelayed(this, POLL_MS);
+        }
+    };
+
+    private static List<Alarm> parseAlarms(String json) throws Exception {
+        JSONArray arr = new JSONObject(json).getJSONArray("alarms");
+        List<Alarm> out = new ArrayList<>();
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject o = arr.getJSONObject(i);
+            Alarm a = new Alarm();
+            a.id = o.optString("id"); a.time = o.optString("time");
+            a.src = o.optString("src"); a.acked = o.optBoolean("acked");
+            out.add(a);
+        }
+        return out;
     }
 
-    /** 拉 /alarms → 刷新历史 + 判定要不要拉响 app 内警报 */
-    private void fetchAlarms(boolean mayFire) {
+    /** NET 线程:拉 /alarms;连不上就自愈找板子(找到立刻再拉一次)。结果交给主线程处理。 */
+    private void fetchAlarms() {
+        List<Alarm> na = null;
         try {
-            HttpURLConnection c = (HttpURLConnection)
-                    new java.net.URL(base + "/alarms").openConnection();
-            c.setConnectTimeout(2500); c.setReadTimeout(2500);
-            String j = readAll(c.getInputStream()); c.disconnect();
-            JSONArray arr = new JSONObject(j).getJSONArray("alarms");
-            List<Alarm> na = new ArrayList<>();
-            for (int i = 0; i < arr.length(); i++) {
-                JSONObject o = arr.getJSONObject(i);
-                Alarm a = new Alarm();
-                a.id = o.optString("id"); a.time = o.optString("time");
-                a.src = o.optString("src"); a.acked = o.optBoolean("acked");
-                na.add(a);
-            }
-            String fireId = null;
-            for (Alarm a : na) if (!a.acked) { fireId = a.id; break; }
-            final Alarm fire = (fireId != null && mayFire &&
-                    !alarming && !fireId.equals(lastAckFired)) ? find(na, fireId) : null;
-            ui.post(() -> {
-                alarms.clear(); alarms.addAll(na);
-                fillList();
-                if (fire != null) fireAlarm(fire);
-            });
+            na = parseAlarms(httpGet(base + "/alarms"));
         } catch (Exception e) {
-            // 连不上:静默 + v1.5 自愈(换网段/IP 后自动找回,找回则立即再拉一轮)
-            if (alarming) return;                       // 正拉响也先不关(可能网络抖)
-            String hit = (remembered != null) ? remembered : "";
-            if (!hit.isEmpty() && ok200(hit + "/alarms")) { base = hit; return; }
-            String n = subnetScan();
-            if (n != null) {
+            String hit = remembered;
+            if (hit != null && !hit.equals(base) && ok200(hit + "/alarms")) base = hit;
+            else {
+                String n = subnetScan();
+                if (n == null) return;                   // 冷却中 / 没找到:下轮再试
                 remembered = n;
                 getSharedPreferences("alarm", 0).edit().putString("base", n).apply();
                 base = n;
-                try {
-                    HttpURLConnection c2 = (HttpURLConnection)
-                            new java.net.URL(base + "/alarms").openConnection();
-                    c2.setConnectTimeout(2500); c2.setReadTimeout(2500);
-                    String j2 = readAll(c2.getInputStream()); c2.disconnect();
-                    JSONArray arr2 = new JSONObject(j2).getJSONArray("alarms");
-                    List<Alarm> na2 = new ArrayList<>();
-                    for (int i = 0; i < arr2.length(); i++) {
-                        JSONObject o = arr2.getJSONObject(i);
-                        Alarm a = new Alarm();
-                        a.id = o.optString("id"); a.time = o.optString("time");
-                        a.src = o.optString("src"); a.acked = o.optBoolean("acked");
-                        na2.add(a);
-                    }
-                    String fire2 = null;
-                    for (Alarm a : na2) if (!a.acked) { fire2 = a.id; break; }
-                    final Alarm fire = (fire2 != null && mayFire &&
-                            !alarming && !fire2.equals(lastAckFired)) ? find(na2, fire2) : null;
-                    ui.post(() -> {
-                        alarms.clear(); alarms.addAll(na2);
-                        fillList();
-                        if (fire != null) fireAlarm(fire);
-                        connState.setText("已连接老人床头 · Mocen(自动找回)");
-                    });
-                } catch (Exception e2) { /* 找到了但拉取失败:下轮再试 */ }
+                ui.post(() -> connState.setText("已连接老人床头 · Mocen(自动找回)"));
             }
+            try { na = parseAlarms(httpGet(base + "/alarms")); } catch (Exception e2) { return; }
+        }
+        final List<Alarm> list = na;
+        ui.post(() -> onAlarms(list));
+    }
+
+    /** 主线程:更新警报状态。别的家人点了「知道了」→ 本机也停;有新的未确认 → 拉响。 */
+    private void onAlarms(List<Alarm> na) {
+        alarms.clear(); alarms.addAll(na);
+        if (ringingId != null) {
+            Alarm cur = find(na, ringingId);
+            if (cur == null || cur.acked) {             // 已在别处确认(或已从床头清掉)
+                ackedHere.add(ringingId);
+                ringingId = null;                        // 不清掉的话后面的新警报永远响不起来
+                stopAlarmNoise();
+                alarmBar.setVisibility(View.GONE);
+                cancelAlarmNotice();
+                toast("警报已由家人确认");
+            }
+            return;
+        }
+        for (Alarm a : na) {                             // 列表新的在前:取最新一条没确认、本机也没确认过的
+            if (!a.acked && !ackedHere.contains(a.id)) { fireAlarm(a); return; }
         }
     }
 
@@ -639,15 +680,26 @@ public class MainActivity extends Activity {
     }
 
     private void fireAlarm(Alarm a) {
-        alarming = true;
+        ringingId = a.id;
         alarmText.setText("⚠ 检测到老人疑似跌倒!\n" + a.time
                 + (a.src.isEmpty() ? "" : " · 来源 " + a.src));
         alarmBar.setVisibility(View.VISIBLE);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         try {
             if (alarmSnd == null) {
-                alarmSnd = MediaPlayer.create(this,
-                        RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM));
-                if (alarmSnd != null) { alarmSnd.setLooping(true); alarmSnd.start(); }
+                // 走"闹钟"音量通道:媒体音量调到 0 也照样响(v1.7 及以前用媒体通道,静音时警报无声)
+                Uri u = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+                if (u == null) u = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
+                if (u == null) u = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+                MediaPlayer mp = new MediaPlayer();
+                mp.setAudioAttributes(new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
+                mp.setDataSource(this, u);
+                mp.setLooping(true);
+                mp.prepare();
+                mp.start();
+                alarmSnd = mp;
             }
         } catch (Exception e) {}
         try {
@@ -660,35 +712,50 @@ public class MainActivity extends Activity {
         Toast.makeText(this, "⚠ 跌倒警报!", Toast.LENGTH_LONG).show();
     }
 
+    /** 「知道了」:把床头上所有还没确认的警报一起确认(旧的测试警报不会接着一条条再响),并清掉系统通知。 */
     private void ackAlarm() {
-        Alarm a = null;
-        for (Alarm x : alarms) if (!x.acked) { a = x; break; }
-        final String id = (a != null) ? a.id : "";
-        lastAckFired = id;
+        final List<String> ids = new ArrayList<>();
+        for (Alarm x : alarms) if (!x.acked) ids.add(x.id);
+        if (ringingId != null && !ids.contains(ringingId)) ids.add(ringingId);
+        ackedHere.addAll(ids);
+        ringingId = null;
         stopAlarmNoise();
         alarmBar.setVisibility(View.GONE);
-        if (!id.isEmpty()) {
-            new Thread(() -> {
+        cancelAlarmNotice();
+        if (ids.isEmpty()) return;
+        final String target = base;
+        NET.execute(() -> {
+            int failed = 0;
+            for (String id : ids) {
                 try {
-                    HttpURLConnection c = (HttpURLConnection)
-                            new java.net.URL(base + "/alarms/ack").openConnection();
+                    HttpURLConnection c = open(target + "/alarms/ack");
                     c.setRequestMethod("POST"); c.setDoOutput(true);
                     c.setConnectTimeout(3000); c.setReadTimeout(4000);
+                    c.setRequestProperty("Content-Type", "application/json");
                     OutputStream os = c.getOutputStream();
-                    os.write(("{\"id\":\"" + id + "\"}").getBytes(StandardCharsets.UTF_8));
+                    os.write(new JSONObject().put("id", id).toString().getBytes(StandardCharsets.UTF_8));
                     os.close();
-                    readAll(c.getInputStream()); c.disconnect();
-                } catch (Exception e) {}
-                new Thread(() -> fetchAlarms(true)).start();
-            }).start();
-        }
+                    int code = c.getResponseCode();
+                    readAll(code >= 400 ? c.getErrorStream() : c.getInputStream());
+                    c.disconnect();
+                    if (code != 200) failed++;
+                } catch (Exception e) { failed++; }
+            }
+            final int f = failed;
+            if (f > 0) ui.post(() -> toast("确认没送到床头(网络问题),其他家人那里可能还在响"));
+        });
+    }
+
+    private void cancelAlarmNotice() {
+        try { ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).cancel(ALARM_NOTIFY_ID); }
+        catch (Exception e) {}
     }
 
     private void stopAlarmNoise() {
-        alarming = false;
         try { if (alarmSnd != null) { alarmSnd.stop(); alarmSnd.release(); } } catch (Exception e) {}
         alarmSnd = null;
         try { if (vib != null) vib.cancel(); } catch (Exception e) {}
+        try { getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); } catch (Exception e) {}
     }
 
     /** 权限体检:通知权限(Android13+)/电池优化白名单。后台通知 nm.notify 在无通知权限时静默丢弃——
@@ -728,10 +795,10 @@ public class MainActivity extends Activity {
         } catch (Exception e) {}
         try {
             startActivity(new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                    android.net.Uri.parse("package:" + getPackageName())));
+                    Uri.parse("package:" + getPackageName())));
         } catch (Exception e) {
             try { startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    android.net.Uri.parse("package:" + getPackageName()))); } catch (Exception e2) {}
+                    Uri.parse("package:" + getPackageName()))); } catch (Exception e2) {}
         }
     }
 
@@ -829,11 +896,9 @@ public class MainActivity extends Activity {
         final MediaPlayer mp = new MediaPlayer();
         try {
             java.io.File f = new java.io.File(getCacheDir(), "play.wav");
-            java.io.FileOutputStream fo = new java.io.FileOutputStream(f);
-            fo.write(wav); fo.close();
+            try (java.io.FileOutputStream fo = new java.io.FileOutputStream(f)) { fo.write(wav); }
             player = mp;
-            java.io.FileInputStream fis = new java.io.FileInputStream(f);
-            mp.setDataSource(fis.getFD());
+            try (java.io.FileInputStream fis = new java.io.FileInputStream(f)) { mp.setDataSource(fis.getFD()); }
             mp.setOnErrorListener((m, w, x) -> true);
             mp.setOnCompletionListener(m -> {
                 playingPos = -1;
@@ -861,7 +926,7 @@ public class MainActivity extends Activity {
     }
 
     private byte[] httpGetbin(String u, int timeoutMs) throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL(u).openConnection();
+        HttpURLConnection c = open(u);          // 局域网直连,不走系统代理
         c.setConnectTimeout(5000); c.setReadTimeout(timeoutMs);
         java.io.InputStream is = c.getInputStream();
         java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
@@ -909,7 +974,19 @@ public class MainActivity extends Activity {
         });
     }
 
-        /* ================= 录音(按下说,松手停;16k/16bit/mono) ================= */
+    /* ================= 录音(按下说,松手停;16k/16bit/mono) ================= */
+
+    private static final int MAX_SEC = 60;
+    private static final int SR = 16000;
+
+    private final Runnable recTick = new Runnable() {
+        @Override public void run() {
+            if (!recing) return;
+            timerLabel.setText(String.format(Locale.CHINA, "%.1fs",
+                    (System.currentTimeMillis() - recStart) / 1000.0));
+            ui.postDelayed(this, 100);
+        }
+    };
 
     private void startRec() {
         if (recing) return;
@@ -918,64 +995,84 @@ public class MainActivity extends Activity {
             return;
         }
         PLAY_EXEC.execute(this::releasePlayer);   // 开录前把正在放的静音,串行线程内释放
-        pcmBuf.reset(); recFile = null;
-        final int SR = 16000;
-        int min = AudioRecord.getMinBufferSize(SR, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
-        rec = new AudioRecord(android.media.MediaRecorder.AudioSource.MIC, SR,
-                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min * 4, 32000));
-        rec.startRecording();
+        resetPlayBtn();
+        synchronized (pcmBuf) { pcmBuf.reset(); }
+        recFile = null;
+        talkPanel.setVisibility(View.GONE);
+        final AudioRecord r;
+        try {
+            int min = AudioRecord.getMinBufferSize(SR, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+            r = new AudioRecord(android.media.MediaRecorder.AudioSource.MIC, SR,
+                    AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min * 4, 32000));
+            if (r.getState() != AudioRecord.STATE_INITIALIZED) { r.release(); throw new IllegalStateException(); }
+            r.startRecording();
+        } catch (Exception e) {
+            stateLabel.setText("麦克风打不开(可能正被别的应用占用),稍后再试");
+            return;
+        }
+        rec = r;
         recing = true; recStart = System.currentTimeMillis();
         recThread = new Thread(() -> {
             byte[] b = new byte[3200];
             while (recing) {
-                int n = rec.read(b, 0, b.length);
-                if (n > 0) { pcmBuf.write(b, 0, n); if (pcmBuf.size() > SR * 2 * MAX_SEC) { ui.post(() -> stopRec(false)); break; } }
+                int n = r.read(b, 0, b.length);
+                if (n > 0) {
+                    boolean full;
+                    synchronized (pcmBuf) { pcmBuf.write(b, 0, n); full = pcmBuf.size() > SR * 2 * MAX_SEC; }
+                    if (full) { ui.post(() -> stopRec(false)); break; }
+                } else if (n < 0) break;                 // 录音设备出错
             }
-        });
+        }, "rec");
         recThread.start();
-        stateLabel.setText("正在说…松手结束");
-        ui.post(() -> toast("● 录音中"));
+        stateLabel.setText("正在说…松手结束(最长 " + MAX_SEC + " 秒)");
+        ui.post(recTick);
     }
-
-    private static final int MAX_SEC = 60;
 
     private void stopRec(boolean silent) {
         if (!recing) { return; }
         recing = false;
+        ui.removeCallbacks(recTick);
+        // 先等录音线程退出,再停 / 释放设备:不然线程可能还在 read 一个已释放的 AudioRecord
+        try { if (recThread != null) recThread.join(600); } catch (InterruptedException e) {}
         try { if (rec != null) rec.stop(); } catch (Exception e) {}
         try { if (rec != null) rec.release(); } catch (Exception e) {}
-        rec = null;
+        rec = null; recThread = null;
+        if (silent) return;
         double secs = (System.currentTimeMillis() - recStart) / 1000.0;
-        byte[] pcm = pcmBuf.toByteArray();
+        byte[] pcm;
+        synchronized (pcmBuf) { pcm = pcmBuf.toByteArray(); }
         timerLabel.setText(String.format(Locale.CHINA, "%.1fs", secs));
         if (pcm.length < 8000) {                       // ≥0.25s,服务端硬要求
             stateLabel.setText("太短了,按住圆钮再说一遍");
-            toast("太短了(没到 0.25 秒)");
             return;
         }
         try {
-            recFile = wavFile(pcm, 16000);
+            recFile = wavFile(pcm, SR);
             talkPanel.setVisibility(View.VISIBLE);
+            sendBtn.setEnabled(true);
             stateLabel.setText(String.format(Locale.CHINA, "%.0f", secs) + " 秒,试听满意就发");
         } catch (Exception e) { stateLabel.setText("录音处理失败"); }
     }
 
+    private File getRecFile() { return recFile; }
+
     private void clearRec() {
-        recFile = null; pcmBuf.reset(); talkPanel.setVisibility(View.GONE);
+        recFile = null;
+        synchronized (pcmBuf) { pcmBuf.reset(); }
+        talkPanel.setVisibility(View.GONE);
         timerLabel.setText("0.0s"); stateLabel.setText("按住圆钮开始,松手说完");
     }
 
-    private File getRecFile() { return recFile; }
-
     private File wavFile(byte[] pcm, int rate) throws Exception {
         File f = new File(getCacheDir(), "reply.wav");
-        java.io.FileOutputStream fo = new java.io.FileOutputStream(f);
-        int n = pcm.length;
-        byte[] h = new byte[44];
-        wr(h, 0, "RIFF"); wi(h, 4, 36 + n); wr(h, 8, "WAVE"); wr(h, 12, "fmt ");
-        wi(h, 16, 16); si16(h, 20, 1); si16(h, 22, 1); wi(h, 24, rate); wi(h, 28, rate * 2);
-        si16(h, 32, 2); si16(h, 34, 16); wr(h, 36, "data"); wi(h, 40, n);
-        fo.write(h); fo.write(pcm); fo.close();
+        try (java.io.FileOutputStream fo = new java.io.FileOutputStream(f)) {
+            int n = pcm.length;
+            byte[] h = new byte[44];
+            wr(h, 0, "RIFF"); wi(h, 4, 36 + n); wr(h, 8, "WAVE"); wr(h, 12, "fmt ");
+            wi(h, 16, 16); si16(h, 20, 1); si16(h, 22, 1); wi(h, 24, rate); wi(h, 28, rate * 2);
+            si16(h, 32, 2); si16(h, 34, 16); wr(h, 36, "data"); wi(h, 40, n);
+            fo.write(h); fo.write(pcm);
+        }
         return f;
     }
 
@@ -992,14 +1089,16 @@ public class MainActivity extends Activity {
     private void sendRec() {
         final File f = recFile;
         if (f == null) return;
+        sendBtn.setEnabled(false);                       // 防连点重复发送
         stateLabel.setText("正在发送…");
-        new Thread(() -> {
+        final String target = base;
+        NET.execute(() -> {
             try {
                 byte[] body = new byte[(int) f.length()];
-                FileInputStream fi = new FileInputStream(f);
-                new java.io.DataInputStream(fi).readFully(body);   // 一定读满
-                fi.close();
-                HttpURLConnection c = (HttpURLConnection) new URL(base + "/family_message").openConnection();
+                try (FileInputStream fi = new FileInputStream(f)) {
+                    new java.io.DataInputStream(fi).readFully(body);   // 一定读满
+                }
+                HttpURLConnection c = open(target + "/family_message");
                 c.setRequestMethod("POST");
                 c.setDoOutput(true); c.setConnectTimeout(6000); c.setReadTimeout(30000);
                 c.setRequestProperty("Content-Type", "application/octet-stream");
@@ -1013,19 +1112,23 @@ public class MainActivity extends Activity {
                 ui.post(() -> {
                     if (ok) {
                         toast("已发出!TA 按「听留言」就能听到你啦");
-                        clearRec(); swTab(0, null);
+                        clearRec(); listSig = ""; swTab(0);
                     } else {
+                        sendBtn.setEnabled(true);
                         stateLabel.setText("发送失败:" + r.optString("error", "未知"));
                     }
                 });
             } catch (Exception e) {
-                ui.post(() -> stateLabel.setText("网络失败,确认和床头同网络,再点「发给 TA」"));
+                ui.post(() -> {
+                    sendBtn.setEnabled(true);
+                    stateLabel.setText("网络失败,确认和床头同网络,再点「发给 TA」");
+                });
             }
-        }).start();
+        });
     }
 
     private String httpGet(String u) throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL(u).openConnection();
+        HttpURLConnection c = open(u);
         c.setConnectTimeout(4000); c.setReadTimeout(8000);
         String s = readAll(c.getInputStream());
         c.disconnect();
@@ -1033,6 +1136,7 @@ public class MainActivity extends Activity {
     }
 
     private static String readAll(InputStream is) throws Exception {
+        if (is == null) return "";
         ByteArrayOutputStream bo = new ByteArrayOutputStream();
         byte[] b = new byte[8192];
         int n;
@@ -1045,7 +1149,9 @@ public class MainActivity extends Activity {
 
     @Override public void onRequestPermissionsResult(int code, String[] p, int[] g) {
         if (code == REQ_MIC) {
-            if (g.length > 0 && g[0] == PackageManager.PERMISSION_GRANTED) startRec();
+            // 授权弹窗出现时手指早已松开:不自动开录(v1.7 会一直录到 60 秒),请用户再按一次
+            if (g.length > 0 && g[0] == PackageManager.PERMISSION_GRANTED)
+                stateLabel.setText("已允许麦克风,按住圆钮说话");
             else toast("需要麦克风权限才能给老人留话");
         } else if (code == 9) refreshPermBanner();   // 通知权限回执后刷新提醒条
     }
