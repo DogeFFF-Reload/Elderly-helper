@@ -1,0 +1,80 @@
+name: family-app-ci
+
+# 家属端原生 APK:在 Ubuntu 上复刻 build_app.py 的手工流水线
+#   aapt2 compile/link(生成 R.java) → javac --release 11 → d8 → dex 打包 → zipalign → apksigner
+#
+# 签名纪律:CI 现场生成【临时 debug 密钥】产冒烟 APK(Artifact 可下载,
+#   仅供安装验证);稳定签名密钥 caremate_stable.ks **永不**进 CI/仓库——
+#   换签名=手机必先卸载重装,真分发给家属一律用桌面交付版。
+on:
+  push:
+    paths: ["bedside_family/family_app/**"]
+  pull_request:
+    paths: ["bedside_family/family_app/**"]
+  workflow_dispatch:
+
+jobs:
+  build-debug-apk:
+    runs-on: ubuntu-latest
+    env:
+      SDK: /usr/local/lib/android/sdk
+      BT: /usr/local/lib/android/sdk/build-tools/35.0.0
+      PLAT: /usr/local/lib/android/sdk/platforms/android-34/android.jar
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: 确保 android-34 平台与 build-tools 35.0.0 就位(缺才装)
+        run: |
+          test -f "$PLAT" || (yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" >/dev/null)
+          test -d "$BT"   || (yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" "build-tools;35.0.0" >/dev/null)
+
+      - name: aapt2 编译资源并链接(生成 R.java)
+        working-directory: bedside_family/family_app
+        run: |
+          "$BT/aapt2" compile --dir android/res -o res.zip
+          "$BT/aapt2" link -o base.apk -I "$PLAT" --manifest android/AndroidManifest.xml \
+            --java gen -R res.zip --min-sdk-version 24 --target-sdk-version 34
+
+      - name: javac 全量编译(类型门禁,--release 11 与 d8 兼容)
+        working-directory: bedside_family/family_app
+        run: |
+          find android/java gen -name '*.java' > jfiles.txt
+          mkdir classes
+          javac --release 11 -encoding UTF-8 -classpath "$PLAT" -d classes @jfiles.txt
+
+      - name: d8 出 dex 并塞回 APK
+        working-directory: bedside_family/family_app
+        run: |
+          jar cf classes.jar -C classes .
+          mkdir dexout
+          "$BT/d8" --release --lib "$PLAT" --min-api 24 --output dexout classes.jar
+          python - <<'PY'
+          import zipfile
+          with zipfile.ZipFile("base.apk") as zi, zipfile.ZipFile("unsigned.apk", "w") as zo:
+              for it in zi.infolist():
+                  zo.writestr(it.filename, zi.read(it.filename), it.compress_type)
+              zo.writestr("classes.dex", open("dexout/classes.dex", "rb").read(), zipfile.ZIP_DEFLATED)
+          PY
+
+      - name: zipalign + 临时 debug 签名 + 验签
+        working-directory: bedside_family/family_app
+        run: |
+          "$BT/zipalign" -f 4 unsigned.apk aligned.apk
+          keytool -genkeypair -keystore ci-debug.ks -alias caremate -keyalg RSA -keysize 2048 \
+            -validity 30 -storepass ci-debug-pass -keypass ci-debug-pass \
+            -dname "CN=CareMate CI Debug, O=Mocen, C=CN"
+          "$BT/apksigner" sign --ks ci-debug.ks --ks-key-alias caremate \
+            --ks-pass pass:ci-debug-pass --key-pass pass:ci-debug-pass \
+            --out family_app_debug.apk aligned.apk
+          "$BT/apksigner" verify family_app_debug.apk
+          echo "debug APK bytes: $(stat -c%s family_app_debug.apk)"
+
+      - name: 上传冒烟 APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: family-app-debug-apk
+          path: bedside_family/family_app/family_app_debug.apk

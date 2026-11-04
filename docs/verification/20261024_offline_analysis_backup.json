@@ -1,0 +1,95 @@
+{
+  "date": "2026-10-24",
+  "mode": "offline_analysis_and_silent_software_mock_backup",
+  "source_base_commit": "861602e9c40a5e7a5285c46354db8fc00c4dbe80",
+  "verified_code_commit": "fea1950c1767789cc977675f895ff8d3de80a320",
+  "regression": {
+    "suites": 34,
+    "tests": 449,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "optional_dependency_check": {
+    "command": "python -S tests/run_all.py export_demo",
+    "tests": 5,
+    "executed": 2,
+    "skipped_image_tests_without_Pillow": 3
+  },
+  "full_mock_demo": {
+    "checks_passed": 10,
+    "checks_total": 10,
+    "normal_events": 0,
+    "synthetic_events": 2,
+    "mock_sos_actions": 1,
+    "final_state": "IDLE"
+  },
+  "recorded_normal_stages": [
+    {
+      "name": "sit_stand.jsonl",
+      "frames": 119,
+      "usable_pose_frames": 111,
+      "events": 0
+    },
+    {
+      "name": "stand.jsonl",
+      "frames": 119,
+      "usable_pose_frames": 119,
+      "events": 0
+    },
+    {
+      "name": "walk.jsonl",
+      "frames": 120,
+      "usable_pose_frames": 120,
+      "events": 0
+    }
+  ],
+  "recorded_session_count": 1,
+  "real_fall_labels": 0,
+  "fall_recall": null,
+  "synthetic_rule_cases": {
+    "passed": 9,
+    "total": 9,
+    "refall_expected_events": 2
+  },
+  "video": {
+    "codec": "h264",
+    "width": 1440,
+    "height": 900,
+    "fps": 6,
+    "frames": 551,
+    "duration_s": 91.833,
+    "audio_streams": 0,
+    "sha256": "ec1aeda33bb60663b738167d5f95e92809f50e2c0e3ae989718321eee537cec4",
+    "complete_decode_passed": true,
+    "key_frames_visually_checked": true
+  },
+  "launcher_help_from_unrelated_directory": true,
+  "original_keypoints_sha256_unchanged": "b0e261c58b0a06d896afc822aec540edbdcfd879a695a7dc60746e7e417aaac8",
+  "devices": {
+    "camera_opened": false,
+    "phone_contacted": false,
+    "real_actuator_called": false,
+    "audio_played_or_recorded": false,
+    "firmware_flashed": false
+  },
+  "source_files_sha256": {
+    "code/vision/eval_falls.py": "9ef0a90620adce35a75a50cd47a1b20362853e10deca9a0786a700693d43cd2e",
+    "code/vision/export_demo.py": "c4d7c38f8376b1fb947b6313d4b1de21746c591aec7271222556255e2119538b",
+    "code/vision/integrated_demo.py": "d6e31b2be948b6c0b5b94b3cceabd1090142a97a1af446d5953e3213decceb2b",
+    "code/vision/preview.py": "da29ea89c2934d3481e03e237eaf0d2871f0e0c1d8a9c582d5fea3fecc96c254",
+    "code/vision/skeleton.py": "f4d2d28085274d037fb74b5d606e318083bbf0ff595a40b4989c25ec3fbd0ff6",
+    "code/tests/test_eval_falls.py": "f60d420d3da5b89a60325a0efb1572e2bef506547da54117b9618009c0a03ade",
+    "code/tests/test_export_demo.py": "dfa4efa1b1d91b94c922e8792eb94143f6a906c77ffd2437d20520944b370c26",
+    "code/tools/owners.py": "77c75c9e386f4a54c96e5eaa7369f3218f1f606ffdf7100deb92dd628be3e9a4",
+    "START_ANALYZE_VISION.bat": "c3124cd7bd1073a2bb02dedd5f459346e1637002f1a34af72e27254563df2eb7"
+  },
+  "limits": [
+    "Three ordinary stages came from one confirmed fixed-PC session, not three independent tests.",
+    "No real fall labels; neither fall recall nor general false-alarm rates can be claimed.",
+    "Falls, actuator actions, family acknowledgements and notifications in the video are simulated.",
+    "Family notifications are local records shown by the family web UI; no SMS, WeChat push or real dialing.",
+    "Video has added viewing holds, so its duration is not a timed team rehearsal.",
+    "Raw recordings and rendered MP4 stay in the ignored local delivery, not Git."
+  ]
+}

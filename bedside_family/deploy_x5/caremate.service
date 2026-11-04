@@ -1,0 +1,13 @@
+[Unit]
+Description=CareMate master brain (port 8000)
+After=network.target
+[Service]
+ExecStart=/usr/bin/python3 /opt/caremate/master_service.py
+WorkingDirectory=/opt/caremate
+Restart=on-failure
+RestartSec=3
+Environment=TTS_OUT=1
+Environment=VOSK_MODEL_DIR=/opt/caremate/asr_model/vosk-model-small-cn-0.22
+Environment=ARM_URL=http://192.168.128.1:8013
+[Install]
+WantedBy=multi-user.target

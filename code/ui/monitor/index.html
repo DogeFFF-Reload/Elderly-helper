@@ -1,0 +1,677 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CareMate 大屏</title>
+<style>
+  :root {
+    --bg: #0a0f1d; --panel: #111a2e; --panel-2: #16213a; --line: #22304f;
+    --text: #e8eef9; --muted: #8696b4; --dim: #5b6a88;
+    --ok: #34d399; --warn: #fbbf24; --danger: #f87171; --info: #7aa7ff;
+    --left: #2dd4bf; --right: #f5a524; --torso: #c9d4e8;
+    --radius: 18px;
+    font-family: "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+    font-size: clamp(14px, 1.05vw, 22px);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: radial-gradient(1200px 700px at 20% -10%, #15213d 0%, transparent 60%), var(--bg);
+    color: var(--text); overflow: hidden; transition: background .8s;
+    font-variant-numeric: tabular-nums;
+  }
+  body.night {
+    --bg: #05070f; --panel: #0b1222; --panel-2: #0f1830; --line: #1a2542;
+    background: radial-gradient(900px 600px at 85% -15%, rgba(250, 220, 140, .10) 0%, transparent 55%), var(--bg);
+  }
+  .app { display: grid; grid-template-rows: auto 1fr; height: 100vh; padding: 1.1rem 1.3rem 1.3rem; gap: 1rem; }
+
+  /* 顶栏 */
+  header { display: flex; align-items: center; gap: 1rem; }
+  .brand { display: flex; align-items: baseline; gap: .6rem; font-weight: 700; font-size: 1.35rem; letter-spacing: .02em; }
+  .brand .dot { width: .8rem; height: .8rem; border-radius: 50%; background: var(--ok); box-shadow: 0 0 12px var(--ok); align-self: center; }
+  .brand small { font-weight: 400; color: var(--muted); font-size: .95rem; }
+  .spacer { flex: 1; }
+  .chip { display: inline-flex; align-items: center; gap: .5rem; padding: .45rem 1rem; border-radius: 999px;
+          background: var(--panel); border: 1px solid var(--line); font-size: 1rem; white-space: nowrap; }
+  .mode.on { color: #ffe9a8; border-color: rgba(250, 220, 140, .45); box-shadow: 0 0 24px rgba(250, 220, 140, .18); }
+  .status i { width: .65rem; height: .65rem; border-radius: 50%; background: var(--ok); }
+  .status.ASKING { border-color: var(--warn); color: var(--warn); }
+  .status.ASKING i { background: var(--warn); animation: pulse 1s infinite; }
+  .status.SOS { border-color: var(--danger); color: #ffd1d1; background: rgba(248, 113, 113, .14); }
+  .status.SOS i { background: var(--danger); animation: pulse .7s infinite; }
+  .status.HELP_COMING { border-color: var(--ok); color: #c9f7e4; }
+  .clock { font-size: 1.6rem; font-weight: 600; min-width: 5.5ch; text-align: right; }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 999px;
+                 padding: .45rem .9rem; font: inherit; font-size: .9rem; cursor: pointer; }
+  button.ghost.on { color: var(--text); border-color: var(--info); }
+  .offline { color: var(--danger); border-color: var(--danger); display: none; }
+  .offline.show { display: inline-flex; }
+
+  main { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; gap: 1rem; min-height: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+
+  /* 骨架舞台 */
+  .stage { position: relative; overflow: hidden; min-height: 0; }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .stage-head { position: absolute; left: 1.1rem; right: 1.1rem; top: .9rem; display: flex; justify-content: space-between;
+                color: var(--muted); font-size: .95rem; z-index: 2; pointer-events: none; }
+  .privacy { color: var(--dim); }
+  .overlay { position: absolute; inset: 3rem 1.1rem 1.1rem; display: flex; flex-direction: column; gap: .8rem; z-index: 3; pointer-events: none; }
+  .overlay .grow { flex: 1; }
+  .banner { border-radius: 14px; padding: .9rem 1.2rem; font-size: 1.35rem; font-weight: 600; display: flex; gap: .8rem; align-items: center;
+            animation: drop .35s ease-out; backdrop-filter: blur(6px); }
+  .banner small { font-weight: 400; font-size: 1rem; opacity: .85; margin-left: auto; }
+  .banner.sos { background: rgba(127, 29, 29, .82); border: 1px solid var(--danger); box-shadow: 0 0 40px rgba(248, 113, 113, .35); }
+  .banner.coming { background: rgba(6, 78, 59, .82); border: 1px solid var(--ok); }
+  .placards { display: flex; gap: 1rem; justify-content: center; }
+  .placard { background: #fffaf0; color: #3b2a12; border-radius: 10px; padding: .9rem 1.4rem; font-size: 1.5rem; font-weight: 700;
+             box-shadow: 0 10px 30px rgba(0,0,0,.45); transform: rotate(-2deg); animation: rise .5s ease-out; }
+  .placard:nth-child(2) { transform: rotate(2deg); }
+  .placard small { display: block; font-size: .8rem; font-weight: 500; color: #8a6d3b; margin-bottom: .2rem; }
+
+  .card { background: rgba(17, 26, 46, .92); border: 1px solid var(--line); border-radius: 14px; padding: 1rem 1.2rem;
+          max-width: 36rem; animation: rise .35s ease-out; backdrop-filter: blur(6px); }
+  .card h3 { margin: 0 0 .5rem; font-size: 1.3rem; display: flex; align-items: center; gap: .6rem; }
+  .card h3 .count { margin-left: auto; font-size: 1rem; color: var(--warn); font-weight: 600; }
+  .card p { margin: .2rem 0; color: var(--muted); }
+  .card.warn { border-color: rgba(251, 191, 36, .6); }
+  .card.danger { border-color: rgba(248, 113, 113, .7); }
+  .card ol { margin: .3rem 0 0; padding-left: 1.5rem; font-size: 1.2rem; line-height: 1.7; }
+  .card .big { font-size: 2rem; font-weight: 700; color: var(--text); }
+  .card .tag { font-size: .85rem; color: var(--dim); }
+
+  .ask { display: flex; gap: 1.4rem; align-items: center; align-self: center; background: rgba(17, 26, 46, .9);
+         border: 1px solid var(--warn); border-radius: 18px; padding: 1.1rem 1.6rem; animation: rise .3s ease-out; }
+  .ring { --p: 1; width: 6.5rem; height: 6.5rem; border-radius: 50%; display: grid; place-items: center;
+          background: conic-gradient(var(--warn) calc(var(--p) * 360deg), rgba(255,255,255,.08) 0); position: relative; }
+  .ring::before { content: ""; position: absolute; inset: .5rem; border-radius: 50%; background: var(--panel); }
+  .ring b { position: relative; font-size: 2.4rem; line-height: 1; }
+  .ask h3 { margin: 0; font-size: 1.9rem; }
+  .ask p { margin: .3rem 0 0; color: var(--muted); font-size: 1.1rem; }
+
+  .beat { align-self: flex-end; text-align: right; }
+  .beat .n { font-size: 3.6rem; font-weight: 800; line-height: 1; color: var(--left); }
+  .beat .n small { font-size: 1.4rem; color: var(--muted); font-weight: 500; }
+
+  /* 字幕 */
+  .speech { padding: .9rem 1.3rem; display: grid; gap: .45rem; }
+  .line { display: grid; grid-template-columns: 7.5rem 1fr; align-items: baseline; gap: .8rem; min-height: 2.2rem; }
+  .line .who { color: var(--muted); font-size: 1rem; white-space: nowrap; }
+  .line.elder .text { font-size: 1.3rem; color: #cfe3ff; }
+  .line.ai .text { font-size: 1.7rem; font-weight: 600; line-height: 1.35; }
+  .line .text.fresh { animation: flash 1.2s ease-out; }
+
+  /* 右栏 */
+  .side { grid-row: 1 / span 2; grid-column: 2; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 1rem; min-height: 0; }
+
+  /* 床边执行端：真机动作的镜像；执行端离线时它就是 Plan B 的“大屏动画” */
+  .twin { padding: .85rem 1rem .7rem; }
+  .twin-head { display: flex; align-items: center; justify-content: space-between; margin: 0 .2rem .3rem; }
+  .twin-head h2 { margin: 0; font-size: 1rem; color: var(--muted); font-weight: 500; letter-spacing: .08em; }
+  .twin-link { font-size: .85rem; color: var(--muted); display: inline-flex; align-items: center; gap: .4rem; transition: color .3s; }
+  .twin-link i { width: .55rem; height: .55rem; border-radius: 50%; background: var(--dim); transition: background .3s; }
+  .twin-link.on i { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .twin-link.off { color: var(--warn); }
+  .twin-link.off i { background: var(--warn); }
+  .twin-link.stop { color: var(--danger); font-weight: 600; }
+  .twin-link.stop i { background: var(--danger); animation: pulse .7s infinite; }
+  .twin-body { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: .5rem; transition: opacity .4s, filter .4s; }
+  .twin.stopped .twin-body { opacity: .4; filter: grayscale(.7); }
+  .twin figure { margin: 0; min-width: 0; text-align: center; }
+  .twin svg { width: 100%; height: 8.6rem; display: block; overflow: visible; }
+  .twin figcaption { font-size: .78rem; color: var(--dim); line-height: 1.35; margin-top: .25rem; }
+  .twin figcaption b { display: block; color: var(--text); font-weight: 600; font-size: .95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .twin figcaption b.fresh { animation: flash 1.2s ease-out; }
+  .twin .st { display: inline-block; width: .45rem; height: .45rem; border-radius: 50%; margin-left: .35rem; vertical-align: .08em; }
+  .twin .st.sent { background: var(--info); animation: pulse .8s infinite; }
+  .twin .st.ok { background: var(--ok); }
+  .twin .st.fail { background: var(--warn); }
+  .twin .floor { stroke: rgba(122, 167, 255, .25); stroke-width: 1; }
+  .twin .furn { fill: var(--panel-2); stroke: var(--line); stroke-width: 1; }
+  .twin .link { fill: none; stroke: var(--torso); stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 4px rgba(201, 212, 232, .35)); }
+  .twin .joint { fill: #0b1222; stroke: var(--info); stroke-width: 2.2; }
+  .twin .gripper { fill: none; stroke: var(--left); stroke-width: 3.2; stroke-linecap: round; }
+  .twin .sos-btn { fill: #7f1d1d; stroke: var(--danger); stroke-width: 1.2; transition: fill .2s; }
+  .twin .sos.pressed .sos-btn { fill: var(--danger); filter: drop-shadow(0 0 6px var(--danger)); }
+  .twin .sos-ring { fill: none; stroke: var(--danger); stroke-width: 1.5; opacity: 0; }
+  .twin .sos.pressed .sos-ring { animation: ripple 1.1s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+  .twin .sos text { fill: var(--danger); font-size: 7px; text-anchor: middle; font-weight: 700; letter-spacing: .05em; }
+  .twin .pill { fill: #fde68a; stroke: #b45309; stroke-width: 1; }
+  .twin .sign rect { fill: #fffaf0; stroke: #d6b98a; stroke-width: 1; }
+  .twin .sign text { fill: #3b2a12; font-size: 9px; font-weight: 700; text-anchor: middle; }
+  .twin .palm, .twin .finger { fill: var(--left); stroke: rgba(0, 0, 0, .25); stroke-width: .8; transition: fill .4s; }
+  .twin .hand2 .palm, .twin .hand2 .finger { fill: var(--right); }
+  .twin .wrist { fill: var(--panel-2); stroke: var(--line); }
+  .twin .knuckle { fill: rgba(0, 0, 0, .28); }
+  .twin .spark { fill: #fff; filter: drop-shadow(0 0 4px #fff); }
+  .twin .heart { fill: #fb7185; font-size: 14px; text-anchor: middle; }
+  .twin .limit { fill: var(--muted); font-size: 7px; text-anchor: middle; }
+  body.night .twin .link { stroke: #aeb9d0; }
+  .timeline { display: flex; flex-direction: column; min-height: 0; padding: 1rem 0 .4rem; }
+  .timeline h2, .health h2 { margin: 0 1.2rem .6rem; font-size: 1rem; color: var(--muted); font-weight: 500; letter-spacing: .08em; }
+  .timeline ol { list-style: none; margin: 0; padding: 0 .6rem; overflow: hidden; flex: 1;
+                 mask-image: linear-gradient(to bottom, #000 80%, transparent); -webkit-mask-image: linear-gradient(to bottom, #000 80%, transparent); }
+  .timeline li { display: grid; grid-template-columns: 5.2rem 1.8rem 1fr; gap: .5rem; align-items: start; padding: .55rem .6rem;
+                 border-radius: 10px; font-size: 1.05rem; line-height: 1.4; }
+  .timeline li.new { animation: slide .45s ease-out; background: rgba(122, 167, 255, .08); }
+  .timeline time { color: var(--dim); font-size: .9rem; padding-top: .12rem; }
+  .timeline li.warn .t { color: #fde68a; }
+  .timeline li.danger .t { color: #fecaca; font-weight: 600; }
+  .timeline li.ok .t { color: #bbf7d0; }
+  .timeline li.elder .t { color: #cfe3ff; }
+  .timeline li.elder .t::before { content: "老人：“"; color: var(--muted); }
+  .timeline li.elder .t::after { content: "”"; color: var(--muted); }
+  .timeline li.arm .t { color: var(--muted); }
+
+  .health { padding: 1rem 0 1.1rem; }
+  .health .row { display: flex; gap: 1.4rem; align-items: flex-end; padding: 0 1.2rem; }
+  .health .bp { font-size: 2.3rem; font-weight: 700; line-height: 1; }
+  .health .bp small { font-size: 1rem; color: var(--muted); font-weight: 400; margin-left: .3rem; }
+  .flag { display: inline-block; font-size: .9rem; padding: .15rem .6rem; border-radius: 999px; margin-left: .4rem; vertical-align: middle; font-weight: 600; }
+  .flag.high { background: rgba(251, 191, 36, .16); color: var(--warn); border: 1px solid rgba(251, 191, 36, .5); }
+  .flag.normal { background: rgba(52, 211, 153, .12); color: var(--ok); border: 1px solid rgba(52, 211, 153, .4); }
+  .health .water { font-size: 1.3rem; }
+  .health .note { padding: .5rem 1.2rem 0; color: var(--dim); font-size: .85rem; }
+  .muted { color: var(--muted); }
+
+  @keyframes pulse { 50% { opacity: .35; } }
+  @keyframes slide { from { opacity: 0; transform: translateY(-10px); } }
+  @keyframes rise { from { opacity: 0; transform: translateY(12px); } }
+  @keyframes drop { from { opacity: 0; transform: translateY(-12px); } }
+  @keyframes flash { from { color: #fff; text-shadow: 0 0 18px rgba(122, 167, 255, .8); } }
+  @keyframes ripple { from { opacity: .9; transform: scale(1); } to { opacity: 0; transform: scale(2.6); } }
+
+  @media (max-width: 900px) {
+    body { overflow: auto; }
+    .app { height: auto; padding: .8rem 16px; }
+    header { flex-wrap: wrap; }
+    main { grid-template-columns: 1fr; grid-template-rows: 60vh auto auto; }
+    .side { grid-row: auto; grid-column: auto; grid-template-rows: 50vh auto; }
+    .line { grid-template-columns: 1fr; gap: .1rem; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand"><span class="dot"></span>CareMate<small>床边守护</small></div>
+    <div class="spacer"></div>
+    <span class="chip offline" id="offline">⚠ 总线未连接</span>
+    <span class="chip mode" id="mode">☀️ 日间模式</span>
+    <span class="chip status IDLE" id="status"><i></i><span>守护中</span></span>
+    <button class="ghost" id="tts" title="用这台电脑的喇叭念 AI 台词（tts_player 没跑时的备用）">🔈 大屏播报：关</button>
+    <div class="clock" id="clock">--:--</div>
+  </header>
+
+  <main>
+    <section class="stage panel">
+      <div class="stage-head"><span id="room">卧室 · 床边摄像头</span><span class="privacy">🔒 只显示骨架剪影 · 不录制、不存储影像</span></div>
+      <canvas id="skeleton"></canvas>
+      <div class="overlay" id="overlay"></div>
+    </section>
+
+    <section class="speech panel">
+      <div class="line elder"><span class="who">🗣️ 老人</span><span class="text" id="heard"><span class="muted">—</span></span></div>
+      <div class="line ai"><span class="who">🔊 CareMate</span><span class="text" id="said"><span class="muted">—</span></span></div>
+    </section>
+
+    <aside class="side">
+      <section class="panel twin" id="twin">
+        <div class="twin-head"><h2>床边执行端</h2><span class="twin-link" id="twinLink"><i></i><span>探测中</span></span></div>
+        <div class="twin-body">
+          <figure>
+            <svg viewBox="0 0 260 150" aria-label="机械臂侧视">
+              <line class="floor" x1="0" y1="140" x2="260" y2="140"/>
+              <rect class="furn" x="148" y="112" width="104" height="6" rx="2"/>
+              <rect class="furn" x="156" y="118" width="5" height="22"/><rect class="furn" x="239" y="118" width="5" height="22"/>
+              <g class="sos" id="twinSos"><circle class="sos-ring" cx="170" cy="107" r="6"/><rect class="furn" x="160" y="108" width="20" height="4" rx="1.5"/>
+                <circle class="sos-btn" cx="170" cy="107" r="5.5"/><text x="170" y="129">SOS</text></g>
+              <rect class="furn" x="206" y="109" width="34" height="3" rx="1.5"/>
+              <rect class="pill" id="twinPillHome" x="214" y="99" width="18" height="10" rx="2"/>
+              <rect class="furn" x="54" y="120" width="28" height="20" rx="4"/>
+              <path class="link" id="twinArm"/>
+              <g id="twinGrip"><path class="gripper" d="M0 0 L9 0 M9 -4 L16 -4 M9 4 L16 4 M9 -4 L9 4"/></g>
+              <g id="twinCarry"></g>
+              <circle class="joint" id="twinJ0" r="4.5"/><circle class="joint" id="twinJ1" r="4"/><circle class="joint" id="twinJ2" r="3.5"/>
+            </svg>
+            <figcaption>机械臂<b id="twinArmCap">回到待机位</b></figcaption>
+          </figure>
+          <figure class="hand1"><svg viewBox="0 0 100 112" id="twinHand1"></svg><figcaption>手#1 · 臂末端<b id="twinH1Cap">放松</b></figcaption></figure>
+          <figure class="hand2"><svg viewBox="0 0 100 112" id="twinHand2"></svg><figcaption>手#2 · 床边<b id="twinH2Cap">张开</b></figcaption></figure>
+        </div>
+      </section>
+      <section class="panel timeline"><h2>事件时间线</h2><ol id="timeline"></ol></section>
+      <section class="panel health" id="health"></section>
+    </aside>
+  </main>
+</div>
+
+<script src="/ui/shared/bus.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let S = null;
+let booted = false; // 首次加载拿到的历史台词不重播
+let lastSayId = 0, lastHeardTs = 0;
+const timeline = [];
+const HIDDEN = new Set(["say", "system"]);
+
+// ---------- 骨架（双色：左半身青、右半身橙；告警时整体变红） ----------
+const STANDING = {
+  head: [0.50, 0.16], neck: [0.50, 0.25], l_shoulder: [0.44, 0.27], r_shoulder: [0.56, 0.27],
+  l_elbow: [0.41, 0.40], r_elbow: [0.59, 0.40], l_wrist: [0.40, 0.52], r_wrist: [0.60, 0.52],
+  l_hip: [0.46, 0.54], r_hip: [0.54, 0.54], l_knee: [0.46, 0.70], r_knee: [0.54, 0.70],
+  l_ankle: [0.46, 0.86], r_ankle: [0.54, 0.86],
+};
+const FALLEN = {
+  head: [0.22, 0.80], neck: [0.30, 0.81], l_shoulder: [0.32, 0.76], r_shoulder: [0.32, 0.86],
+  l_elbow: [0.40, 0.72], r_elbow: [0.27, 0.90], l_wrist: [0.47, 0.76], r_wrist: [0.20, 0.88],
+  l_hip: [0.52, 0.79], r_hip: [0.52, 0.86], l_knee: [0.64, 0.78], r_knee: [0.65, 0.87],
+  l_ankle: [0.78, 0.80], r_ankle: [0.77, 0.88],
+};
+const BONES = [
+  ["l_shoulder", "r_shoulder", "c"], ["l_shoulder", "l_hip", "c"], ["r_shoulder", "r_hip", "c"], ["l_hip", "r_hip", "c"],
+  ["head", "neck", "c"],
+  ["l_shoulder", "l_elbow", "l"], ["l_elbow", "l_wrist", "l"], ["l_hip", "l_knee", "l"], ["l_knee", "l_ankle", "l"],
+  ["r_shoulder", "r_elbow", "r"], ["r_elbow", "r_wrist", "r"], ["r_hip", "r_knee", "r"], ["r_knee", "r_ankle", "r"],
+];
+const cur = JSON.parse(JSON.stringify(STANDING));
+const canvas = $("skeleton"), ctx = canvas.getContext("2d");
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+function target() {
+  const sk = S && S.skeleton;
+  if (!sk) return STANDING;
+  if (sk.pose === "live" && sk.keypoints) return sk.keypoints;
+  return sk.pose === "fallen" ? FALLEN : STANDING;
+}
+
+function draw(t) {
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) {
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  // 4:3 画面映射
+  const fh = Math.min(H * 0.92, (W * 3) / 4), fw = (fh * 4) / 3;
+  const ox = (W - fw) / 2, oy = (H - fh) / 2 + H * 0.03;
+  const P = (p) => [ox + p[0] * fw, oy + p[1] * fh];
+
+  // 背景网格 + 地面
+  ctx.strokeStyle = "rgba(255,255,255,.035)"; ctx.lineWidth = 1;
+  for (let i = 0; i <= 12; i++) { const x = ox + (fw * i) / 12; ctx.beginPath(); ctx.moveTo(x, oy); ctx.lineTo(x, oy + fh); ctx.stroke(); }
+  for (let i = 0; i <= 9; i++) { const y = oy + (fh * i) / 9; ctx.beginPath(); ctx.moveTo(ox, y); ctx.lineTo(ox + fw, y); ctx.stroke(); }
+  const floor = P([0, 0.9])[1];
+  const grad = ctx.createLinearGradient(0, floor, 0, floor + fh * 0.1);
+  grad.addColorStop(0, "rgba(122,167,255,.10)"); grad.addColorStop(1, "transparent");
+  ctx.fillStyle = grad; ctx.fillRect(ox, floor, fw, fh * 0.1);
+  ctx.strokeStyle = "rgba(122,167,255,.25)"; ctx.beginPath(); ctx.moveTo(ox, floor); ctx.lineTo(ox + fw, floor); ctx.stroke();
+
+  // 插值到目标姿态
+  const tgt = target();
+  const standing = !S || S.skeleton.pose === "standing";
+  for (const k in cur) {
+    if (!tgt[k]) continue;
+    cur[k][0] += (tgt[k][0] - cur[k][0]) * 0.12;
+    cur[k][1] += (tgt[k][1] - cur[k][1]) * 0.12;
+  }
+  const breathe = standing ? Math.sin(t / 900) * 0.004 : 0;
+  const pt = (k) => P([cur[k][0], cur[k][1] + (["l_knee", "r_knee", "l_ankle", "r_ankle"].includes(k) ? 0 : breathe)]);
+
+  const alarm = S && S.guard.state !== "IDLE";
+  const colors = alarm
+    ? { l: css("--danger"), r: css("--danger"), c: "#fca5a5" }
+    : { l: css("--left"), r: css("--right"), c: css("--torso") };
+  const lw = Math.max(6, fh * 0.022);
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.shadowBlur = alarm ? 28 + Math.sin(t / 160) * 10 : 16;
+  for (const [a, b, side] of BONES) {
+    const [x1, y1] = pt(a), [x2, y2] = pt(b);
+    ctx.strokeStyle = colors[side]; ctx.shadowColor = colors[side]; ctx.lineWidth = lw;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+  for (const k in cur) {
+    if (k === "head") continue;
+    const [x, y] = pt(k);
+    ctx.fillStyle = "#0b1222"; ctx.beginPath(); ctx.arc(x, y, lw * 0.55, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = k.startsWith("l_") ? colors.l : k.startsWith("r_") ? colors.r : colors.c;
+    ctx.beginPath(); ctx.arc(x, y, lw * 0.32, 0, Math.PI * 2); ctx.fill();
+  }
+  const [hx, hy] = pt("head");
+  ctx.strokeStyle = colors.c; ctx.lineWidth = lw * 0.8; ctx.shadowColor = colors.c; ctx.shadowBlur = alarm ? 24 : 12;
+  ctx.beginPath(); ctx.arc(hx, hy, fh * 0.045, 0, Math.PI * 2); ctx.stroke();
+  ctx.shadowBlur = 0;
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+
+// ---------- 叠加层 ----------
+// 按 key 原地更新：卡片只在出现时播一次入场动画，倒计时数字变化不重建元素（否则每次轮询都闪）
+function patch(container, items) {
+  const keep = new Set(items.map((i) => i.key));
+  for (const el of [...container.children]) if (!keep.has(el.dataset.key)) el.remove();
+  items.forEach((item, i) => {
+    let el = container.querySelector(`:scope > [data-key="${item.key}"]`);
+    if (!el) { el = document.createElement("div"); el.dataset.key = item.key; }
+    if (el.className !== item.cls) el.className = item.cls;
+    if (el._html !== item.html) { el.innerHTML = item.html; el._html = item.html; }
+    if (container.children[i] !== el) container.insertBefore(el, container.children[i] || null);
+  });
+}
+
+function overlay(s) {
+  const g = s.guard, items = [];
+  const name = (id) => UI.contactName(s, id);
+  if (g.state === "SOS") {
+    items.push({ key: "sos", cls: "banner sos", html: `🚨 求助中 · 家属演示页面已记录给${UI.esc(g.notified.map(name).join("、"))}的提醒
+      <small>${UI.esc(UI.actionStatus(s, 1, "press_sos", "SOS"))} · ${UI.esc(UI.actionStatus(s, 2, "gentle_hold", "轻握安抚"))}</small>
+      <small>等待家属确认 ${UI.secs(g.ack_remaining)} · 未接入外部通知</small>` });
+  }
+  if (g.state === "HELP_COMING") {
+    items.push({ key: "coming", cls: "banner coming", html: `💚 ${UI.esc(name(g.acked_by))}已确认 · 马上就到` });
+    items.push({ key: "placards", cls: "placards", html: `
+      <div class="placard"><small>屏幕提示 · 手#1 请求举牌</small>家人已收到</div>
+      <div class="placard"><small>屏幕提示 · 手#2 请求举牌</small>别怕，${UI.esc(name(g.acked_by))}马上到</div>` });
+  }
+  items.push({ key: "grow", cls: "grow", html: "" });
+  if (g.state === "ASKING") {
+    const p = g.wait ? Math.max(0, g.remaining / g.wait) : 0;
+    items.push({ key: "ask", cls: "ask", html: `<div class="ring" style="--p:${p.toFixed(3)}"><b>${Math.ceil(g.remaining)}</b></div>
+      <div><h3>您还好吗？</h3><p>按绿键或说“我没事”即取消 · ${g.night ? "夜间" : "日间"}等待 ${g.wait} 秒</p></div>` });
+  }
+  if (g.dial_pending) {
+    items.push({ key: "dial", cls: "card danger", html: `<h3>📞 拨打 120？<span class="count">${UI.secs(g.dial_remaining)}</span></h3>
+      <p>仅演示模拟：说“确认”才记录；说“取消”或超时不记录，不拨打真实电话</p>` });
+  }
+  const hp = s.health.pending;
+  if (hp) {
+    items.push({ key: "health-" + hp.sys + "-" + hp.dia, cls: "card warn", html: `<h3>❤️ 复述确认<span class="count">${UI.secs(hp.remaining)}</span></h3>
+      <div class="big">高压 ${hp.sys} · 低压 ${hp.dia}${hp.pulse ? " · 心率 " + hp.pulse : ""}</div>
+      <p>老人说“对”才记账；说“不对”就重报</p>` });
+  }
+  if (s.teach) {
+    const t = s.teach;
+    items.push(t.status === "ok"
+      ? { key: "teach-" + t.ts, cls: "card", html: `<h3>📖 ${UI.esc(t.device)} · ${UI.esc(t.task)}</h3><ol>${t.steps.map((x) => `<li>${UI.esc(x)}</li>`).join("")}</ol>
+         <p class="tag">步骤来自预置教学库 guides.json</p>` }
+      : { key: "teach-" + t.ts, cls: "card warn", html: `<h3>📖 这个没学过，不乱教</h3><p>${UI.esc(t.device)}会教：${UI.esc(t.known.join("、"))}</p>
+         <p class="tag">教学步骤只来自 guides.json，不许现编</p>` });
+  }
+  const r = s.rps;
+  if (r) {
+    const N = { rock: "✊ 石头", scissors: "✌️ 剪刀", paper: "🖐️ 布" };
+    const head = `<h3>✊✌️🖐️ 猜拳 · 第 ${r.round} 局${r.phase === "countdown" ? `<span class="count">${UI.secs(r.reveal_in)}</span>` : ""}</h3>`;
+    if (r.phase === "countdown") {
+      items.push({ key: "rps-" + r.round, cls: "card", html: head + `<p>石头、剪刀、布……机器人已经想好出什么了，揭晓前谁也看不到</p>` });
+    } else if (r.phase === "revealed") {
+      items.push({ key: "rps-" + r.round, cls: "card", html: head + `<div class="big">手#1 出：${N[r.robot]}</div><p>正在看老人的手势…</p>` });
+    } else {
+      const res = { win: "老人赢啦 🎉", lose: "机器人赢了这局", draw: "平局" }[r.result] || "没看清老人的手势";
+      items.push({ key: "rps-" + r.round + "-done", cls: "card", html: head +
+        `<div class="big">${r.player ? N[r.player] : "？"}  vs  ${N[r.robot]}</div><p>${res}</p>` });
+    }
+  }
+  const mp = s.med && s.med.enabled && s.med.pending;
+  if (mp) {
+    items.push({ key: "med-" + mp.id, cls: "card", html: `<h3>⏰ 到吃${UI.esc(mp.name)}的时间了<span class="count">${mp.state === "delivered" ? "已请求递药" : UI.esc(mp.slot)}</span></h3>
+      <p>说“把药递给我”机械臂递药盒；吃完说“吃了”打卡，家属端同步</p>` });
+  }
+  if (s.exercise.active) {
+    items.push({ key: "beat", cls: "beat", html: `<div class="n">${s.exercise.beat}<small> / ${s.exercise.total} 拍</small></div>
+      <div class="muted">🖐️ 手指操带练</div>` });
+  }
+  patch($("overlay"), items);
+}
+
+function header(s) {
+  const n = s.night.active;
+  document.body.classList.toggle("night", n);
+  $("mode").className = "chip mode" + (n ? " on" : "");
+  $("mode").textContent = n ? `🌙 夜间模式 · 询问 ${s.params.ask_wait_night} 秒` : `☀️ 日间模式 · 询问 ${s.params.ask_wait_day} 秒`;
+  const g = s.guard;
+  const text = {
+    IDLE: "守护中",
+    ASKING: `询问中 ${UI.secs(g.remaining)}`,
+    SOS: "已求助 · 等待家属",
+    HELP_COMING: `${UI.contactName(s, g.acked_by)}马上到`,
+  }[g.state];
+  if ($("status").className !== "chip status " + g.state) $("status").className = "chip status " + g.state;
+  $("status").querySelector("span").textContent = text;
+  $("room").textContent = (g.room || "卧室") + " · 床边摄像头";
+}
+
+function speech(s) {
+  if (s.last_heard && s.last_heard.ts !== lastHeardTs) {
+    lastHeardTs = s.last_heard.ts;
+    $("heard").innerHTML = "“" + UI.esc(s.last_heard.text) + "”";
+    $("heard").classList.remove("fresh"); void $("heard").offsetWidth; $("heard").classList.add("fresh");
+  }
+  if (s.last_say && s.last_say.id !== lastSayId) {
+    lastSayId = s.last_say.id;
+    $("said").textContent = s.last_say.text;
+    $("said").classList.remove("fresh"); void $("said").offsetWidth; $("said").classList.add("fresh");
+  }
+  if (!s.last_say && lastSayId) { lastSayId = 0; $("said").innerHTML = '<span class="muted">—</span>'; }
+  if (!s.last_heard && lastHeardTs) { lastHeardTs = 0; $("heard").innerHTML = '<span class="muted">—</span>'; }
+}
+
+function health(s) {
+  const today = s.health.today, last = today.bp[today.bp.length - 1];
+  const bp = last
+    ? `<div class="bp">${last.sys}/${last.dia}<small>mmHg</small><span class="flag ${last.flag === "偏高" ? "high" : "normal"}">${last.flag}</span></div>`
+    : `<div class="bp muted" style="font-size:1.3rem">今天还没量血压</div>`;
+  $("health").innerHTML = `<h2>今日健康</h2><div class="row">${bp}
+    <div class="water">💧 ${today.water_cups} 杯</div></div>
+    <div class="note">家庭自测参考 135/85 · 只做记录与提醒，不作诊断</div>`;
+}
+
+function renderTimeline(fresh) {
+  $("timeline").innerHTML = timeline.slice(0, 40).map((ev) => {
+    const cls = [ev.level, ev.type === "heard" ? "elder" : "", ev.type === "arm" ? "arm" : "", fresh.has(ev.id) ? "new" : ""].join(" ");
+    return `<li class="${cls}"><time>${UI.time(ev.ts)}</time><span>${UI.icon(ev)}</span><span class="t">${UI.esc(ev.text)}</span></li>`;
+  }).join("");
+}
+
+// ---------- 大屏播报（浏览器 TTS，tts_player 的备用） ----------
+let ttsOn = false;
+try { ttsOn = localStorage.getItem("cm-monitor-tts") === "1"; } catch (e) {}
+function paintTts() { $("tts").textContent = ttsOn ? "🔊 大屏播报：开" : "🔈 大屏播报：关"; $("tts").classList.toggle("on", ttsOn); }
+paintTts();
+$("tts").onclick = () => {
+  ttsOn = !ttsOn; paintTts();
+  try { localStorage.setItem("cm-monitor-tts", ttsOn ? "1" : "0"); } catch (e) {}
+  if (ttsOn) speak("大屏播报已打开");
+};
+function speak(text) {
+  if (!ttsOn || !("speechSynthesis" in window)) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "zh-CN"; u.rate = 0.95;
+  const v = speechSynthesis.getVoices().find((x) => /^zh/i.test(x.lang));
+  if (v) u.voice = v;
+  speechSynthesis.speak(u);
+}
+
+// ---------- 床边执行端（真机动作的镜像；执行端离线时就是 Plan B 的“大屏动画”） ----------
+// 数据源：state.hands = {"1": {pose, label, status}, "2": {...}}，每只手最近一次收到的动作（手指操每拍也在）
+const ARM = { S: [68, 116], L1: 62, L2: 58 };
+// 侧视图里手腕的目标点 + 手的朝向（度：0 朝老人一侧，90 朝上，-90 朝下）
+const ARM_POSES = {
+  home: { w: [92, 66], a: -70 },
+  deliver_medicine: { w: [180, 80], a: 0 },
+  press_sos: { w: [170, 86], a: -90 },
+  sign_family_received: { w: [118, 40], a: 90 },
+  present: { w: [150, 52], a: 30 },   // 手指操、猜拳：把手亮给老人看
+};
+const armPoseOf = (pose) => ARM_POSES[pose] || (/^(finger_|rps_)/.test(pose) ? ARM_POSES.present : ARM_POSES.home);
+
+// 五指弯曲度 [拇指, 食指, 中指, 无名指, 小指]：0 伸直，1 握紧（RH56F2 每指一个自由度）
+const OPEN = [0, 0, 0, 0, 0], FIST = [1, 1, 1, 1, 1], HOLD = [.7, .7, .7, .7, .7];
+const SHAPES = {
+  home: [.25, .2, .2, .25, .3], release: OPEN, deliver_medicine: [.6, .55, .55, .55, .55],
+  sign_family_received: HOLD, sign_coming: HOLD, press_sos: [.7, .7, .7, .7, .7], gentle_hold: [.5, .5, .5, .5, .5],
+  rps_rock: FIST, rps_scissors: [1, 0, 0, 1, 1], rps_paper: OPEN, finger_fist: FIST, finger_open: OPEN,
+  finger_count_1: [1, 0, 1, 1, 1], finger_count_2: [1, 0, 0, 1, 1], finger_count_3: [1, 0, 0, 0, 1],
+  finger_count_4: [1, 0, 0, 0, 0], finger_count_5: OPEN,
+};
+const SHAPE_TEXT = {
+  home: "放松", release: "张开", deliver_medicine: "握住药盒", sign_family_received: "握住举牌", sign_coming: "握住举牌",
+  press_sos: "半握拳用指节按", gentle_hold: "轻握 · 限力", rps_rock: "石头", rps_scissors: "剪刀", rps_paper: "布",
+  finger_fist: "握拳", finger_open: "张开",
+};
+["食指", "中指", "无名指", "小指"].forEach((f, i) => {
+  SHAPES["finger_pinch_" + (i + 1)] = OPEN.map((_, j) => (j === 0 ? .8 : j === i + 1 ? .6 : 0));
+  SHAPE_TEXT["finger_pinch_" + (i + 1)] = "拇指碰" + f;
+});
+for (let n = 1; n <= 5; n++) SHAPE_TEXT["finger_count_" + n] = `伸出 ${n} 根手指`;
+
+const FX = [34, 45, 56, 66], FLEN = [33, 38, 35, 27], FW = [9, 9.5, 9, 8];
+function buildHand(svg) {
+  svg.innerHTML = `<g class="hg">` +
+    FX.map((x, i) => `<rect class="finger" x="${x - FW[i] / 2}" width="${FW[i]}" rx="${FW[i] / 2}"/>`).join("") +
+    `<rect class="palm" x="27" y="60" width="47" height="40" rx="11"/>` +
+    FX.map((x, i) => `<rect class="knuckle" x="${x - FW[i] / 2 + 1}" y="60" width="${FW[i] - 2}" height="6" rx="3"/>`).join("") +
+    `<rect class="finger thumb" x="-5" width="10" rx="5"/>` +
+    `<rect class="wrist" x="35" y="99" width="31" height="12" rx="3"/>` +
+    `<circle class="spark" r="3" opacity="0"/><g class="prop"></g></g>`;
+  const q = (s) => [...svg.querySelectorAll(s)];
+  return { g: svg.querySelector(".hg"), fingers: q(".finger:not(.thumb)"), knuckles: q(".knuckle"), thumb: svg.querySelector(".thumb"),
+           spark: svg.querySelector(".spark"), prop: svg.querySelector(".prop"), cur: [...SHAPES.home], pose: null };
+}
+const twin = {
+  arm: { w: [...ARM_POSES.home.w], a: ARM_POSES.home.a, pose: null },
+  h1: buildHand($("twinHand1")), h2: buildHand($("twinHand2")),
+  caps: {},
+};
+
+function ik(T) {
+  // 两连杆，肘在上；够不着就沿方向缩到最远
+  const { S, L1, L2 } = ARM;
+  let dx = T[0] - S[0], dy = S[1] - T[1], d = Math.hypot(dx, dy);
+  const dc = Math.min(Math.max(d, Math.abs(L1 - L2) + 1), L1 + L2 - .5);
+  dx *= dc / d; dy *= dc / d;
+  const t1 = Math.atan2(dy, dx) + Math.acos((L1 * L1 + dc * dc - L2 * L2) / (2 * L1 * dc));
+  return [[S[0] + L1 * Math.cos(t1), S[1] - L1 * Math.sin(t1)], [S[0] + dx, S[1] - dy]];
+}
+
+function handProp(pose, hand) {
+  const who = S ? UI.contactName(S, S.guard.acked_by || S.contacts[0].id) : "家人";
+  if (pose === "deliver_medicine") return `<rect class="pill" x="34" y="70" width="32" height="18" rx="3"/>`;
+  if (pose === "sign_family_received" || pose === "sign_coming") {
+    const text = pose === "sign_coming" ? UI.esc(who) + "马上到" : "家人已收到";
+    return `<line x1="50" y1="28" x2="50" y2="46" stroke="#d6b98a" stroke-width="2"/>
+      <g class="sign"><rect x="6" y="4" width="88" height="25" rx="4"/><text x="50" y="21">${text}</text></g>`;
+  }
+  if (pose === "gentle_hold") return `<text class="heart" x="50" y="24">♥</text><text class="limit" x="50" y="36">限力</text>`;
+  return "";
+}
+
+function paintHand(h, pose, t) {
+  if (h.pose !== pose) { h.pose = pose; h.prop.innerHTML = handProp(pose); }
+  const tgt = SHAPES[pose] || SHAPES.home;
+  let d = 0;
+  for (let i = 0; i < 5; i++) { const step = (tgt[i] - h.cur[i]) * .14; h.cur[i] += step; d = Math.max(d, Math.abs(step)); }
+  const live = pose === "gentle_hold" || /^finger_pinch_/.test(pose);   // 这两种一直在动（一握一松 / 指尖闪光）
+  if (d < 1e-4 && !live && h.settled === pose) return;                  // 停稳了就不再每帧重写 SVG
+  h.settled = d < 1e-4 ? pose : null;
+  h.fingers.forEach((el, i) => {
+    const len = FLEN[i] * (1 - .72 * h.cur[i + 1]) + 8;
+    el.setAttribute("y", (66 - len).toFixed(2)); el.setAttribute("height", len.toFixed(2));
+    h.knuckles[i].setAttribute("opacity", (h.cur[i + 1] * .9).toFixed(2));
+  });
+  const c0 = h.cur[0], tl = 27 * (1 - .3 * c0);
+  h.thumb.setAttribute("y", (-tl).toFixed(2)); h.thumb.setAttribute("height", tl.toFixed(2));
+  h.thumb.setAttribute("transform", `translate(30 90) rotate(${(-48 + 92 * c0).toFixed(1)})`);
+  const pinch = /^finger_pinch_(\d)/.exec(pose);
+  if (pinch) {
+    const i = +pinch[1] - 1, len = FLEN[i] * (1 - .72 * h.cur[i + 1]) + 8;
+    h.spark.setAttribute("cx", FX[i]); h.spark.setAttribute("cy", (66 - len + 3).toFixed(1));
+  }
+  h.spark.setAttribute("opacity", pinch ? (.6 + .4 * Math.sin(t / 120)).toFixed(2) : 0);
+  const s = pose === "gentle_hold" ? 1 + .035 * Math.sin(t / 380) : 1;   // 轻握：一握一松
+  h.g.setAttribute("transform", `translate(50 85) scale(${s.toFixed(4)}) translate(-50 -85)`);
+}
+
+function paintArm(pose, t) {
+  const a = twin.arm, tgt = armPoseOf(pose);
+  if (a.pose !== pose) {
+    a.pose = pose;
+    $("twinCarry").innerHTML = pose === "deliver_medicine" ? `<rect class="pill" x="-9" y="-5" width="18" height="10" rx="2"/>`
+      : pose === "sign_family_received" ? `<g class="sign"><rect x="-32" y="-24" width="64" height="20" rx="3"/><text x="0" y="-10.5">家人已收到</text></g>` : "";
+    $("twinPillHome").style.opacity = pose === "deliver_medicine" ? 0 : 1;
+  }
+  const dx = (tgt.w[0] - a.w[0]) * .08, dy = (tgt.w[1] - a.w[1]) * .08, da = (tgt.a - a.a) * .1;
+  a.w[0] += dx; a.w[1] += dy; a.a += da;
+  const still = Math.abs(dx) + Math.abs(dy) + Math.abs(da) < 1e-3;
+  if (still && a.settled === pose) return;
+  a.settled = still ? pose : null;
+  const [E, W] = ik(a.w), r = (a.a * Math.PI) / 180, tip = [W[0] + 17 * Math.cos(r), W[1] - 17 * Math.sin(r)];
+  $("twinArm").setAttribute("d", `M${ARM.S[0]} ${ARM.S[1]} L${E[0].toFixed(1)} ${E[1].toFixed(1)} L${W[0].toFixed(1)} ${W[1].toFixed(1)}`);
+  [[ARM.S, "twinJ0"], [E, "twinJ1"], [W, "twinJ2"]].forEach(([p, id]) => { $(id).setAttribute("cx", p[0].toFixed(1)); $(id).setAttribute("cy", p[1].toFixed(1)); });
+  $("twinGrip").setAttribute("transform", `translate(${W[0].toFixed(1)} ${W[1].toFixed(1)}) rotate(${(-a.a).toFixed(1)})`);
+  $("twinCarry").setAttribute("transform", `translate(${tip[0].toFixed(1)} ${tip[1].toFixed(1)})`);
+  // 指尖碰到按钮才亮：动画和真机一样，先伸过去再按下
+  $("twinSos").classList.toggle("pressed", pose === "press_sos" && Math.hypot(tip[0] - 170, tip[1] - 101.5) < 4);
+}
+
+const handsOf = (s) => (s && s.hands) || { 1: { pose: "home", label: "回到待机位", status: "idle" }, 2: { pose: "release", label: "手#2 松开", status: "idle" } };
+function twinFrame(t) {
+  const hs = handsOf(S);
+  paintArm(hs[1].pose, t);
+  paintHand(twin.h1, hs[1].pose, t);
+  paintHand(twin.h2, hs[2].pose, t);
+  requestAnimationFrame(twinFrame);
+}
+requestAnimationFrame(twinFrame);
+
+function caption(id, text, status) {
+  const st = { sent: "sent", ok: "ok", idle: "" }[status] ?? "fail";
+  const tip = { sent: "动作请求已发出", ok: "执行端已接收，实物完成情况待确认" }[status] || (st ? "执行端没做成：大屏代演" : "");
+  const html = UI.esc(text) + (st ? `<span class="st ${st}" title="${tip}"></span>` : "");
+  if (twin.caps[id] === html) return;
+  const fresh = twin.caps[id] !== undefined && twin.caps[id].split("<span")[0] !== html.split("<span")[0];
+  twin.caps[id] = html; $(id).innerHTML = html;
+  if (fresh) { $(id).classList.remove("fresh"); void $(id).offsetWidth; $(id).classList.add("fresh"); }
+}
+
+function twinStatus(s) {
+  const hs = handsOf(s), strip = (l) => l.replace(/^(臂\+)?手#\d\s*/, "");
+  caption("twinArmCap", strip(hs[1].label || hs[1].pose), hs[1].status);
+  caption("twinH1Cap", SHAPE_TEXT[hs[1].pose] || strip(hs[1].label || ""), hs[1].status);
+  caption("twinH2Cap", SHAPE_TEXT[hs[2].pose] || strip(hs[2].label || hs[2].pose), hs[2].status);
+  const stop = !!s.estop, on = s.arm && s.arm.online, mock = s.arm && s.arm.mock;
+  const [cls, text] = stop ? ["stop", "急停中 · 臂和双手不动"] : on === true && mock ? ["off", "执行端模拟 · 大屏演示"]
+    : on === true ? ["on", "执行端在线 · 动作完成待现场确认"]
+    : on === false ? ["off", "执行端离线 · 大屏演示"] : ["", "探测中"];
+  $("twinLink").className = "twin-link " + cls; $("twinLink").querySelector("span").textContent = text;
+  $("twin").classList.toggle("stopped", stop);
+}
+
+// ---------- 主循环 ----------
+Bus.on(({ state, events, reset, online }) => {
+  $("offline").classList.toggle("show", !online);
+  if (!online) return;
+  if (reset) timeline.length = 0;
+  const fresh = new Set();
+  for (const ev of events) {
+    if (ev.type === "say" && booted) speak(ev.text);
+    if (HIDDEN.has(ev.type) || ev.type === "reset") continue;
+    timeline.unshift(ev); fresh.add(ev.id);
+  }
+  timeline.length = Math.min(timeline.length, 80);
+  S = state;
+  header(state); overlay(state); speech(state); health(state); twinStatus(state);
+  if (fresh.size || reset) renderTimeline(booted ? fresh : new Set());
+  booted = true;
+});
+Bus.start();
+
+setInterval(() => { const d = new Date(); $("clock").textContent = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }, 1000);
+document.addEventListener("dblclick", () => { if (!document.fullscreenElement) document.documentElement.requestFullscreen?.(); else document.exitFullscreen?.(); });
+</script>
+</body>
+</html>

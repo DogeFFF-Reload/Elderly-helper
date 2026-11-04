@@ -1,0 +1,11 @@
+[Unit]
+Description=CareMate onboard mic loop (arecord -> /asr/push)
+After=caremate.service
+Requires=caremate.service
+[Service]
+ExecStart=/usr/bin/python3 /opt/caremate/asr_mic_loop.py plughw:0,0
+WorkingDirectory=/opt/caremate
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=multi-user.target

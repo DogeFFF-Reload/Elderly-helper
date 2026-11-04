@@ -1,0 +1,15 @@
+[Unit]
+Description=CareMate arm service (RH56F2 hand via USB-RS485)
+After=caremate.service
+[Service]
+WorkingDirectory=/opt/caremate
+ExecStart=/usr/bin/python3 -m hand_controller.arm_service
+Restart=on-failure
+RestartSec=5
+Environment=MOCK_SERIAL=0
+Environment=RH56_PROTO=eb90
+Environment=HAND1_PORT=/dev/ttyUSB0
+Environment=RH56_FORCE=300
+Environment=RH56_SPEED=600
+[Install]
+WantedBy=multi-user.target

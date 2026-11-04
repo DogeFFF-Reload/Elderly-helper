@@ -1,0 +1,2 @@
+# RH56F2 USB-RS485 serial backend (only needed on the machine connected to the blue box)
+pyserial>=3.5

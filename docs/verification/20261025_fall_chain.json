@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "verified_utc": "2026-10-24T16:23:17.540308+00:00",
+  "kind": "offline_loopback_contract_check",
+  "ok": true,
+  "cases": [
+    {
+      "scenario": "fall",
+      "expected_events": 1,
+      "detections": [
+        {
+          "type": "fall",
+          "kind": "rapid",
+          "t": 4.3333,
+          "reason": "快速倒地后 2.0 秒没站起来"
+        }
+      ],
+      "preflight": "dry_accepted",
+      "sender_receipts": [
+        {
+          "event_id": "vision-ff191588182e48a1b88e923b9d928de9",
+          "room": "offline",
+          "status": "bedside_accepted",
+          "attempts": 1,
+          "bedside_stored": true,
+          "alarm_id": "al_20261025_002317_207",
+          "dedup": false,
+          "phone_received": null
+        }
+      ],
+      "simulated_family_poll_count": 1,
+      "phone_received": null,
+      "real_phone_notification_verified": false,
+      "checks": [
+        "detector_emitted",
+        "receiver_accepted_matching_event",
+        "simulated_family_polled_same_alarm",
+        "family_ack_stored",
+        "retry_after_ack_no_duplicate_alarm"
+      ],
+      "alarm_id": "al_20261025_002317_207",
+      "event_id": "vision-ff191588182e48a1b88e923b9d928de9",
+      "ok": true
+    },
+    {
+      "scenario": "slow_floor",
+      "expected_events": 1,
+      "detections": [
+        {
+          "type": "fall",
+          "kind": "slow",
+          "t": 16.2667,
+          "reason": "横躺在低处 12 秒没起来"
+        }
+      ],
+      "preflight": "dry_accepted",
+      "sender_receipts": [
+        {
+          "event_id": "vision-a4323bdacdc14cb3a585ee485c7c049c",
+          "room": "offline",
+          "status": "bedside_accepted",
+          "attempts": 1,
+          "bedside_stored": true,
+          "alarm_id": "al_20261025_002317_352",
+          "dedup": false,
+          "phone_received": null
+        }
+      ],
+      "simulated_family_poll_count": 1,
+      "phone_received": null,
+      "real_phone_notification_verified": false,
+      "checks": [
+        "detector_emitted",
+        "receiver_accepted_matching_event",
+        "simulated_family_polled_same_alarm",
+        "family_ack_stored",
+        "retry_after_ack_no_duplicate_alarm"
+      ],
+      "alarm_id": "al_20261025_002317_352",
+      "event_id": "vision-a4323bdacdc14cb3a585ee485c7c049c",
+      "ok": true
+    },
+    {
+      "scenario": "sit",
+      "expected_events": 0,
+      "detections": [],
+      "preflight": "dry_accepted",
+      "sender_receipts": [],
+      "simulated_family_poll_count": 0,
+      "phone_received": null,
+      "real_phone_notification_verified": false,
+      "checks": [
+        "normal_sitting_no_alarm"
+      ],
+      "ok": true
+    }
+  ],
+  "real_camera_opened": false,
+  "real_bedside_contacted": false,
+  "real_phone_notification_verified": false,
+  "limits": "Synthetic coordinates bypass the pose model; family GET/ACK is simulated. Real camera recognition and Android UI/sound/background delivery require field acceptance.",
+  "recorded_utc": "2026-10-24T16:26:15.420708+00:00",
+  "base_published_commit": "4d157ff7412a3ecd8e3799c92b309d8837c08166",
+  "targeted_regression": {
+    "command": "python -X utf8 code/tests/run_all.py family_alarm family_watch",
+    "suites": 3,
+    "tests": 36,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "local_model_check": {
+    "command": "python run_bedside_vision.py --check-runtime",
+    "ok": true,
+    "cpu_blank_image_only": true,
+    "cv2_version": "5.0.0",
+    "mediapipe_version": "1.1.1",
+    "camera_opened": false,
+    "notifications_sent": false,
+    "inference_speed_measured": false
+  },
+  "field_status": {
+    "actual_iphone_pose_to_phone_alert_verified_by_this_task": false,
+    "actual_phone_foreground_alert": "Teammate reports v1.2 foreground passed; not rechecked here.",
+    "actual_phone_background_alert": "Teammate reports v1.2/v1.3 failed; v1.4 pending device retest.",
+    "recommended_acceptance_topology": "Windows vision + iPhone MJPEG + bedside alarm API + Android family App on same LAN"
+  },
+  "source_sha256_lf": {
+    "code/tests/verify_fall_chain.py": "705485c65425ae55192dbf46e46bbf02d9fa5ab00fa7f978113aaa4bc4651692",
+    "code/tests/test_family_alarm.py": "c8e820a45ecf964c2cd9ecff107e2de7a5c13ba075735b90952f48752269dd20",
+    "code/tests/family_alarm_receiver.py": "3570cd4980b659d5ea6694a0a3ea6087be331745ffe7dfc5cb4ca1a29b51aff4",
+    "code/vision/family_alarm.py": "d1400424b8bce90dbca72e161de922bac7e99de5bebfdeb997c1321a21fd45c5",
+    "code/vision/family_watch.py": "64b0db1d8acd1dae393c4f1ec88c1180a53e49b09b38192ef3c48b2698a46cda",
+    "code/vision/pose_backends.py": "a69577b70bb0f3bddf102bde3ce3e570c32695d4894c1232f84b734be5dfc020",
+    "code/gesture/fall_rules.py": "d33ca95553c8a9de6265b89e8070b56a4317e077c05062d434851ac72305de4b",
+    "bedside_family/service_handboard/arm_service.py": "3d2a3eb7c5d4dfd85c2061f4cd6c6ebc5d2cdf1c7feb990a75561ab12e78bf16"
+  }
+}
