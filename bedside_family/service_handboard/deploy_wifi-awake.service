@@ -1,0 +1,18 @@
+# bedside_family/service_handboard/deploy_wifi-awake.service
+#
+# 板端 systemd 单元对照本:关闭 wlan0 WiFi 省电,根治"重插网卡后 wlan 掉线/长期弱链路"问题。
+# 2026-10-25 已由 SFTP 直写部署到板子 /etc/systemd/system/wifi-awake.service 并启用。
+# 说明:板端实际 unit 以板上文件为准;本文件为仓库对照备份(内容一致性以 md5 对照为准)。
+# 依赖 iw(D:\ 文档之外的板端已自带);接口名板端实测为 wlan0,如板子改了网卡名请同步修改 ExecStart。
+
+[Unit]
+Description=Keep wlan0 power saving off (caremate bedside board, fix wlan sleep dropouts)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/iw dev wlan0 set power_save off
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
