@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Arduino Uno R3 真实尺寸 (1:1) 对照图</title>
+<style>
+  :root { --mm: 1mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+    margin: 0; padding: 24px; background: #f4f6f8; color: #1b2733;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #5b6b7b; font-size: 13px; margin-bottom: 18px; }
+  .note {
+    background: #fff7e6; border: 1px solid #ffd591; border-radius: 8px;
+    padding: 12px 16px; max-width: 720px; font-size: 13.5px; line-height: 1.7;
+    margin-bottom: 22px;
+  }
+  .note b { color: #ad6800; }
+  .sheet {
+    background: #fff; padding: 24px; border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.08); display: inline-block;
+  }
+  svg { display: block; }
+  .label { font-size: 8px; fill: #334; font-family: Arial, sans-serif; }
+  .cap { font-size: 7px; fill: #556; font-family: Arial, sans-serif; }
+  @media print {
+    body { background: #fff; padding: 0; }
+    .note, h1, .sub { display: none; }
+    .sheet { box-shadow: none; padding: 0; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Arduino Uno R3 — 真实尺寸对照图</h1>
+<div class="sub">官方标准尺寸：长 68.6 mm × 宽 53.4 mm</div>
+
+<div class="note">
+  <b>怎么用：</b>按 <b>Ctrl+P</b> 打印，纸张选 A4，缩放一定要选 <b>“实际大小 / 100%”</b>（不要选“适合页面”）。<br>
+  打印后用下面的 <b>10cm 校准尺</b>量一下，如果尺子长度正好是 10cm，图就是真实大小，可以直接把 Arduino Uno 放在图上比对。<br>
+  <b>屏幕上：</b>尺寸会随显示器缩放而变，只能看大概形状和比例。
+</div>
+
+<div class="sheet">
+<svg width="140mm" height="120mm" viewBox="0 0 140 120" xmlns="http://www.w3.org/2000/svg">
+
+  <!-- ===== 电路板本体 68.6 x 53.4 mm ===== -->
+  <g transform="translate(10,18)">
+    <!-- 板身 -->
+    <rect x="0" y="0" width="68.6" height="53.4" rx="3" ry="3"
+          fill="#0b7d3b" stroke="#064425" stroke-width="0.5"/>
+
+    <!-- 四个安装孔 -->
+    <circle cx="5" cy="4.5" r="1.4" fill="#f4f6f8" stroke="#064425" stroke-width="0.3"/>
+    <circle cx="63.5" cy="4.5" r="1.4" fill="#f4f6f8" stroke="#064425" stroke-width="0.3"/>
+    <circle cx="5" cy="48" r="1.4" fill="#f4f6f8" stroke="#064425" stroke-width="0.3"/>
+    <circle cx="63.5" cy="48" r="1.4" fill="#f4f6f8" stroke="#064425" stroke-width="0.3"/>
+
+    <!-- USB 口 (顶部左) 约 12 x 16 -->
+    <rect x="2.5" y="-6.5" width="12" height="8" rx="1" fill="#c9ced4" stroke="#7a828a" stroke-width="0.4"/>
+    <rect x="3.5" y="-5.8" width="10" height="6.8" rx="0.6" fill="#e6e9ec" stroke="#9aa2aa" stroke-width="0.3"/>
+
+    <!-- 电源插座 黑色圆柱 (USB 右侧) 约 9 x 11 -->
+    <rect x="18" y="-6" width="9" height="12" rx="1.5" fill="#1a1a1a" stroke="#000" stroke-width="0.3"/>
+    <circle cx="22.5" cy="0" r="3.2" fill="#333" stroke="#000" stroke-width="0.3"/>
+    <circle cx="22.5" cy="0" r="1" fill="#111"/>
+
+    <!-- 稳压电容圆柱 -->
+    <circle cx="34" cy="3" r="3.4" fill="#8a1f1f" stroke="#5a1010" stroke-width="0.4"/>
+    <path d="M31 3 a3 3 0 0 1 6 0" fill="#b33" opacity="0.6"/>
+
+    <!-- ===== 你圈的：ATmega328P 主控 DIP-28 约 34.7 x 7.5 ===== -->
+    <rect x="17" y="24" width="34.7" height="7.5" rx="1" fill="#171717" stroke="#000" stroke-width="0.4"/>
+    <!-- 芯片缺口 -->
+    <path d="M23 24 a2 2 0 0 0 4 0" fill="#f4f6f8"/>
+    <!-- 28 脚 -->
+    <g fill="#c9ced4" stroke="#8a929a" stroke-width="0.15">
+      <rect x="18.5" y="22.5" width="1.2" height="1.6"/>
+      <rect x="20.7" y="22.5" width="1.2" height="1.6"/>
+      <rect x="22.9" y="22.5" width="1.2" height="1.6"/>
+      <rect x="25.1" y="22.5" width="1.2" height="1.6"/>
+      <rect x="27.3" y="22.5" width="1.2" height="1.6"/>
+      <rect x="29.5" y="22.5" width="1.2" height="1.6"/>
+      <rect x="31.7" y="22.5" width="1.2" height="1.6"/>
+      <rect x="33.9" y="22.5" width="1.2" height="1.6"/>
+      <rect x="36.1" y="22.5" width="1.2" height="1.6"/>
+      <rect x="38.3" y="22.5" width="1.2" height="1.6"/>
+      <rect x="40.5" y="22.5" width="1.2" height="1.6"/>
+      <rect x="42.7" y="22.5" width="1.2" height="1.6"/>
+      <rect x="44.9" y="22.5" width="1.2" height="1.6"/>
+      <rect x="47.1" y="22.5" width="1.2" height="1.6"/>
+      <rect x="18.5" y="31.4" width="1.2" height="1.6"/>
+      <rect x="20.7" y="31.4" width="1.2" height="1.6"/>
+      <rect x="22.9" y="31.4" width="1.2" height="1.6"/>
+      <rect x="25.1" y="31.4" width="1.2" height="1.6"/>
+      <rect x="27.3" y="31.4" width="1.2" height="1.6"/>
+      <rect x="29.5" y="31.4" width="1.2" height="1.6"/>
+      <rect x="31.7" y="31.4" width="1.2" height="1.6"/>
+      <rect x="33.9" y="31.4" width="1.2" height="1.6"/>
+      <rect x="36.1" y="31.4" width="1.2" height="1.6"/>
+      <rect x="38.3" y="31.4" width="1.2" height="1.6"/>
+      <rect x="40.5" y="31.4" width="1.2" height="1.6"/>
+      <rect x="42.7" y="31.4" width="1.2" height="1.6"/>
+      <rect x="44.9" y="31.4" width="1.2" height="1.6"/>
+      <rect x="47.1" y="31.4" width="1.2" height="1.6"/>
+    </g>
+    <text x="34" y="28.8" text-anchor="middle" font-size="2.2" fill="#ddd" font-family="Arial">ATMEGA328P</text>
+
+    <!-- ===== 16MHz 晶振 HC-49S 约 11.5 x 5 ===== -->
+    <rect x="20" y="35" width="11.5" height="5" rx="2.4" fill="#cfd3d8" stroke="#8a929a" stroke-width="0.4"/>
+    <text x="25.75" y="38.2" text-anchor="middle" font-size="1.8" fill="#444" font-family="Arial">16MHz</text>
+
+    <!-- 两个负载电容 -->
+    <circle cx="17" cy="37.5" r="1.4" fill="#e0c060" stroke="#a08020" stroke-width="0.3"/>
+    <circle cx="34.5" cy="37.5" r="1.4" fill="#e0c060" stroke="#a08020" stroke-width="0.3"/>
+
+    <!-- 电源指示 LED -->
+    <circle cx="10" cy="12" r="1.1" fill="#ff3b30"/>
+    <circle cx="10" cy="12" r="0.4" fill="#ffd0cc"/>
+
+    <!-- ===== 右侧数字 I/O 排针 (D0-D13+Aref) 长排 ===== -->
+    <rect x="58" y="10" width="2.54" height="44" rx="0.4" fill="#171717"/>
+    <g fill="#d8b23a" stroke="#a8891f" stroke-width="0.1">
+      <rect x="58.4" y="11" width="1.7" height="1"/>
+      <rect x="58.4" y="15" width="1.7" height="1"/>
+      <rect x="58.4" y="19" width="1.7" height="1"/>
+      <rect x="58.4" y="23" width="1.7" height="1"/>
+      <rect x="58.4" y="27" width="1.7" height="1"/>
+      <rect x="58.4" y="31" width="1.7" height="1"/>
+      <rect x="58.4" y="35" width="1.7" height="1"/>
+      <rect x="58.4" y="39" width="1.7" height="1"/>
+      <rect x="58.4" y="43" width="1.7" height="1"/>
+      <rect x="58.4" y="47" width="1.7" height="1"/>
+    </g>
+
+    <!-- ===== 左下模拟输入 A0-A5 排针 ===== -->
+    <rect x="2" y="34" width="2.54" height="16" rx="0.4" fill="#171717"/>
+    <g fill="#d8b23a" stroke="#a8891f" stroke-width="0.1">
+      <rect x="2.4" y="35" width="1.7" height="1"/>
+      <rect x="2.4" y="38" width="1.7" height="1"/>
+      <rect x="2.4" y="41" width="1.7" height="1"/>
+      <rect x="2.4" y="44" width="1.7" height="1"/>
+      <rect x="2.4" y="47" width="1.7" height="1"/>
+    </g>
+
+    <!-- ===== 左侧 POWER 排针 ===== -->
+    <rect x="2" y="14" width="2.54" height="16" rx="0.4" fill="#171717"/>
+    <g fill="#d8b23a" stroke="#a8891f" stroke-width="0.1">
+      <rect x="2.4" y="15" width="1.7" height="1"/>
+      <rect x="2.4" y="18" width="1.7" height="1"/>
+      <rect x="2.4" y="21" width="1.7" height="1"/>
+      <rect x="2.4" y="24" width="1.7" height="1"/>
+      <rect x="2.4" y="27" width="1.7" height="1"/>
+    </g>
+
+    <!-- ICSP 2x3 -->
+    <rect x="40" y="40" width="5.2" height="3.6" rx="0.4" fill="#171717"/>
+    <!-- 复位按钮 -->
+    <rect x="50" y="-5" width="6" height="6" rx="1" fill="#c0392b" stroke="#7a2018" stroke-width="0.3"/>
+
+    <!-- 板名 丝印 -->
+    <text x="30" y="16" font-size="3.4" fill="#eaf3ec" font-family="Arial" font-weight="bold">ARDUINO</text>
+    <text x="30" y="21" font-size="2.6" fill="#cfe3d4" font-family="Arial">UNO  R3</text>
+
+    <!-- 尺寸标注：长 -->
+    <line x1="0" y1="-10" x2="68.6" y2="-10" stroke="#c0392b" stroke-width="0.3"/>
+    <line x1="0" y1="-11" x2="0" y2="-9" stroke="#c0392b" stroke-width="0.3"/>
+    <line x1="68.6" y1="-11" x2="68.6" y2="-9" stroke="#c0392b" stroke-width="0.3"/>
+    <text x="34.3" y="-11" text-anchor="middle" class="cap" fill="#c0392b">68.6 mm</text>
+
+    <!-- 尺寸标注：宽 -->
+    <line x1="72" y1="0" x2="72" y2="53.4" stroke="#c0392b" stroke-width="0.3"/>
+    <line x1="71" y1="0" x2="73" y2="0" stroke="#c0392b" stroke-width="0.3"/>
+    <line x1="71" y1="53.4" x2="73" y2="53.4" stroke="#c0392b" stroke-width="0.3"/>
+    <text x="74" y="27" text-anchor="middle" class="cap" fill="#c0392b" transform="rotate(90 74 27)">53.4 mm</text>
+
+    <!-- 主控芯片尺寸 -->
+    <line x1="17" y1="34" x2="51.7" y2="34" stroke="#1565c0" stroke-width="0.25"/>
+    <text x="52.5" y="34.6" class="cap" fill="#1565c0">主控 34.7mm</text>
+
+    <!-- 你的圈 高亮 -->
+    <ellipse cx="29" cy="33" rx="16" ry="9" fill="none" stroke="#ff2d95" stroke-width="0.8" stroke-dasharray="2 1.2"/>
+    <text x="29" y="14.5" text-anchor="middle" font-size="2.6" fill="#ff2d95" font-family="Arial">← 你圈的芯片+晶振</text>
+  </g>
+
+  <!-- ===== 10cm 校准尺 ===== -->
+  <g transform="translate(10,100)">
+    <rect x="0" y="0" width="100" height="8" fill="#fffbe6" stroke="#333" stroke-width="0.3"/>
+    <g stroke="#333" stroke-width="0.25">
+      <!-- 每个大刻度 10mm -->
+      <line x1="0"  y1="0" x2="0"  y2="4"/><line x1="10" y1="0" x2="10" y2="4"/>
+      <line x1="20" y1="0" x2="20" y2="4"/><line x1="30" y1="0" x2="30" y2="4"/>
+      <line x1="40" y1="0" x2="40" y2="4"/><line x1="50" y1="0" x2="50" y2="4"/>
+      <line x1="60" y1="0" x2="60" y2="4"/><line x1="70" y1="0" x2="70" y2="4"/>
+      <line x1="80" y1="0" x2="80" y2="4"/><line x1="90" y1="0" x2="90" y2="4"/>
+      <line x1="100" y1="0" x2="100" y2="4"/>
+      <!-- 5mm 小刻度 -->
+      <line x1="5" y1="0" x2="5" y2="2.5"/><line x1="15" y1="0" x2="15" y2="2.5"/>
+      <line x1="25" y1="0" x2="25" y2="2.5"/><line x1="35" y1="0" x2="35" y2="2.5"/>
+      <line x1="45" y1="0" x2="45" y2="2.5"/><line x1="55" y1="0" x2="55" y2="2.5"/>
+      <line x1="65" y1="0" x2="65" y2="2.5"/><line x1="75" y1="0" x2="75" y2="2.5"/>
+      <line x1="85" y1="0" x2="85" y2="2.5"/><line x1="95" y1="0" x2="95" y2="2.5"/>
+    </g>
+    <g class="cap" fill="#333" text-anchor="middle">
+      <text x="10" y="7">1</text><text x="20" y="7">2</text><text x="30" y="7">3</text>
+      <text x="40" y="7">4</text><text x="50" y="7">5</text><text x="60" y="7">6</text>
+      <text x="70" y="7">7</text><text x="80" y="7">8</text><text x="90" y="7">9</text>
+      <text x="100" y="7" text-anchor="end">10 cm</text>
+    </g>
+    <text x="-2" y="6" class="cap" text-anchor="end" fill="#666">0</text>
+  </g>
+  <text x="10" y="116" font-size="7" fill="#666" font-family="Arial">↑ 校准尺：打印后这段应正好是 10.0 cm</text>
+</svg>
+</div>
+
+</body>
+</html>
