@@ -79,7 +79,9 @@ class HandWorker:
         threading.Thread(target=self._run, daemon=True).start()
 
     def ready(self):
-        """能不能接动作：mock 总能；真机要串口打得开、寄存器表核对过。"""
+        """能不能接动作：mock 总能；真机要串口打得开、手没卡住（没回过话就等断电重启）、寄存器表核对过。"""
+        if self.driver.silent:
+            return False, self.driver.silent
         if not self.driver.connect():
             return False, self.driver.error
         if not self.driver.mock and not RM.VERIFIED:

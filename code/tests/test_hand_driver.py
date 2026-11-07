@@ -301,6 +301,51 @@ class DriverTest(unittest.TestCase):
             d.read_angles()
         self.assertIn("没回应", str(caught.exception))
 
+    def test_no_reply_stops_all_further_frames(self):
+        # F2 没回话时接着发会一直卡住：一次没回应之后读写都不再上总线，断电重启后 clear_silent 才放行
+        d, factory = real_driver(responder=lambda req: b"")
+        with self.assertRaises(HandError):
+            d.read_angles()
+        ser = factory.serials[0]
+        self.assertEqual(len(ser.written), 1)
+        with self.assertRaises(HandError) as again:
+            d.read_angles()
+        self.assertIn("断电", str(again.exception))
+        with mock.patch.object(rh56_register_map, "VERIFIED", True):
+            with self.assertRaises(HandError):
+                d.hold()
+        self.assertEqual(len(ser.written), 1, "没回话之后一帧都不能再发")
+        st = d.status()
+        self.assertTrue(st["silent"])
+        self.assertIn("没回应", st["error"])
+
+        ser.responder = None                     # 按顺序断电重启过，手又回话了
+        d.clear_silent()
+        self.assertEqual(len(d.read_angles()), len(RM.JOINT_ORDER))
+        self.assertFalse(d.status()["silent"])
+
+    def test_silent_hand_is_not_ready(self):
+        d, _ = real_driver(responder=lambda req: b"")
+        with self.assertRaises(HandError):
+            d.read_angles()
+        ok, why = arm_service.HandWorker(1, d).ready()
+        self.assertFalse(ok)
+        self.assertIn("没回应", why)
+
+    def test_reads_at_or_past_read_limit_are_blocked(self):
+        d, factory = real_driver()
+        limit = RM.READ_LIMIT
+        self.assertEqual(limit, 4032)
+        self.assertEqual(len(d.read(limit - 12, 12)), 12, "4020 起 12 字节正好到 4031，可以读")
+        for addr, n in ((limit, 2), (limit - 11, 12), (limit + 100, 64), (-2, 2), (100, 0)):
+            with self.subTest(addr=addr, n=n):
+                with self.assertRaises(HandError) as caught:
+                    d.read(addr, n)
+                self.assertIn("不许读", str(caught.exception))
+        self.assertEqual(len(factory.serials[0].written), 1, "被拦下的读不能发到总线")
+        with self.assertRaises(HandError):
+            mock_driver().read(limit, 64)        # mock 下也拦，写错的地址在笔记本上就暴露
+
     def test_read_short_response_reports_incomplete(self):
         d, _ = real_driver(responder=lambda req: MANUAL_READ_RESP[:10])
         with self.assertRaises(HandError) as caught:

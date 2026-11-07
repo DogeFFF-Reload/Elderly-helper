@@ -30,6 +30,10 @@ REG_ERROR = 1606          # 6 byte：故障位 bit0 堵转 / bit1 过温 / bit2 
 REG_STATUS = 1612         # 6 byte：状态（只读）
 REG_TEMP = 1618           # 6 byte：温度 ℃（只读）
 
+# F2 实测（docs/RH56F2_实测.md §4）：读 4032 起的地址手就不回话，之后所有指令都不回，只有按顺序断电才恢复。
+# 驱动的任何读都必须落在 [0, READ_LIMIT) 里（地址 + 字节数 ≤ READ_LIMIT），mock 下也一样拦
+READ_LIMIT = 4032
+
 # 驱动只许写这几组（左闭右开的字节地址）。HAND_ID(1000)、REDU_RATIO(1002)、SAVE(1005)、
 # RESET_PARA(1006) 这类会改 ID / 波特率 / 写 FLASH / 恢复出厂的，一律不许程序写，要改用官方上位机
 WRITABLE = (
